@@ -1,0 +1,4 @@
+<linker>
+  <assembly fullname="VellumPdf.Conformance" preserve="all" />
+  <assembly fullname="VellumPdf.Reader" preserve="all" />
+</linker>

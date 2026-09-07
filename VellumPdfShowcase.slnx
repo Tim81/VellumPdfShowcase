@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VellumPdfShowcase.Web/VellumPdfShowcase.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VellumPdfShowcase.Tests/VellumPdfShowcase.Tests.csproj" />
+  </Folder>
+</Solution>

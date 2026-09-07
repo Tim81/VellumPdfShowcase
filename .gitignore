@@ -1,0 +1,46 @@
+## .NET
+bin/
+obj/
+out/
+publish/
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+## VS Code
+.vscode/
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+
+## NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## Node (tooling, if any is added later)
+node_modules/
+
+## OS files
+.DS_Store
+Thumbs.db
+
+## Cloudflare / Wrangler
+.wrangler/
+.dev.vars
