@@ -1,0 +1,111 @@
+@page "/smoke"
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Runtime smoke test</PageTitle>
+
+<h1>Runtime smoke test</h1>
+
+<p>
+    This page generates two PDF documents with the published <code>VellumPdf.Layout</code> package,
+    inside this browser tab, with no server involved. The second document also runs through
+    <code>VellumPdf.Conformance</code> in the same process, and its result appears below it.
+</p>
+
+<section>
+    <h2>1. Hard-coded document</h2>
+    <p>
+        A heading, a paragraph, a table, a pie chart and a running footer, written to a
+        <code>MemoryStream</code> with the Standard 14 faces.
+    </p>
+
+    <button type="button" @onclick="GenerateHardCodedAsync" disabled="@_busyHardCoded">
+        @(_busyHardCoded ? "Generating…" : "Generate")
+    </button>
+
+    @if (_hardCodedBytes is not null)
+    {
+        <p>Generated in @_hardCodedElapsedMs ms.</p>
+
+        <button type="button" @onclick="@(() => DownloadAsync(_hardCodedBytes, "smoke-hardcoded.pdf"))">
+            Download
+        </button>
+
+        @if (_hardCodedSupportsInline)
+        {
+            <iframe @key="_hardCodedBlobUrl" src="@_hardCodedBlobUrl" title="Hard-coded document preview" class="pdf-preview"></iframe>
+        }
+        else
+        {
+            <p>NOTE: This browser does not render a PDF inline in a frame. Use the download button to view the file.</p>
+        }
+    }
+</section>
+
+<section>
+    <h2>2. PDF/A-2b document</h2>
+    <p>
+        A heading and a paragraph set in an embedded Liberation Sans face, tagged, with a CMYK output
+        intent, validated against the PDF/A-2b profile immediately after generation.
+    </p>
+
+    <button type="button" @onclick="GeneratePdfAAsync" disabled="@_busyPdfA">
+        @(_busyPdfA ? "Generating and validating…" : "Generate and validate")
+    </button>
+
+    @if (_pdfABytes is not null)
+    {
+        <p>Generated in @_pdfAGenerationElapsedMs ms. Preflight ran in @_preflightElapsedMs ms.</p>
+
+        <button type="button" @onclick="@(() => DownloadAsync(_pdfABytes, "smoke-pdfa2b.pdf"))">
+            Download
+        </button>
+
+        @if (_pdfASupportsInline)
+        {
+            <iframe @key="_pdfABlobUrl" src="@_pdfABlobUrl" title="PDF/A-2b document preview" class="pdf-preview"></iframe>
+        }
+        else
+        {
+            <p>NOTE: This browser does not render a PDF inline in a frame. Use the download button to view the file.</p>
+        }
+
+        @if (_preflightResult is not null)
+        {
+            <h3>
+                Preflight verdict:
+                @(_preflightResult.IsCompliant ? "Compliant with PDF/A-2b." : "Not compliant with PDF/A-2b.")
+            </h3>
+
+            @if (_preflightResult.Assertions.Count == 0)
+            {
+                <p>Preflight raised no assertions.</p>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Rule</th>
+                            <th scope="col">Clause</th>
+                            <th scope="col">Severity</th>
+                            <th scope="col">Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var assertion in _preflightResult.Assertions)
+                        {
+                            <tr>
+                                <td>@assertion.RuleId</td>
+                                <td>@assertion.Clause</td>
+                                <td>@assertion.Severity</td>
+                                <td>@assertion.Message</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    }
+</section>

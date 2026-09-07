@@ -1,4 +1,21 @@
 <linker>
   <assembly fullname="VellumPdf.Conformance" preserve="all" />
   <assembly fullname="VellumPdf.Reader" preserve="all" />
+
+  <!--
+    Verified by publishing and serving the trimmed output: under TrimMode full
+    (and, separately confirmed, also under partial), the linker removes every
+    Razor component that is reached only through the client-side Router's
+    runtime reflection scan of AppAssembly for [Route] attributes, because no
+    statically visible call site constructs those types. Home and Smoke were
+    both trimmed away this way, and the root route and /smoke returned the
+    NotFound branch in a published build while working under `dotnet run`.
+    Components reached through a direct typeof(...) or generic OpenComponent<T>
+    call (App, MainLayout) survived without help; components discoverable only
+    by route attribute did not. This assembly is rooted whole rather than
+    type-by-type so that every future @page component keeps working under
+    TrimMode full without a matching edit here; its own size cost is minor
+    next to the framework and VellumPdf assemblies it references.
+  -->
+  <assembly fullname="VellumPdfShowcase.Web" preserve="all" />
 </linker>

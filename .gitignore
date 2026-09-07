@@ -44,3 +44,7 @@ Thumbs.db
 ## Cloudflare / Wrangler
 .wrangler/
 .dev.vars
+
+## Local tooling scratch state
+.claude/
+.playwright-mcp/
