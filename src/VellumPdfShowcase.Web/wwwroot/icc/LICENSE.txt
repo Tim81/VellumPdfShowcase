@@ -1,0 +1,15 @@
+sRGB2014.icc, an ICC v2 profile published by the International Color
+Consortium, fetched from
+https://registry.color.org/rgb-registry/profiles/sRGB2014.icc, listed at
+https://registry.color.org/rgb-registry/srgbprofiles.
+
+This profile is licensed under the ICC's general terms for profiles for
+which the ICC is the copyright owner. The terms are copied below, and are
+also available at:
+https://registry.color.org/profile-library/#license
+
+"This profile is made available by the International Color Consortium, and
+may be copied, distributed, embedded, made, used, and sold without
+restriction. Altered versions of this profile shall have the original
+identification and copyright information removed and shall not be
+misrepresented as the original profile."

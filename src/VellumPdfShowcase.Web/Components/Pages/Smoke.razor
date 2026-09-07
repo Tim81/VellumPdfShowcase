@@ -13,7 +13,7 @@
     <code>VellumPdf.Conformance</code> in the same process, and its result appears below it.
 </p>
 
-<section>
+<section aria-busy="@_busyHardCoded">
     <h2>1. Hard-coded document</h2>
     <p>
         A heading, a paragraph, a table, a pie chart and a running footer, written to a
@@ -24,10 +24,19 @@
         @(_busyHardCoded ? "Generating…" : "Generate")
     </button>
 
+    <div role="status" aria-live="polite">
+        @if (_hardCodedError is not null)
+        {
+            <p role="alert">Generation failed: <br /><code>@_hardCodedError</code></p>
+        }
+        else if (_hardCodedBytes is not null)
+        {
+            <p>Generated in @_hardCodedElapsedMs ms.</p>
+        }
+    </div>
+
     @if (_hardCodedBytes is not null)
     {
-        <p>Generated in @_hardCodedElapsedMs ms.</p>
-
         <button type="button" @onclick="@(() => DownloadAsync(_hardCodedBytes, "smoke-hardcoded.pdf"))">
             Download
         </button>
@@ -43,10 +52,10 @@
     }
 </section>
 
-<section>
+<section aria-busy="@_busyPdfA">
     <h2>2. PDF/A-2b document</h2>
     <p>
-        A heading and a paragraph set in an embedded Liberation Sans face, tagged, with a CMYK output
+        A heading and a paragraph set in an embedded Liberation Sans face, tagged, with an sRGB output
         intent, validated against the PDF/A-2b profile immediately after generation.
     </p>
 
@@ -54,10 +63,27 @@
         @(_busyPdfA ? "Generating and validating…" : "Generate and validate")
     </button>
 
+    <div role="status" aria-live="polite">
+        @if (_pdfAError is not null)
+        {
+            <p role="alert">Generation failed: <br /><code>@_pdfAError</code></p>
+        }
+        else if (_pdfABytes is not null)
+        {
+            <p>Generated in @_pdfAGenerationElapsedMs ms. Preflight ran in @_preflightElapsedMs ms.</p>
+
+            @if (_preflightResult is not null)
+            {
+                <h3>
+                    Preflight verdict:
+                    @(_preflightResult.IsCompliant ? "Compliant with PDF/A-2b." : "Not compliant with PDF/A-2b.")
+                </h3>
+            }
+        }
+    </div>
+
     @if (_pdfABytes is not null)
     {
-        <p>Generated in @_pdfAGenerationElapsedMs ms. Preflight ran in @_preflightElapsedMs ms.</p>
-
         <button type="button" @onclick="@(() => DownloadAsync(_pdfABytes, "smoke-pdfa2b.pdf"))">
             Download
         </button>
@@ -73,11 +99,6 @@
 
         @if (_preflightResult is not null)
         {
-            <h3>
-                Preflight verdict:
-                @(_preflightResult.IsCompliant ? "Compliant with PDF/A-2b." : "Not compliant with PDF/A-2b.")
-            </h3>
-
             @if (_preflightResult.Assertions.Count == 0)
             {
                 <p>Preflight raised no assertions.</p>
@@ -85,6 +106,7 @@
             else
             {
                 <table>
+                    <caption>Preflight assertions against the PDF/A-2b profile</caption>
                     <thead>
                         <tr>
                             <th scope="col">Rule</th>

@@ -7,9 +7,9 @@
 // through its `arrayBuffer()` method. That avoids the base64 round trip a
 // `byte[]` parameter would force through the JSON interop channel.
 
-export async function createBlobUrl(streamRef, contentType) {
+export async function createBlobUrl(streamRef) {
     const buffer = await streamRef.arrayBuffer();
-    const blob = new Blob([buffer], { type: contentType ?? "application/pdf" });
+    const blob = new Blob([buffer], { type: "application/pdf" });
     return URL.createObjectURL(blob);
 }
 
