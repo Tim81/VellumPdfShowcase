@@ -85,7 +85,7 @@ internal static class DocumentSpecSamples
                 new HeadingSpec
                 {
                     Text = "Capability round trip",
-                    Level = 1,
+                    Level = 0,
                     Style = embeddedHeadingStyle,
                     BookmarkTitle = "Round trip",
                     Language = "en",
@@ -182,7 +182,7 @@ internal static class DocumentSpecSamples
             DefaultTextStyle = style,
             Content =
             [
-                new HeadingSpec { Text = "Defaults", Level = 2 },
+                new HeadingSpec { Text = "Defaults", Level = 0 },
                 ParagraphSpec.FromText("Paragraph with every optional field left at its default.", style),
                 new ListSpec
                 {
@@ -220,7 +220,7 @@ internal static class DocumentSpecSamples
             Language = "en",
             Content =
             [
-                new HeadingSpec { Text = "PDF/A-2b sample", Level = 1, Style = style, Language = "en" },
+                new HeadingSpec { Text = "PDF/A-2b sample", Level = 0, Style = style, Language = "en" },
                 ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
             ],
             OutputIntent = new PdfAOutputIntentSpec
@@ -281,7 +281,7 @@ internal static class DocumentSpecSamples
             DefaultTextStyle = bodyStyle,
             Content =
             [
-                new HeadingSpec { Text = "Repeated content types", Level = 1, Alignment = HorizontalAlignment.Right },
+                new HeadingSpec { Text = "Repeated content types", Level = 0, Alignment = HorizontalAlignment.Right },
                 new ParagraphSpec
                 {
                     Alignment = HorizontalAlignment.Justify,
@@ -389,7 +389,7 @@ internal static class DocumentSpecSamples
             Language = "en",
             Content =
             [
-                new HeadingSpec { Text = "PDF/A-2u sample", Level = 1, Style = style, Language = "en" },
+                new HeadingSpec { Text = "PDF/A-2u sample", Level = 0, Style = style, Language = "en" },
                 ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
             ],
             OutputIntent = new PdfAOutputIntentSpec
@@ -573,7 +573,7 @@ internal static class DocumentSpecSamples
             Language = "en",
             Content =
             [
-                new HeadingSpec { Text = "PDF/A-2a sample", Level = 1, Style = style, Language = "en" },
+                new HeadingSpec { Text = "PDF/A-2a sample", Level = 0, Style = style, Language = "en" },
                 ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
             ],
             OutputIntent = new PdfAOutputIntentSpec
@@ -605,8 +605,8 @@ internal static class DocumentSpecSamples
     /// <see langword="0"/>; <see langword="1"/> tags it H2 with no preceding
     /// H1, which ISO 14289-1:2014 clause 7.4.2 rejects as a skipped level.
     /// PDF/A preflight does not check heading hierarchy at all, which is why
-    /// every other sample in this file uses <see langword="1"/> for its sole
-    /// heading without being caught.
+    /// this defect previously reached every sample in this file that uses a
+    /// single sole heading: each now uses <see langword="0"/>.
     /// </remarks>
     public static DocumentSpec PdfUA1WithOutputIntent()
     {
@@ -781,8 +781,8 @@ internal static class DocumentSpecSamples
     /// The remaining emitter branches with no other coverage in this file:
     /// <see cref="TextStyleSpec.Leading"/>, <see cref="ListSpec.Indent"/>,
     /// <see cref="TableSpec.BorderWidth"/>, the GIF and TIFF Kernel image
-    /// loaders, and <see cref="ImageSpec.Height"/> set independently of
-    /// <see cref="ImageSpec.Width"/>.
+    /// loaders, <see cref="ImageSpec.Height"/> set independently of
+    /// <see cref="ImageSpec.Width"/>, and <see cref="DocumentSpec.UseObjectStreams"/>.
     /// </summary>
     public static DocumentSpec RemainingBranchCoverage()
     {
@@ -792,6 +792,7 @@ internal static class DocumentSpecSamples
         {
             Page = new PageSizeSpec(500, 700),
             DefaultTextStyle = leadedStyle,
+            UseObjectStreams = true,
             Content =
             [
                 ParagraphSpec.FromText("A paragraph with explicit leading.", leadedStyle),
@@ -840,7 +841,7 @@ internal static class DocumentSpecSamples
             DefaultTextStyle = bodyStyle,
             Content =
             [
-                new HeadingSpec { Text = "Margins on every element", Level = 2, Margins = new EdgeInsets(4, 8, 12, 16) },
+                new HeadingSpec { Text = "Margins on every element", Level = 0, Margins = new EdgeInsets(4, 8, 12, 16) },
                 new ParagraphSpec
                 {
                     Runs = [new TextRunSpec("A paragraph with margins and an explicit language.", bodyStyle)],

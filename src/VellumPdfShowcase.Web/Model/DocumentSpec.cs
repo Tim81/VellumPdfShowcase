@@ -66,9 +66,12 @@ public sealed record DocumentSpec
     /// <c>Document</c> exactly once, regardless of how many styles reference it.
     /// </summary>
     /// <remarks>
-    /// Per plan section 5.4, every entry is capped at <see cref="SpecLimits.MaxAssetBytes"/>
-    /// and the whole list is snapshotted with a collection expression at
-    /// construction, so mutating a list passed in cannot change this value afterward.
+    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxEmbeddedFonts"/>
+    /// entries, each entry is capped at <see cref="SpecLimits.MaxAssetBytes"/>,
+    /// and both the list and each entry's own byte array are snapshotted at
+    /// construction (<see cref="SpecLimits.ValidateAssetBytes"/> returns a
+    /// defensive copy), so mutating either a list passed in, or a byte array
+    /// already inside it, cannot change this value afterward.
     /// </remarks>
     public IReadOnlyList<byte[]> EmbeddedFonts
     {
@@ -86,6 +89,15 @@ public sealed record DocumentSpec
     /// <see cref="ImageSpec.Format"/> checked against the magic bytes of its
     /// own <see cref="ImageSpec.Bytes"/>, which requires both properties to be
     /// already set and so cannot be done inside <see cref="ImageSpec"/> itself.
+    /// Finally, the total number of nodes walking this list would visit
+    /// (counted exactly as <see cref="Generation.SpecRenderer"/> and
+    /// <see cref="Generation.SpecCodeEmitter"/> walk it, once per position
+    /// rather than once per distinct object) is checked against
+    /// <see cref="SpecLimits.MaxWalkedNodes"/>, which is the only thing that
+    /// stops a small number of objects sharing one deeply reused subtree from
+    /// multiplying the work either side performs; every other cap in
+    /// <see cref="SpecLimits"/> bounds a collection's own size and cannot, by
+    /// itself, prevent that multiplication.
     /// </remarks>
     public required IReadOnlyList<ContentItemSpec> Content
     {
@@ -104,6 +116,22 @@ public sealed record DocumentSpec
 
     /// <summary>Whether the document carries a tagged structure tree.</summary>
     public bool Tagged { get; init; }
+
+    /// <summary>
+    /// Whether <c>Document.Save</c> uses PDF 1.5+ object streams and a
+    /// cross-reference stream, for smaller output, instead of the classic
+    /// cross-reference table. Forwarded directly to <c>Document.UseObjectStreams</c>;
+    /// the library's own default is <see langword="false"/>, matched here.
+    /// </summary>
+    /// <remarks>
+    /// NOTE: the library throws <see cref="NotSupportedException"/> from
+    /// <c>Document.Save</c> when this is combined with <see cref="Encryption"/>.
+    /// This model does not guard that combination itself, consistent with
+    /// every other cross-feature incompatibility the library enforces at
+    /// save time rather than at construction, such as a PDF/A
+    /// <see cref="Conformance"/> claim together with <see cref="Encryption"/>.
+    /// </remarks>
+    public bool UseObjectStreams { get; init; }
 
     /// <summary>The document's natural language, as a BCP 47 tag such as <c>"en"</c>.</summary>
     public string? Language
@@ -139,39 +167,39 @@ public sealed record DocumentSpec
     /// Encryption settings, if the document is to be encrypted.
     /// </summary>
     /// <remarks>
-    /// Per plan section 5.4 (C4-C-M5), a restricted <see cref="EncryptionSpec.Permissions"/>
-    /// set requires a non-empty <see cref="EncryptionSpec.OwnerPassword"/>. The
-    /// library authenticates full owner access to whichever password actually
-    /// opens the document; with <see cref="EncryptionSpec.OwnerPassword"/> left
-    /// unset, that password is <see cref="EncryptionSpec.UserPassword"/>, so a
-    /// restricted permission set would bind nobody who can open the file, and
-    /// the PDF is the one artefact that leaves the machine. This check
-    /// requires both properties to already be set and so cannot be done
-    /// inside <see cref="EncryptionSpec"/> itself.
+    /// Per plan section 5.4, a restricted <see cref="EncryptionSpec.Permissions"/>
+    /// set requires an <see cref="EncryptionSpec.OwnerPassword"/> that is both
+    /// non-empty AND distinct from <see cref="EncryptionSpec.UserPassword"/>.
+    /// The library authenticates full owner access to whichever password
+    /// actually opens the document: with <see cref="EncryptionSpec.OwnerPassword"/>
+    /// left unset, that password is <see cref="EncryptionSpec.UserPassword"/>,
+    /// and setting <see cref="EncryptionSpec.OwnerPassword"/> equal to
+    /// <see cref="EncryptionSpec.UserPassword"/> reaches exactly the same
+    /// outcome by a different route: there is still only one password, so it
+    /// still authenticates as owner. Either way, a restricted permission set
+    /// would bind nobody who can open the file, and the PDF is the one
+    /// artefact that leaves the machine. This check requires both properties
+    /// to already be set and so cannot be done inside <see cref="EncryptionSpec"/>
+    /// itself.
     /// </remarks>
     public EncryptionSpec? Encryption
     {
         get;
-        init => field = value switch
-        {
-            { Permissions: var permissions, OwnerPassword: null or "" } when permissions != PdfPermissions.All =>
-                throw new ArgumentException(
-                    "EncryptionSpec.OwnerPassword must be set whenever Permissions restricts any permission; " +
-                    "otherwise the displayed permission set binds nobody who can open the file.",
-                    nameof(Encryption)),
-            _ => value,
-        };
+        init => field = ValidateEncryption(value);
     }
 
     private static IReadOnlyList<byte[]> ValidateEmbeddedFonts(IReadOnlyList<byte[]> value)
     {
         ArgumentNullException.ThrowIfNull(value, nameof(EmbeddedFonts));
-        foreach (var font in value)
+
+        if (value.Count > SpecLimits.MaxEmbeddedFonts)
         {
-            SpecLimits.ValidateAssetBytes(font, nameof(EmbeddedFonts));
+            throw new ArgumentException(
+                $"A document must not have more than {SpecLimits.MaxEmbeddedFonts} embedded fonts; got {value.Count}.",
+                nameof(EmbeddedFonts));
         }
 
-        return [.. value];
+        return [.. value.Select(font => SpecLimits.ValidateAssetBytes(font, nameof(EmbeddedFonts)))];
     }
 
     private static IReadOnlyList<ContentItemSpec> ValidateContent(IReadOnlyList<ContentItemSpec> value)
@@ -202,13 +230,154 @@ public sealed record DocumentSpec
             }
         }
 
+        if (WalksBeyondNodeLimit(snapshot))
+        {
+            throw new ArgumentException(
+                $"This specification's content would require walking more than {SpecLimits.MaxWalkedNodes} " +
+                "nodes to render or emit, counting the walk itself rather than the number of distinct objects " +
+                "constructed, so a small number of objects sharing one deeply reused subtree cannot multiply " +
+                "the work performed. Reduce nesting, breadth, or the amount of shared structure.",
+                nameof(Content));
+        }
+
         return snapshot;
     }
+
+    /// <summary>
+    /// Whether walking <paramref name="content"/> exactly as
+    /// <see cref="Generation.SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>
+    /// do (visiting a shared reference once per position it occupies, never
+    /// deduplicated by object identity) would visit more than
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> nodes. Every counting helper
+    /// below stops the instant the running total would exceed the limit, so a
+    /// specification engineered to make the TRUE total astronomically large
+    /// (for instance by nesting shared subtrees inside shared subtrees) is
+    /// rejected after doing only <see cref="SpecLimits.MaxWalkedNodes"/> units
+    /// of counting work, never after actually performing the astronomical
+    /// amount of work the true total implies.
+    /// </summary>
+    private static bool WalksBeyondNodeLimit(IReadOnlyList<ContentItemSpec> content)
+    {
+        var count = 0;
+        foreach (var item in content)
+        {
+            if (!TryVisitNode(item, ref count))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryVisitNode(ContentItemSpec item, ref int count)
+    {
+        if (!TryVisit(ref count))
+        {
+            return false;
+        }
+
+        switch (item)
+        {
+            case ParagraphSpec paragraph:
+                foreach (var unused in paragraph.Runs)
+                {
+                    if (!TryVisit(ref count))
+                    {
+                        return false;
+                    }
+                }
+
+                break;
+
+            case ListSpec list:
+                foreach (var listItem in list.Items)
+                {
+                    if (!TryVisitListItem(listItem, ref count))
+                    {
+                        return false;
+                    }
+                }
+
+                break;
+
+            case TableSpec table:
+                foreach (var row in table.Rows)
+                {
+                    if (!TryVisit(ref count))
+                    {
+                        return false;
+                    }
+
+                    foreach (var unused in row.Cells)
+                    {
+                        if (!TryVisit(ref count))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                break;
+
+            case PieChartSpec pieChart:
+                foreach (var unused in pieChart.Slices)
+                {
+                    if (!TryVisit(ref count))
+                    {
+                        return false;
+                    }
+                }
+
+                break;
+        }
+
+        return true;
+    }
+
+    private static bool TryVisitListItem(ListItemSpec item, ref int count)
+    {
+        if (!TryVisit(ref count))
+        {
+            return false;
+        }
+
+        foreach (var child in item.Children)
+        {
+            if (!TryVisitListItem(child, ref count))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryVisit(ref int count) => ++count <= SpecLimits.MaxWalkedNodes;
 
     private static PdfAOutputIntentSpec Validated(PdfAOutputIntentSpec pdfA)
     {
         IccProfileHeader.Validate(pdfA.IccProfile, pdfA.ComponentCount);
         return pdfA;
+    }
+
+    private static EncryptionSpec? ValidateEncryption(EncryptionSpec? value)
+    {
+        if (value is null || value.Permissions == PdfPermissions.All)
+        {
+            return value;
+        }
+
+        if (string.IsNullOrEmpty(value.OwnerPassword) || value.OwnerPassword == value.UserPassword)
+        {
+            throw new ArgumentException(
+                "EncryptionSpec.OwnerPassword must be set to a value distinct from UserPassword whenever " +
+                "Permissions restricts any permission; otherwise the displayed permission set binds nobody " +
+                "who can open the file.",
+                nameof(Encryption));
+        }
+
+        return value;
     }
 }
 
@@ -337,9 +506,9 @@ public sealed record HeadingSpec : ContentItemSpec
 public sealed record ParagraphSpec : ContentItemSpec
 {
     /// <summary>
-    /// Per plan section 5.4, the list is snapshotted with a collection
-    /// expression at construction and each run's <see cref="TextRunSpec.Text"/>
-    /// is capped at <see cref="SpecLimits.MaxTextLength"/>.
+    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxParagraphRuns"/>,
+    /// snapshotted with a collection expression at construction, and each
+    /// run's <see cref="TextRunSpec.Text"/> is capped at <see cref="SpecLimits.MaxTextLength"/>.
     /// </summary>
     public required IReadOnlyList<TextRunSpec> Runs
     {
@@ -362,6 +531,12 @@ public sealed record ParagraphSpec : ContentItemSpec
     private static IReadOnlyList<TextRunSpec> ValidateRuns(IReadOnlyList<TextRunSpec> value)
     {
         ArgumentNullException.ThrowIfNull(value, nameof(Runs));
+
+        if (value.Count > SpecLimits.MaxParagraphRuns)
+        {
+            throw new ArgumentException($"A paragraph must not have more than {SpecLimits.MaxParagraphRuns} runs; got {value.Count}.", nameof(Runs));
+        }
+
         foreach (var run in value)
         {
             SpecLimits.ValidateString(run.Text, SpecLimits.MaxTextLength, nameof(Runs));
@@ -373,15 +548,23 @@ public sealed record ParagraphSpec : ContentItemSpec
 
 /// <summary>
 /// A plain string added through the library's <c>Document.Add(string, TextStyle?)</c>
-/// overload, the one member of <c>Document</c> listed in plan section 3.1 that
-/// this model could not previously express. When <see cref="Style"/> is
-/// <see langword="null"/>, the rendered text uses whatever style
-/// <see cref="DocumentSpec.DefaultTextStyle"/> registered through
-/// <c>Document.SetDefaultFont</c>. <see cref="HeadingSpec"/> and
+/// overload: the last of that method's overloads this model had not already
+/// covered when this type was added. Plan section 3.1 lists two further
+/// members that remain unexpressed, for different reasons: <c>Document.Add(IRenderer)</c>,
+/// a developer-supplied drawing hook with nothing for a structured form to
+/// represent, and <c>Document.TextEncodingWarnings</c>, which is get-only and
+/// so was never a candidate to begin with. <c>Document.UseObjectStreams</c>,
+/// once also on that list, is now expressed directly as
+/// <see cref="DocumentSpec.UseObjectStreams"/>.
+/// </summary>
+/// <remarks>
+/// When <see cref="Style"/> is <see langword="null"/>, the rendered text uses
+/// whatever style <see cref="DocumentSpec.DefaultTextStyle"/> registered
+/// through <c>Document.SetDefaultFont</c>. <see cref="HeadingSpec"/> and
 /// <see cref="ParagraphSpec"/> resolve their own fallback directly instead and
 /// never consult that value; see the remark on <see cref="DocumentSpec.DefaultTextStyle"/>
 /// for the two content items that are neither.
-/// </summary>
+/// </remarks>
 public sealed record PlainTextSpec : ContentItemSpec
 {
     public required string Text
@@ -398,13 +581,22 @@ public sealed record ListSpec : ContentItemSpec
 {
     public required ListStyle Style { get; init; }
 
-    /// <summary>Snapshotted with a collection expression at construction, per plan section 5.4.</summary>
+    /// <summary>
+    /// Capped at <see cref="SpecLimits.MaxListItems"/> and snapshotted with a
+    /// collection expression at construction, per plan section 5.4.
+    /// </summary>
     public required IReadOnlyList<ListItemSpec> Items
     {
         get;
         init
         {
             ArgumentNullException.ThrowIfNull(value, nameof(Items));
+
+            if (value.Count > SpecLimits.MaxListItems)
+            {
+                throw new ArgumentException($"A list must not have more than {SpecLimits.MaxListItems} items; got {value.Count}.", nameof(Items));
+            }
+
             field = [.. value];
         }
     }
@@ -432,13 +624,14 @@ public sealed record ListItemSpec
     }
 
     /// <summary>
-    /// Per plan section 5.4 (C4-C-M2), snapshotted with a collection
-    /// expression at construction, and the nesting depth reachable through
-    /// this item is capped at <see cref="SpecLimits.MaxListNestingDepth"/>.
-    /// Unbounded nesting recurses without a bound in both the renderer and
-    /// the emitter and overflows the CLR stack; a stack overflow cannot be
-    /// caught, so this is the one control in section 5.4 that a wrapped
-    /// parser call cannot rescue.
+    /// Snapshotted with a collection expression at construction, per plan
+    /// section 5.4. Capped in two independent dimensions: breadth, at
+    /// <see cref="SpecLimits.MaxListItemChildren"/> direct children, and
+    /// depth, at <see cref="SpecLimits.MaxListNestingDepth"/> levels reachable
+    /// through this item. Unbounded nesting recurses without a bound in both
+    /// the renderer and the emitter and overflows the CLR stack; a stack
+    /// overflow cannot be caught, so the depth cap is the one control in
+    /// section 5.4 that a wrapped parser call cannot rescue.
     /// </summary>
     public IReadOnlyList<ListItemSpec> Children
     {
@@ -446,6 +639,14 @@ public sealed record ListItemSpec
         init
         {
             ArgumentNullException.ThrowIfNull(value, nameof(Children));
+
+            if (value.Count > SpecLimits.MaxListItemChildren)
+            {
+                throw new ArgumentException(
+                    $"A list item must not have more than {SpecLimits.MaxListItemChildren} children; got {value.Count}.",
+                    nameof(Children));
+            }
+
             var snapshot = value.Count == 0 ? (IReadOnlyList<ListItemSpec>)[] : [.. value];
             var depth = snapshot.Count == 0 ? 1 : 1 + snapshot.Max(child => child.Depth);
 
@@ -478,16 +679,34 @@ public sealed record TableSpec : ContentItemSpec
         init => field = ValidateRows(value);
     }
 
+    /// <summary>Capped at <see cref="SpecLimits.MaxTableColumnWidths"/> entries and snapshotted at construction, per plan section 5.4.</summary>
     public IReadOnlyList<double>? ColumnWidths
     {
         get;
-        init => field = value is null ? null : [.. value];
+        init => field = ValidateColumnWidths(value);
     }
 
     public TextStyleSpec? DefaultCellStyle { get; init; }
     public double? BorderWidth { get; init; }
     public ColorRgb? BorderColor { get; init; }
     public EdgeInsets? Margins { get; init; }
+
+    private static IReadOnlyList<double>? ValidateColumnWidths(IReadOnlyList<double>? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value.Count > SpecLimits.MaxTableColumnWidths)
+        {
+            throw new ArgumentException(
+                $"A table must not have more than {SpecLimits.MaxTableColumnWidths} column widths; got {value.Count}.",
+                nameof(ColumnWidths));
+        }
+
+        return [.. value];
+    }
 
     private static IReadOnlyList<TableRowSpec> ValidateRows(IReadOnlyList<TableRowSpec> value)
     {
@@ -591,10 +810,13 @@ public enum ImageFormat
 /// <summary>A <c>LayoutImage</c>, decoded through the matching Kernel loader for <see cref="Format"/>.</summary>
 /// <remarks>
 /// Per plan section 5.4, <see cref="Bytes"/> is capped at
-/// <see cref="SpecLimits.MaxAssetBytes"/> here; whether it actually matches
-/// <see cref="Format"/>'s magic bytes is checked by <see cref="DocumentSpec.Content"/>,
-/// which is the only property that ever sees both this record's properties
-/// fully set.
+/// <see cref="SpecLimits.MaxAssetBytes"/> and defensively copied here
+/// (<see cref="SpecLimits.ValidateAssetBytes"/> returns a clone), so mutating
+/// the caller's own array afterward cannot change what a fully constructed
+/// record holds; whether it actually matches <see cref="Format"/>'s magic
+/// bytes is checked by <see cref="DocumentSpec.Content"/>, which is the only
+/// property that ever sees both this record's properties fully set, and
+/// which reads this already-copied array rather than the caller's.
 /// </remarks>
 public sealed record ImageSpec : ContentItemSpec
 {
@@ -748,10 +970,14 @@ public abstract record OutputIntentSpec;
 /// </summary>
 /// <remarks>
 /// Per plan section 5.4, <see cref="IccProfile"/> is capped at
-/// <see cref="SpecLimits.MaxAssetBytes"/> here; whether its header is
-/// internally consistent with <see cref="ComponentCount"/> is checked by
-/// <see cref="DocumentSpec.OutputIntent"/>, which is the only property that
-/// ever sees both this record's properties fully set.
+/// <see cref="SpecLimits.MaxAssetBytes"/> and defensively copied here
+/// (<see cref="SpecLimits.ValidateAssetBytes"/> returns a clone), so mutating
+/// the caller's own array afterward cannot change what a fully constructed
+/// record holds; whether its header is internally consistent with
+/// <see cref="ComponentCount"/> is checked by <see cref="DocumentSpec.OutputIntent"/>,
+/// which is the only property that ever sees both this record's properties
+/// fully set, and which reads this already-copied array rather than the
+/// caller's.
 /// </remarks>
 public sealed record PdfAOutputIntentSpec : OutputIntentSpec
 {

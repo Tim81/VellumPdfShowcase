@@ -39,16 +39,8 @@ public class SpecRoundTripTests
         await AssertRoundTripAsync(DocumentSpecSamples.PdfA2bWithOutputIntent());
 
     [Fact]
-    public async Task RoundTrip_PdfA2bWithOutputIntent_IsReportedCompliantByPreflight() =>
-        await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2bWithOutputIntent());
-
-    [Fact]
     public async Task RoundTrip_PdfA2uWithOutputIntent_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.PdfA2uWithOutputIntent());
-
-    [Fact]
-    public async Task RoundTrip_PdfA2uWithOutputIntent_IsReportedCompliantByPreflight() =>
-        await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2uWithOutputIntent());
 
     /// <summary>
     /// The structural guard: every <see cref="DocumentSpecSamples"/> member
@@ -66,7 +58,10 @@ public class SpecRoundTripTests
     /// never checked at all. A future sample that claims a profile is
     /// automatically included here the moment it is added to
     /// <see cref="DocumentSpecSamples"/>, with no second call site to
-    /// remember.
+    /// remember. Those three original named facts have since been removed:
+    /// every sample they covered claims a profile, so this theory already
+    /// preflights each of them, and the separate facts were doing the same
+    /// work a second time.
     /// </summary>
     [Theory]
     [MemberData(nameof(SampleNamesClaimingConformance))]
@@ -86,7 +81,7 @@ public class SpecRoundTripTests
         TheoryData<string> names = [];
 
         foreach (var name in SampleFactoryMethods()
-            .Where(method => ((DocumentSpec)method.Invoke(null, null)!).Conformance != DocumentConformance.None)
+            .Where(method => ((DocumentSpec)method.Invoke(null, DefaultArguments(method))!).Conformance != DocumentConformance.None)
             .Select(method => method.Name))
         {
             names.Add(name);
@@ -95,16 +90,29 @@ public class SpecRoundTripTests
         return names;
     }
 
+    /// <summary>
+    /// Every public, static, <see cref="DocumentSpec"/>-returning method on
+    /// <see cref="DocumentSpecSamples"/> that a factory-style call site can
+    /// invoke with no arguments: either genuinely parameterless, or every
+    /// parameter optional. A plain parameter-count-zero check silently
+    /// skipped the latter shape, so a sample factory taking an all-optional
+    /// parameter would neither be preflighted here nor reachable by
+    /// <see cref="InvokeSample"/>, with no error to say so.
+    /// </summary>
     private static IEnumerable<MethodInfo> SampleFactoryMethods() =>
         typeof(DocumentSpecSamples)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(method => method.GetParameters().Length == 0 && method.ReturnType == typeof(DocumentSpec));
+            .Where(method => method.ReturnType == typeof(DocumentSpec) && method.GetParameters().All(p => p.IsOptional));
+
+    /// <summary>The default value of every parameter of <paramref name="method"/>, in order, for invoking it as a no-argument factory.</summary>
+    private static object?[] DefaultArguments(MethodInfo method) =>
+        [.. method.GetParameters().Select(p => p.DefaultValue)];
 
     private static DocumentSpec InvokeSample(string sampleName)
     {
         var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException($"DocumentSpecSamples has no public static parameterless member named {sampleName}.");
-        return (DocumentSpec)method.Invoke(null, null)!;
+            ?? throw new InvalidOperationException($"DocumentSpecSamples has no public static member named {sampleName} returning a DocumentSpec.");
+        return (DocumentSpec)method.Invoke(null, DefaultArguments(method))!;
     }
 
     /// <summary>
@@ -148,10 +156,6 @@ public class SpecRoundTripTests
     [Fact]
     public async Task RoundTrip_PdfA2aWithOutputIntent_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
-
-    [Fact]
-    public async Task RoundTrip_PdfA2aWithOutputIntent_IsReportedCompliantByPreflight() =>
-        await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
 
     /// <summary>PDF/UA-1, the fourth and last of the four conformance profiles plan section 6.2 requires.</summary>
     [Fact]

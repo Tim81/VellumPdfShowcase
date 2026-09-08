@@ -45,6 +45,7 @@ public static class SpecRenderer
             Margins = spec.Margins,
             Conformance = spec.Conformance,
             Tagged = spec.Tagged,
+            UseObjectStreams = spec.UseObjectStreams,
         };
 
         if (spec.Language is not null)
@@ -60,8 +61,16 @@ public static class SpecRenderer
         // the remark on DocumentSpec.DefaultTextStyle. HeadingSpec and
         // ParagraphSpec resolve their own fallback directly below and never
         // read this value; ListItemSpec and TableCellSpec, when unstyled,
-        // stay null here and are resolved later by their own container.
-        document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, context));
+        // stay null here and are resolved later by their own container. Only
+        // called when the specification actually contains an unstyled
+        // PlainTextSpec, the identical condition SpecCodeEmitter checks
+        // before emitting the matching document.SetDefaultFont line, so the
+        // two sides cannot disagree about whether the call happens even
+        // though it is provably inert either way for every other document.
+        if (SpecCodeEmitter.HasUnstyledPlainText(spec))
+        {
+            document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, context));
+        }
 
         if (spec.Metadata is { } metadata)
         {

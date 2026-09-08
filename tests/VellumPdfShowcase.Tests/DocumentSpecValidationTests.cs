@@ -534,6 +534,22 @@ public class EncryptionOwnerPasswordTests
         Assert.NotNull(spec.Encryption);
     }
 
+    /// <summary>
+    /// The null-or-empty guard alone is one keystroke from useless,
+    /// because setting <see cref="EncryptionSpec.OwnerPassword"/> equal to
+    /// <see cref="EncryptionSpec.UserPassword"/> satisfies it while
+    /// reproducing exactly the defect it exists to prevent: there is still
+    /// only one password, so it still authenticates as owner and the
+    /// restricted permission set still binds nobody who can open the file.
+    /// </summary>
+    [Fact]
+    public void RestrictedPermissionsWithOwnerPasswordEqualToUserPassword_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            DocumentWithEncryption(new EncryptionSpec { UserPassword = "same-secret", OwnerPassword = "same-secret", Permissions = PdfPermissions.Print }));
+        Assert.Contains("OwnerPassword", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void UnrestrictedPermissionsWithNullOwnerPassword_Constructs()
     {
@@ -542,5 +558,261 @@ public class EncryptionOwnerPasswordTests
         Assert.NotNull(spec.Encryption);
         Assert.Null(spec.Encryption!.OwnerPassword);
         Assert.Equal(PdfPermissions.All, spec.Encryption.Permissions);
+    }
+}
+
+/// <summary>
+/// Every collection breadth cap bounds how many distinct objects a
+/// specification may hold, but the five collections below had no cap at all
+/// before this fix, and <see cref="SpecLimits.MaxWalkedNodes"/> separately
+/// bounds the total work a shared subtree can be walked into performing,
+/// which no per-collection cap can prevent on its own.
+/// </summary>
+public class SpecSizeLimitBreadthTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    [Fact]
+    public void ListSpec_ItemsBeyondLimit_ThrowsAtConstruction()
+    {
+        List<ListItemSpec> items = [.. Enumerable.Range(0, SpecLimits.MaxListItems + 1).Select(i => new ListItemSpec { Text = $"{i}" })];
+
+        var exception = Assert.Throws<ArgumentException>(() => new ListSpec { Style = ListStyle.Unordered, Items = items });
+        Assert.Contains("items", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ListItemSpec_ChildrenBreadthBeyondLimit_ThrowsAtConstruction()
+    {
+        List<ListItemSpec> children = [.. Enumerable.Range(0, SpecLimits.MaxListItemChildren + 1).Select(i => new ListItemSpec { Text = $"{i}" })];
+
+        var exception = Assert.Throws<ArgumentException>(() => new ListItemSpec { Text = "parent", Children = children });
+        Assert.Contains("children", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParagraphSpec_RunsBeyondLimit_ThrowsAtConstruction()
+    {
+        List<TextRunSpec> runs = [.. Enumerable.Range(0, SpecLimits.MaxParagraphRuns + 1).Select(i => new TextRunSpec($"{i}", Style()))];
+
+        var exception = Assert.Throws<ArgumentException>(() => new ParagraphSpec { Runs = runs });
+        Assert.Contains("runs", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DocumentSpec_EmbeddedFontsCountBeyondLimit_ThrowsAtConstruction()
+    {
+        List<byte[]> fonts = [.. Enumerable.Range(0, SpecLimits.MaxEmbeddedFonts + 1).Select(_ => new byte[] { 1, 2, 3 })];
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [new PlainTextSpec { Text = "x" }],
+                EmbeddedFonts = fonts,
+            });
+        Assert.Contains("embedded fonts", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TableSpec_ColumnWidthsBeyondLimit_ThrowsAtConstruction()
+    {
+        List<double> widths = [.. Enumerable.Range(0, SpecLimits.MaxTableColumnWidths + 1).Select(i => (double)i)];
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new TableSpec { Rows = [new TableRowSpec { Cells = [new TableCellSpec { Content = "x" }] }], ColumnWidths = widths });
+        Assert.Contains("column widths", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// The decisive case: a small number of distinct objects, each
+/// individually within every per-collection cap, made to multiply through
+/// sharing rather than genuine size. <see cref="SpecLimits.MaxWalkedNodes"/>
+/// is the only control that can catch this, since it counts the walk itself
+/// rather than the number of distinct objects constructed.
+/// </summary>
+public class WalkedNodeLimitTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    /// <summary>
+    /// Builds a chain nested one level short of <see cref="SpecLimits.MaxListNestingDepth"/>,
+    /// then references THE SAME chain instance from
+    /// <see cref="SpecLimits.MaxListItemChildren"/> sibling slots under one
+    /// top-level item, so every individual collection (the chain's own
+    /// depth, the top item's breadth, the list's one item) sits at or under
+    /// its own per-collection cap. Distinct objects number in the low
+    /// hundreds, but a walk that visits a shared reference once per sibling
+    /// slot, rather than once per distinct object, visits the chain's full
+    /// depth on every one of the hundred slots, and that total must be
+    /// rejected even though no individual collection is oversized.
+    /// </summary>
+    [Fact]
+    public void SharedDeeplyNestedSubtree_ReferencedFromManySiblings_ThrowsAtConstruction()
+    {
+        ListItemSpec chain = new() { Text = "leaf" };
+        for (var depth = 1; depth < SpecLimits.MaxListNestingDepth - 1; depth++)
+        {
+            chain = new ListItemSpec { Text = $"level{depth}", Children = [chain] };
+        }
+
+        var sharedChain = chain;
+        List<ListItemSpec> siblings = [.. Enumerable.Repeat(sharedChain, SpecLimits.MaxListItemChildren)];
+        var topItem = new ListItemSpec { Text = "top", Children = siblings };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content =
+                [
+                    new ListSpec { Style = ListStyle.Unordered, Items = [topItem] },
+                ],
+            });
+        Assert.Contains("walking", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The counterpart to the case above: a modest, non-shared document, far
+    /// smaller than any per-collection cap, must not be rejected. This is
+    /// what keeps <see cref="SpecLimits.MaxWalkedNodes"/> from being so tight
+    /// that it interferes with ordinary use.
+    /// </summary>
+    [Fact]
+    public void OrdinaryModestDocument_Constructs()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content =
+            [
+                new HeadingSpec { Text = "Heading", Level = 0 },
+                ParagraphSpec.FromText("A short paragraph.", Style()),
+                new ListSpec { Style = ListStyle.Unordered, Items = [new ListItemSpec { Text = "One" }, new ListItemSpec { Text = "Two" }] },
+                new TableSpec { Rows = [new TableRowSpec { Cells = [new TableCellSpec { Content = "Cell" }] }] },
+            ],
+        };
+
+        Assert.NotNull(spec);
+    }
+}
+
+/// <summary>
+/// Every one of these values was previously unverified, because
+/// every test that exercised a cap derived its own input from the constant
+/// under test, so a test could pin the PRESENCE of a check without ever
+/// pinning its MAGNITUDE. These tests assert the literal values instead, so
+/// that changing a cap is a deliberate change to this file, not a silent
+/// side effect of changing <see cref="SpecLimits"/> alone.
+/// </summary>
+public class SpecLimitsValuesAreVerifiedTests
+{
+    [Fact]
+    public void Values_MatchTheDocumentedConstants()
+    {
+        Assert.Equal(20 * 1024 * 1024, SpecLimits.MaxAssetBytes);
+        Assert.Equal(100_000, SpecLimits.MaxTextLength);
+        Assert.Equal(35, SpecLimits.MaxLanguageTagLength);
+        Assert.Equal(2048, SpecLimits.MaxUriLength);
+        Assert.Equal(2_000, SpecLimits.MaxContentItems);
+        Assert.Equal(2_000, SpecLimits.MaxTableRows);
+        Assert.Equal(100, SpecLimits.MaxTableCellsPerRow);
+        Assert.Equal(100, SpecLimits.MaxChartSlices);
+        Assert.Equal(64, SpecLimits.MaxListNestingDepth);
+        Assert.Equal(100, SpecLimits.MaxTableColumnWidths);
+        Assert.Equal(1_000, SpecLimits.MaxParagraphRuns);
+        Assert.Equal(2_000, SpecLimits.MaxListItems);
+        Assert.Equal(100, SpecLimits.MaxListItemChildren);
+        Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
+        Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
+    }
+}
+
+/// <summary>
+/// The nine collection members were snapshotted at construction, but
+/// the <c>byte[]</c> arrays behind three of them were not, so the byte-level
+/// validators (magic-byte sniffing, the ICC header check) were bypassable
+/// after construction by overwriting the caller's own array in place.
+/// </summary>
+public class ByteArraySnapshotTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    [Fact]
+    public void ImageSpec_Bytes_SnapshotsAliasedArray()
+    {
+        var aliased = new byte[] { 1, 2, 3 };
+        var spec = new ImageSpec { Format = ImageFormat.Png, Bytes = aliased };
+
+        aliased[0] = 99;
+
+        Assert.Equal(1, spec.Bytes[0]);
+    }
+
+    [Fact]
+    public void PdfAOutputIntentSpec_IccProfile_SnapshotsAliasedArray()
+    {
+        var aliased = (byte[])DocumentSpecSamples.SrgbIccProfileBytes().Clone();
+        var originalFirstByte = aliased[0];
+        var spec = new PdfAOutputIntentSpec { IccProfile = aliased, ComponentCount = 3, OutputConditionIdentifier = "x" };
+
+        aliased[0] = unchecked((byte)(aliased[0] + 1));
+
+        Assert.Equal(originalFirstByte, spec.IccProfile[0]);
+    }
+
+    [Fact]
+    public void DocumentSpec_EmbeddedFontsEntry_SnapshotsAliasedArray()
+    {
+        var aliased = new byte[] { 1, 2, 3, 4 };
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new PlainTextSpec { Text = "x" }],
+            EmbeddedFonts = [aliased],
+        };
+
+        aliased[0] = 99;
+
+        Assert.Equal(1, spec.EmbeddedFonts[0][0]);
+    }
+
+    /// <summary>
+    /// The concrete security scenario the snapshot exists to close: a
+    /// validated PNG's bytes overwritten, after construction, with BMP magic
+    /// bytes. Without the copy, <see cref="DocumentSpec.Content"/>'s
+    /// magic-byte check would have already passed against the original PNG
+    /// bytes, and the renderer would go on to hand BMP bytes to
+    /// <c>PngImageLoader</c>, which is exactly what the sniffing exists to
+    /// prevent.
+    /// </summary>
+    [Fact]
+    public void DocumentSpec_ImageBytesOverwrittenAfterConstruction_CannotBypassFormatValidation()
+    {
+        byte[] validPngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00];
+        var aliased = (byte[])validPngSignature.Clone();
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new ImageSpec { Format = ImageFormat.Png, Bytes = aliased }],
+        };
+
+        // Overwrite the caller's own array with BMP magic bytes after construction.
+        aliased[0] = 0x42;
+        aliased[1] = 0x4D;
+
+        var image = (ImageSpec)spec.Content[0];
+        Assert.Equal(0x89, image.Bytes[0]);
+        Assert.Equal(0x50, image.Bytes[1]);
     }
 }

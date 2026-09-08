@@ -121,15 +121,22 @@ public static class SpecCodeEmitter
                 // HeadingSpec and ParagraphSpec resolve their own fallback
                 // directly below and never read this value; ListItemSpec and
                 // TableCellSpec, when unstyled, stay null and are resolved
-                // later by their own container. Per C4-F-M2, this call is
-                // emitted only when the specification actually contains an
-                // unstyled PlainTextSpec: in every other document it would be
-                // fully spelled out and provably inert, sitting above
-                // unstyled ListItem and Cell constructions it does nothing
-                // for. HasUnstyledPlainText below and CollectTextStyles'
-                // conditional yield of this same style must agree, or a
-                // style used only via this call could be hoisted into a
-                // shared local that the emitted code never actually assigns.
+                // later by their own container. This call is emitted only
+                // when the specification actually contains an unstyled
+                // PlainTextSpec: in every other document it would be fully
+                // spelled out and provably inert, sitting above unstyled
+                // ListItem and Cell constructions it does nothing for.
+                // HasUnstyledPlainText below, CollectTextStyles' conditional
+                // yield of this same style, and SpecRenderer's own call to
+                // the identical predicate before calling Document.SetDefaultFont
+                // must all agree. EmitHoistedStyles always assigns every
+                // hoisted local it declares, so a disagreement never leaves
+                // anything unassigned; what it actually produces is a
+                // snippet that either hoists DefaultTextStyle into a local
+                // nothing visibly uses, or calls SetDefaultFont without the
+                // style having been counted toward hoisting, changing the
+                // displayed text while the rendered PDF stays identical, so
+                // a byte comparison of rendered output cannot catch it.
                 if (HasUnstyledPlainText(documentSpec))
                 {
                     writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
@@ -383,7 +390,15 @@ public static class SpecCodeEmitter
 
         private void EmitHeading(HeadingSpec headingSpec)
         {
-            List<string> initializers = [$"Level = {headingSpec.Level}"];
+            List<string> initializers = [];
+
+            // Level defaults to 0 (top-level), matching the library's own
+            // Heading, so the same omit-when-default convention every other
+            // optional member here follows applies to it too.
+            if (headingSpec.Level != 0)
+            {
+                initializers.Add($"Level = {headingSpec.Level}");
+            }
 
             if (headingSpec.Alignment != HorizontalAlignment.Left)
             {
@@ -782,7 +797,14 @@ public static class SpecCodeEmitter
                     writer.Line($"OwnerPassword = {Literal(encryption.OwnerPassword)},");
                 }
 
-                writer.Line($"Permissions = {EmitPermissions(encryption.Permissions)},");
+                // Permissions defaults to PdfPermissions.All on both
+                // PdfEncryptionSettings and EncryptionSpec, so the same
+                // omit-when-default convention every other optional member
+                // here follows applies to it too.
+                if (encryption.Permissions != PdfPermissions.All)
+                {
+                    writer.Line($"Permissions = {EmitPermissions(encryption.Permissions)},");
+                }
 
                 if (!encryption.EncryptMetadata)
                 {
@@ -883,12 +905,16 @@ public static class SpecCodeEmitter
     /// Whether <paramref name="spec"/> contains a <see cref="PlainTextSpec"/>
     /// with no explicit <see cref="PlainTextSpec.Style"/>, the only content
     /// item whose emitted code reads <see cref="DocumentSpec.DefaultTextStyle"/>.
-    /// Used by both <see cref="Emitter.EmitDocument"/>, to decide whether
-    /// <c>document.SetDefaultFont</c> is emitted at all (C4-F-M2), and
+    /// Used by <see cref="Emitter.EmitDocument"/>, to decide whether
+    /// <c>document.SetDefaultFont</c> is emitted at all; by
     /// <see cref="CollectTextStyles(DocumentSpec)"/>, so hoisting counts this
-    /// style exactly when the emitted code actually references it.
+    /// style exactly when the emitted code actually references it; and by
+    /// <see cref="SpecRenderer.Render"/>, which calls the library's own
+    /// <c>Document.SetDefaultFont</c> under the identical condition, so the
+    /// two sides cannot disagree about whether that call happens. Internal
+    /// rather than private for that last reason.
     /// </summary>
-    private static bool HasUnstyledPlainText(DocumentSpec spec) =>
+    internal static bool HasUnstyledPlainText(DocumentSpec spec) =>
         spec.Content.Any(item => item is PlainTextSpec { Style: null });
 
     private static IEnumerable<TextStyleSpec> CollectTextStyles(DocumentSpec spec)
@@ -1008,6 +1034,11 @@ public static class SpecCodeEmitter
         if (spec.Tagged)
         {
             initializers.Add("Tagged = true,");
+        }
+
+        if (spec.UseObjectStreams)
+        {
+            initializers.Add("UseObjectStreams = true,");
         }
 
         if (spec.Language is not null)
