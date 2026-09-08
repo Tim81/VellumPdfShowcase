@@ -122,6 +122,11 @@ public class SpecRoundTripTests
     public async Task RoundTrip_RemainingBranchCoverage_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.RemainingBranchCoverage());
 
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingEmitterBranchCoverage"/> (C4-C-M6).</summary>
+    [Fact]
+    public async Task RoundTrip_RemainingEmitterBranchCoverage_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.RemainingEmitterBranchCoverage());
+
     /// <summary>
     /// Encryption introduces its own nondeterminism beyond the document
     /// identifier and the XMP timestamps: rendering the identical
@@ -161,22 +166,53 @@ public class SpecRoundTripTests
     public async Task RoundTrip_EncryptedWithDefaults_DecryptsToMatchingContent() =>
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedWithDefaults());
 
+    /// <summary>
+    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedOwnerPasswordOnly"/>
+    /// (C4-C-M5). Opening with an empty user password must succeed and must
+    /// authenticate as the user, not the owner, since only the owner password
+    /// was actually set.
+    /// </summary>
+    [Fact]
+    public async Task RoundTrip_EncryptedOwnerPasswordOnly_DecryptsToMatchingContent() =>
+        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedOwnerPasswordOnly());
+
+    /// <summary>
+    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted"/>
+    /// (C4-C-M5). This is the one sample that proves the recorded behaviour
+    /// directly: opening with the user password authenticates as OWNER,
+    /// because no distinct owner password was ever set.
+    /// </summary>
+    [Fact]
+    public async Task RoundTrip_EncryptedNoOwnerPasswordUnrestricted_DecryptsToMatchingContent() =>
+        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted());
+
+    /// <summary>
+    /// Per the remark on <see cref="EncryptionSpec"/> (C4-C-M5): the password
+    /// that actually authenticates full (owner) access is
+    /// <see cref="EncryptionSpec.OwnerPassword"/> when set, otherwise
+    /// <see cref="EncryptionSpec.UserPassword"/>; and the password that opens
+    /// the document as the (non-owner) user is <see cref="EncryptionSpec.UserPassword"/>
+    /// when set, otherwise the empty string. Both branches were previously
+    /// unreachable because every sample set both passwords, and the helper
+    /// dereferenced both with the null-forgiving operator.
+    /// </summary>
     private static async Task AssertEncryptedRoundTripAsync(DocumentSpec spec)
     {
         var encryption = spec.Encryption!;
-        var ownerPassword = encryption.OwnerPassword!;
-        var userPassword = encryption.UserPassword!;
+        var ownerAuthPassword = encryption.OwnerPassword ?? encryption.UserPassword ?? "";
+        var userOpenPassword = encryption.UserPassword ?? "";
+        var userPasswordGrantsOwnerAccess = encryption.OwnerPassword is null;
 
         var rendered = SpecRenderer.Render(spec);
         var scripted = await RunEmittedCodeAsync(spec);
 
-        AssertEncryptionMatchesSpec(rendered, encryption);
-        AssertEncryptionMatchesSpec(scripted, encryption);
-        AssertPasswordAuthenticates(rendered, userPassword);
-        AssertPasswordAuthenticates(scripted, userPassword);
+        AssertEncryptionMatchesSpec(rendered, encryption, ownerAuthPassword);
+        AssertEncryptionMatchesSpec(scripted, encryption, ownerAuthPassword);
+        AssertPasswordAuthenticates(rendered, userOpenPassword, userPasswordGrantsOwnerAccess);
+        AssertPasswordAuthenticates(scripted, userOpenPassword, userPasswordGrantsOwnerAccess);
 
-        var decryptedRendered = DecryptWithPassword(rendered, ownerPassword);
-        var decryptedScripted = DecryptWithPassword(scripted, ownerPassword);
+        var decryptedRendered = DecryptWithPassword(rendered, ownerAuthPassword);
+        var decryptedScripted = DecryptWithPassword(scripted, ownerAuthPassword);
 
         Assert.Equal(PdfNormalization.Normalize(decryptedRendered), PdfNormalization.Normalize(decryptedScripted));
     }
@@ -203,12 +239,12 @@ public class SpecRoundTripTests
 
     /// <summary>
     /// Reads the <c>/Encrypt</c> dictionary of <paramref name="pdf"/> directly,
-    /// through the owner password, and asserts its <c>Permissions</c> and
-    /// <c>EncryptMetadata</c> match what <paramref name="encryption"/> claims,
-    /// and that the password used to open it actually authenticated as the
-    /// owner. Opening with the owner password (rather than the user
-    /// password) guarantees full access regardless of which permissions are
-    /// in force.
+    /// through <paramref name="ownerAuthPassword"/>, and asserts its
+    /// <c>Permissions</c> and <c>EncryptMetadata</c> match what
+    /// <paramref name="encryption"/> claims, and that the password used to
+    /// open it actually authenticated as the owner. Opening with the
+    /// password that authenticates as owner (rather than the user password)
+    /// guarantees full access regardless of which permissions are in force.
     /// </summary>
     /// <remarks>
     /// Transposing <c>UserPassword</c> and <c>OwnerPassword</c> in the spec
@@ -217,17 +253,18 @@ public class SpecRoundTripTests
     /// authenticated; <c>Permissions</c> and <c>EncryptMetadata</c>
     /// are document-level and unaffected by which password is which.
     /// <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> pins that: it is
-    /// <see langword="true"/> here because this method always opens with
-    /// <see cref="EncryptionSpec.OwnerPassword"/>. A negative assertion (this
-    /// password does not also authenticate as the user password) is
-    /// deliberately not made: at R&lt;=4 an owner password always also
-    /// authenticates as the user password by specification, so that
-    /// assertion would be false generally and would pass today only because
-    /// <c>PdfEncryptionSettings</c> is fixed at AES-256 V5/R6.
+    /// <see langword="true"/> here because <paramref name="ownerAuthPassword"/>
+    /// is, by construction, whichever password actually grants owner access
+    /// (see the remark on <see cref="AssertEncryptedRoundTripAsync"/>). A
+    /// negative assertion (this password does not also authenticate as the
+    /// user password) is deliberately not made: at R&lt;=4 an owner password
+    /// always also authenticates as the user password by specification, so
+    /// that assertion would be false generally and would pass today only
+    /// because <c>PdfEncryptionSettings</c> is fixed at AES-256 V5/R6.
     /// </remarks>
-    private static void AssertEncryptionMatchesSpec(byte[] pdf, EncryptionSpec encryption)
+    private static void AssertEncryptionMatchesSpec(byte[] pdf, EncryptionSpec encryption, string ownerAuthPassword)
     {
-        using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = encryption.OwnerPassword! });
+        using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = ownerAuthPassword });
         var info = reader.Encryption;
 
         Assert.NotNull(info);
@@ -238,25 +275,26 @@ public class SpecRoundTripTests
 
     /// <summary>
     /// Opens <paramref name="pdf"/> with <paramref name="password"/> and
-    /// asserts that it authenticates as the user, not the owner. Neither
-    /// <c>/U</c> nor <c>/UE</c> stores the plaintext user password, so this
-    /// is the only way to confirm the password actually baked into the PDF
-    /// matches the one the spec claims, short of decrypting: authenticating
-    /// with a wrong password throws <see cref="VellumPdf.Reader.PdfPasswordException"/>.
+    /// asserts whether it authenticates as owner matches
+    /// <paramref name="expectOwnerAccess"/>. Neither <c>/U</c> nor <c>/UE</c>
+    /// stores the plaintext user password, so this is the only way to
+    /// confirm the password actually baked into the PDF matches the one the
+    /// spec claims, short of decrypting: authenticating with a wrong
+    /// password throws <see cref="VellumPdf.Reader.PdfPasswordException"/>.
     /// </summary>
     /// <remarks>
-    /// See the remark on <see cref="AssertEncryptionMatchesSpec"/>: this
-    /// method always opens with <see cref="EncryptionSpec.UserPassword"/>,
-    /// so asserting <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> is
-    /// <see langword="false"/> here is what catches the user and owner
-    /// passwords being transposed, which the mere fact of authenticating
-    /// does not.
+    /// See the remark on <see cref="AssertEncryptedRoundTripAsync"/>:
+    /// <paramref name="expectOwnerAccess"/> is <see langword="true"/> only
+    /// when <see cref="EncryptionSpec.OwnerPassword"/> is unset, which is
+    /// exactly when the library authenticates the user password as owner.
+    /// Otherwise this method catches the user and owner passwords being
+    /// transposed, which the mere fact of authenticating does not.
     /// </remarks>
-    private static void AssertPasswordAuthenticates(byte[] pdf, string password)
+    private static void AssertPasswordAuthenticates(byte[] pdf, string password, bool expectOwnerAccess)
     {
         using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = password });
         Assert.NotNull(reader.Encryption);
-        Assert.False(reader.Encryption!.IsOwnerAccess);
+        Assert.Equal(expectOwnerAccess, reader.Encryption!.IsOwnerAccess);
     }
 
     private static async Task<byte[]> RunEmittedCodeAsync(DocumentSpec spec)

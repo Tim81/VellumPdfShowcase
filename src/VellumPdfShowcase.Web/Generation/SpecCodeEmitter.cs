@@ -118,10 +118,24 @@ public static class SpecCodeEmitter
                 // Consulted only by the one Document.Add(string, TextStyle?)
                 // overload, which EmitPlainText emits for a PlainTextSpec left
                 // unstyled: see the remark on DocumentSpec.DefaultTextStyle.
-                // Every other content item resolves its own fallback directly
-                // and never reads this value.
-                writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
-                writer.Line();
+                // HeadingSpec and ParagraphSpec resolve their own fallback
+                // directly below and never read this value; ListItemSpec and
+                // TableCellSpec, when unstyled, stay null and are resolved
+                // later by their own container. Per C4-F-M2, this call is
+                // emitted only when the specification actually contains an
+                // unstyled PlainTextSpec: in every other document it would be
+                // fully spelled out and provably inert, sitting above
+                // unstyled ListItem and Cell constructions it does nothing
+                // for. HasUnstyledPlainText below and CollectTextStyles'
+                // conditional yield of this same style must agree, or a
+                // style used only via this call could be hoisted into a
+                // shared local that the emitted code never actually assigns.
+                if (HasUnstyledPlainText(documentSpec))
+                {
+                    writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
+                    writer.Line();
+                }
+
                 EmitMetadata();
 
                 foreach (var item in documentSpec.Content)
@@ -865,9 +879,24 @@ public static class SpecCodeEmitter
         return names;
     }
 
+    /// <summary>
+    /// Whether <paramref name="spec"/> contains a <see cref="PlainTextSpec"/>
+    /// with no explicit <see cref="PlainTextSpec.Style"/>, the only content
+    /// item whose emitted code reads <see cref="DocumentSpec.DefaultTextStyle"/>.
+    /// Used by both <see cref="Emitter.EmitDocument"/>, to decide whether
+    /// <c>document.SetDefaultFont</c> is emitted at all (C4-F-M2), and
+    /// <see cref="CollectTextStyles(DocumentSpec)"/>, so hoisting counts this
+    /// style exactly when the emitted code actually references it.
+    /// </summary>
+    private static bool HasUnstyledPlainText(DocumentSpec spec) =>
+        spec.Content.Any(item => item is PlainTextSpec { Style: null });
+
     private static IEnumerable<TextStyleSpec> CollectTextStyles(DocumentSpec spec)
     {
-        yield return spec.DefaultTextStyle;
+        if (HasUnstyledPlainText(spec))
+        {
+            yield return spec.DefaultTextStyle;
+        }
 
         if (spec.Header is { } header)
         {

@@ -52,14 +52,15 @@ public static class SpecRenderer
             document.Language = spec.Language;
         }
 
-        var embeddedFonts = spec.EmbeddedFonts.Select(document.UseTrueTypeFont).ToArray();
+        var embeddedFonts = spec.EmbeddedFonts.Select(bytes => LoadEmbeddedFont(document, bytes)).ToArray();
         var context = new RenderContext(embeddedFonts, new Dictionary<TextStyleSpec, TextStyle>());
 
         // Consulted only by the one Document.Add(string, TextStyle?) overload,
         // which AddContentItem calls for a PlainTextSpec left unstyled: see
-        // the remark on DocumentSpec.DefaultTextStyle. Every other element
-        // built below resolves its own fallback directly and never reads
-        // this value.
+        // the remark on DocumentSpec.DefaultTextStyle. HeadingSpec and
+        // ParagraphSpec resolve their own fallback directly below and never
+        // read this value; ListItemSpec and TableCellSpec, when unstyled,
+        // stay null here and are resolved later by their own container.
         document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, context));
 
         if (spec.Metadata is { } metadata)
@@ -85,7 +86,15 @@ public static class SpecRenderer
         switch (spec.OutputIntent)
         {
             case PdfAOutputIntentSpec pdfA:
-                document.SetPdfAOutputIntent(pdfA.IccProfile, pdfA.ComponentCount, pdfA.OutputConditionIdentifier, pdfA.Info);
+                try
+                {
+                    document.SetPdfAOutputIntent(pdfA.IccProfile, pdfA.ComponentCount, pdfA.OutputConditionIdentifier, pdfA.Info);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Could not embed the ICC output intent: {ex.Message}", ex);
+                }
+
                 break;
             case CmykOutputIntentSpec cmyk:
                 document.UseCmykOutputIntent(cmyk.OutputConditionIdentifier);
@@ -269,26 +278,54 @@ public static class SpecRenderer
             Language = spec.Language,
         };
 
+    /// <summary>
+    /// Wraps the Kernel image loader for <see cref="ImageSpec.Format"/> in a
+    /// try/catch, per plan section 5.4 control 5: <see cref="DocumentSpec.Content"/>
+    /// already rejects bytes whose magic signature contradicts the declared
+    /// format, but a well-signed file can still be malformed further in, and
+    /// a raw exception from the least-exercised code in the dependency chain
+    /// is not a legible message.
+    /// </summary>
     private static LayoutImage BuildImage(ImageSpec spec)
     {
-        var xObject = spec.Format switch
+        try
         {
-            ImageFormat.Png => PngImageLoader.Load(spec.Bytes),
-            ImageFormat.Jpeg => JpegImageLoader.Load(spec.Bytes),
-            ImageFormat.Bmp => BmpImageLoader.Load(spec.Bytes),
-            ImageFormat.Gif => GifImageLoader.Load(spec.Bytes),
-            ImageFormat.Tiff => TiffImageLoader.Load(spec.Bytes),
-            _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Format, "Unrecognised image format."),
-        };
+            var xObject = spec.Format switch
+            {
+                ImageFormat.Png => PngImageLoader.Load(spec.Bytes),
+                ImageFormat.Jpeg => JpegImageLoader.Load(spec.Bytes),
+                ImageFormat.Bmp => BmpImageLoader.Load(spec.Bytes),
+                ImageFormat.Gif => GifImageLoader.Load(spec.Bytes),
+                ImageFormat.Tiff => TiffImageLoader.Load(spec.Bytes),
+                _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Format, "Unrecognised image format."),
+            };
 
-        return new LayoutImage(xObject)
+            return new LayoutImage(xObject)
+            {
+                Width = spec.Width,
+                Height = spec.Height,
+                Alignment = spec.Alignment,
+                Margins = spec.Margins ?? EdgeInsets.Zero,
+                AltText = spec.AltText,
+            };
+        }
+        catch (Exception ex) when (ex is not ArgumentOutOfRangeException)
         {
-            Width = spec.Width,
-            Height = spec.Height,
-            Alignment = spec.Alignment,
-            Margins = spec.Margins ?? EdgeInsets.Zero,
-            AltText = spec.AltText,
-        };
+            throw new InvalidOperationException($"Could not decode the embedded {spec.Format} image: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>Wraps <c>Document.UseTrueTypeFont</c>, per plan section 5.4 control 5, for the same reason as <see cref="BuildImage"/>.</summary>
+    private static EmbeddedFontHandle LoadEmbeddedFont(Document document, byte[] bytes)
+    {
+        try
+        {
+            return document.UseTrueTypeFont(bytes);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Could not parse an embedded font: {ex.Message}", ex);
+        }
     }
 
     private static PieChart BuildPieChart(PieChartSpec spec) => new()

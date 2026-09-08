@@ -645,6 +645,53 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
+    /// C4-C-M5: an owner password with no user password. Anyone can open the
+    /// file; only the owner password grants the restricted permissions.
+    /// Exercises <c>SpecCodeEmitter.EmitEncryption</c>'s omit-when-null branch
+    /// for <see cref="EncryptionSpec.UserPassword"/>, which no other sample
+    /// reaches because every other encrypted sample sets both passwords.
+    /// </summary>
+    public static DocumentSpec EncryptedOwnerPasswordOnly()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Letter),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("Owner password only; anyone may open this file.", style)],
+            Encryption = new EncryptionSpec
+            {
+                OwnerPassword = "owner-secret",
+                Permissions = PdfPermissions.Print,
+            },
+        };
+    }
+
+    /// <summary>
+    /// C4-C-M5: a user password with no owner password and unrestricted
+    /// permissions, the one combination <see cref="EncryptionSpec"/> still
+    /// allows a null <see cref="EncryptionSpec.OwnerPassword"/> for. Measured
+    /// directly against the library and recorded on the type: with no owner
+    /// password set, the password that actually authenticates full (owner)
+    /// access is <see cref="EncryptionSpec.UserPassword"/> itself. Exercises
+    /// <c>SpecCodeEmitter.EmitEncryption</c>'s omit-when-null branch for
+    /// <see cref="EncryptionSpec.OwnerPassword"/>.
+    /// </summary>
+    public static DocumentSpec EncryptedNoOwnerPasswordUnrestricted()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Letter),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("User password only, no restrictions.", style)],
+            Encryption = new EncryptionSpec { UserPassword = "user-secret" },
+        };
+    }
+
+    /// <summary>
     /// A <see cref="PlainTextSpec"/> with no explicit <see cref="PlainTextSpec.Style"/>,
     /// the one content item that resolves through the library's
     /// <c>Document.Add(string, TextStyle?)</c> overload and so reads
@@ -731,6 +778,78 @@ internal static class DocumentSpecSamples
                 },
                 new ImageSpec { Format = ImageFormat.Gif, Bytes = OnePixelGif, Height = 30 },
                 new ImageSpec { Format = ImageFormat.Tiff, Bytes = OnePixelTiff },
+            ],
+        };
+    }
+
+    /// <summary>
+    /// C4-C-M6: the thirteen emitter branches with no coverage anywhere else
+    /// in this file. The largest cluster is element-level <c>Margins</c> on
+    /// all seven content item types that expose it (heading, paragraph, list,
+    /// table, image, pie chart and line separator), each given a fully
+    /// asymmetric <see cref="EdgeInsets"/> so a scrambled parameter order in
+    /// <c>SpecCodeEmitter.EmitEdgeInsets</c> (previously provable only through
+    /// document-level margins) would render the recompiled document
+    /// differently and fail the round trip. The rest:
+    /// <see cref="ParagraphSpec.Language"/>; an explicit
+    /// <see cref="TableCellSpec.Style"/> and <see cref="TableCellSpec.Language"/>;
+    /// a non-default <see cref="ImageSpec.Alignment"/>; a non-default
+    /// <see cref="PieChartSpec.StrokeWidth"/> and an explicit
+    /// <see cref="PieChartSpec.AltText"/>; and an explicit
+    /// <see cref="ListItemSpec.Style"/>.
+    /// </summary>
+    public static DocumentSpec RemainingEmitterBranchCoverage()
+    {
+        var bodyStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+        var cellStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.TimesItalic), FontSize = 9 };
+        var listItemStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Courier), FontSize = 10 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(500, 700),
+            DefaultTextStyle = bodyStyle,
+            Content =
+            [
+                new HeadingSpec { Text = "Margins on every element", Level = 2, Margins = new EdgeInsets(4, 8, 12, 16) },
+                new ParagraphSpec
+                {
+                    Runs = [new TextRunSpec("A paragraph with margins and an explicit language.", bodyStyle)],
+                    Margins = new EdgeInsets(3, 6, 9, 12),
+                    Language = "fr",
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.Unordered,
+                    Margins = new EdgeInsets(5, 10, 15, 20),
+                    Items = [new ListItemSpec { Text = "Styled item", Style = listItemStyle }],
+                },
+                new TableSpec
+                {
+                    Margins = new EdgeInsets(6, 12, 18, 24),
+                    Rows =
+                    [
+                        new TableRowSpec
+                        {
+                            Cells = [new TableCellSpec { Content = "Styled, language-tagged cell", Style = cellStyle, Language = "de" }],
+                        },
+                    ],
+                },
+                new ImageSpec
+                {
+                    Format = ImageFormat.Png,
+                    Bytes = OnePixelPng,
+                    Alignment = HorizontalAlignment.Center,
+                    Margins = new EdgeInsets(7, 14, 21, 28),
+                },
+                new PieChartSpec
+                {
+                    Diameter = 60,
+                    Margins = new EdgeInsets(2, 4, 6, 8),
+                    StrokeWidth = 1.5,
+                    AltText = "A pie chart with a thick stroke.",
+                    Slices = [new PieSlice(1, new ColorRgb(0.1, 0.6, 0.3))],
+                },
+                new LineSeparatorSpec { Margins = new EdgeInsets(9, 18, 27, 36) },
             ],
         };
     }

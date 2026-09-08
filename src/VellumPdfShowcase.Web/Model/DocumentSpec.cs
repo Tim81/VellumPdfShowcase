@@ -45,11 +45,18 @@ public sealed record DocumentSpec
     /// <c>Document.SetDefaultFont</c>. Per section 3.4.0 of the plan, that
     /// member is consulted only by the <c>Document.Add(string, TextStyle?)</c>
     /// overload, which a <see cref="PlainTextSpec"/> with no explicit
-    /// <see cref="PlainTextSpec.Style"/> maps to. Every other content item is
-    /// constructed directly and resolves its own fallback at construction
-    /// time, before the document ever sees this value, so this property
-    /// governs only <see cref="PlainTextSpec"/> content left unstyled.
+    /// <see cref="PlainTextSpec.Style"/> maps to.
     /// </summary>
+    /// <remarks>
+    /// NOTE: content items do not all behave alike here. <see cref="HeadingSpec"/>
+    /// and <see cref="ParagraphSpec"/> resolve their own fallback style at
+    /// construction and never read this value. <see cref="ListItemSpec"/> and
+    /// <see cref="TableCellSpec"/> stay <see langword="null"/> when left
+    /// unstyled and are resolved later by their container
+    /// (<see cref="ListSpec.DefaultStyle"/> or <see cref="TableSpec.DefaultCellStyle"/>),
+    /// which may itself be <see langword="null"/>; this property governs
+    /// neither. Only an unstyled <see cref="PlainTextSpec"/> reads it.
+    /// </remarks>
     public required TextStyleSpec DefaultTextStyle { get; init; }
 
     /// <summary>
@@ -58,18 +65,32 @@ public sealed record DocumentSpec
     /// one of these by position. Each entry is registered with the underlying
     /// <c>Document</c> exactly once, regardless of how many styles reference it.
     /// </summary>
-    public IReadOnlyList<byte[]> EmbeddedFonts { get; init; } = [];
+    /// <remarks>
+    /// Per plan section 5.4, every entry is capped at <see cref="SpecLimits.MaxAssetBytes"/>
+    /// and the whole list is snapshotted with a collection expression at
+    /// construction, so mutating a list passed in cannot change this value afterward.
+    /// </remarks>
+    public IReadOnlyList<byte[]> EmbeddedFonts
+    {
+        get;
+        init => field = ValidateEmbeddedFonts(value);
+    } = [];
 
     /// <summary>The document's content, laid out in the order given. A document must have at least one item.</summary>
+    /// <remarks>
+    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxContentItems"/>
+    /// and snapshotted with a collection expression at construction, so an
+    /// aliased, later-mutated <c>List&lt;ContentItemSpec&gt;</c> cannot empty
+    /// this property out from under a fully constructed <see cref="DocumentSpec"/>.
+    /// Every <see cref="ImageSpec"/> in the list also has its declared
+    /// <see cref="ImageSpec.Format"/> checked against the magic bytes of its
+    /// own <see cref="ImageSpec.Bytes"/>, which requires both properties to be
+    /// already set and so cannot be done inside <see cref="ImageSpec"/> itself.
+    /// </remarks>
     public required IReadOnlyList<ContentItemSpec> Content
     {
         get;
-        init => field = value switch
-        {
-            null => throw new ArgumentNullException(nameof(Content)),
-            { Count: 0 } => throw new ArgumentException("A document must have at least one item of content.", nameof(Content)),
-            _ => value,
-        };
+        init => field = ValidateContent(value);
     }
 
     /// <summary>The running header repeated on every page, if any.</summary>
@@ -85,16 +106,110 @@ public sealed record DocumentSpec
     public bool Tagged { get; init; }
 
     /// <summary>The document's natural language, as a BCP 47 tag such as <c>"en"</c>.</summary>
-    public string? Language { get; init; }
+    public string? Language
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxLanguageTagLength, nameof(Language));
+    }
 
     /// <summary>Document information dictionary entries, if any are set.</summary>
     public DocumentMetadataSpec? Metadata { get; init; }
 
     /// <summary>The output intent to embed, if any.</summary>
-    public OutputIntentSpec? OutputIntent { get; init; }
+    /// <remarks>
+    /// Per plan section 5.4, a <see cref="PdfAOutputIntentSpec"/> has its
+    /// <see cref="PdfAOutputIntentSpec.IccProfile"/> header validated here
+    /// against its own <see cref="PdfAOutputIntentSpec.ComponentCount"/>,
+    /// which requires both properties to already be set and so cannot be done
+    /// inside <see cref="PdfAOutputIntentSpec"/> itself. Left unvalidated, a
+    /// three-byte junk profile would embed silently into a document claiming
+    /// PDF/A or PDF/UA conformance.
+    /// </remarks>
+    public OutputIntentSpec? OutputIntent
+    {
+        get;
+        init => field = value switch
+        {
+            PdfAOutputIntentSpec pdfA => Validated(pdfA),
+            _ => value,
+        };
+    }
 
-    /// <summary>Encryption settings, if the document is to be encrypted.</summary>
-    public EncryptionSpec? Encryption { get; init; }
+    /// <summary>
+    /// Encryption settings, if the document is to be encrypted.
+    /// </summary>
+    /// <remarks>
+    /// Per plan section 5.4 (C4-C-M5), a restricted <see cref="EncryptionSpec.Permissions"/>
+    /// set requires a non-empty <see cref="EncryptionSpec.OwnerPassword"/>. The
+    /// library authenticates full owner access to whichever password actually
+    /// opens the document; with <see cref="EncryptionSpec.OwnerPassword"/> left
+    /// unset, that password is <see cref="EncryptionSpec.UserPassword"/>, so a
+    /// restricted permission set would bind nobody who can open the file, and
+    /// the PDF is the one artefact that leaves the machine. This check
+    /// requires both properties to already be set and so cannot be done
+    /// inside <see cref="EncryptionSpec"/> itself.
+    /// </remarks>
+    public EncryptionSpec? Encryption
+    {
+        get;
+        init => field = value switch
+        {
+            { Permissions: var permissions, OwnerPassword: null or "" } when permissions != PdfPermissions.All =>
+                throw new ArgumentException(
+                    "EncryptionSpec.OwnerPassword must be set whenever Permissions restricts any permission; " +
+                    "otherwise the displayed permission set binds nobody who can open the file.",
+                    nameof(Encryption)),
+            _ => value,
+        };
+    }
+
+    private static IReadOnlyList<byte[]> ValidateEmbeddedFonts(IReadOnlyList<byte[]> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(EmbeddedFonts));
+        foreach (var font in value)
+        {
+            SpecLimits.ValidateAssetBytes(font, nameof(EmbeddedFonts));
+        }
+
+        return [.. value];
+    }
+
+    private static IReadOnlyList<ContentItemSpec> ValidateContent(IReadOnlyList<ContentItemSpec> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(Content));
+
+        if (value.Count == 0)
+        {
+            throw new ArgumentException("A document must have at least one item of content.", nameof(Content));
+        }
+
+        if (value.Count > SpecLimits.MaxContentItems)
+        {
+            throw new ArgumentException(
+                $"A document must not have more than {SpecLimits.MaxContentItems} items of content; got {value.Count}.",
+                nameof(Content));
+        }
+
+        var snapshot = (IReadOnlyList<ContentItemSpec>)[.. value];
+
+        foreach (var item in snapshot)
+        {
+            if (item is ImageSpec image && !ImageSignature.Matches(image.Format, image.Bytes))
+            {
+                throw new ArgumentException(
+                    $"ImageSpec.Bytes does not match the declared ImageFormat.{image.Format}; the file's own signature says otherwise.",
+                    nameof(Content));
+            }
+        }
+
+        return snapshot;
+    }
+
+    private static PdfAOutputIntentSpec Validated(PdfAOutputIntentSpec pdfA)
+    {
+        IccProfileHeader.Validate(pdfA.IccProfile, pdfA.ComponentCount);
+        return pdfA;
+    }
 }
 
 /// <summary>A page size expressed directly in PDF points.</summary>
@@ -170,7 +285,7 @@ public sealed record TextStyleSpec
     {
         get;
         init => field = value is null || HasAllowedScheme(value)
-            ? value
+            ? SpecLimits.ValidateOptionalString(value, SpecLimits.MaxUriLength, nameof(LinkUri))
             : throw new ArgumentException(
                 $"LinkUri must use the http or https scheme; got {value}.",
                 nameof(LinkUri));
@@ -190,13 +305,28 @@ public abstract record ContentItemSpec;
 /// <summary>A <c>Heading</c>. A <see langword="null"/> <see cref="Style"/> lets the library apply automatic styling for the level.</summary>
 public sealed record HeadingSpec : ContentItemSpec
 {
-    public required string Text { get; init; }
+    public required string Text
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Text));
+    }
+
     public required int Level { get; init; }
     public TextStyleSpec? Style { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
     public EdgeInsets? Margins { get; init; }
-    public string? BookmarkTitle { get; init; }
-    public string? Language { get; init; }
+
+    public string? BookmarkTitle
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(BookmarkTitle));
+    }
+
+    public string? Language
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxLanguageTagLength, nameof(Language));
+    }
 }
 
 /// <summary>
@@ -206,13 +336,39 @@ public sealed record HeadingSpec : ContentItemSpec
 /// </summary>
 public sealed record ParagraphSpec : ContentItemSpec
 {
-    public required IReadOnlyList<TextRunSpec> Runs { get; init; }
+    /// <summary>
+    /// Per plan section 5.4, the list is snapshotted with a collection
+    /// expression at construction and each run's <see cref="TextRunSpec.Text"/>
+    /// is capped at <see cref="SpecLimits.MaxTextLength"/>.
+    /// </summary>
+    public required IReadOnlyList<TextRunSpec> Runs
+    {
+        get;
+        init => field = ValidateRuns(value);
+    }
+
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
     public EdgeInsets? Margins { get; init; }
-    public string? Language { get; init; }
+
+    public string? Language
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxLanguageTagLength, nameof(Language));
+    }
 
     public static ParagraphSpec FromText(string text, TextStyleSpec style) =>
         new() { Runs = [new TextRunSpec(text, style)] };
+
+    private static IReadOnlyList<TextRunSpec> ValidateRuns(IReadOnlyList<TextRunSpec> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(Runs));
+        foreach (var run in value)
+        {
+            SpecLimits.ValidateString(run.Text, SpecLimits.MaxTextLength, nameof(Runs));
+        }
+
+        return [.. value];
+    }
 }
 
 /// <summary>
@@ -221,12 +377,19 @@ public sealed record ParagraphSpec : ContentItemSpec
 /// this model could not previously express. When <see cref="Style"/> is
 /// <see langword="null"/>, the rendered text uses whatever style
 /// <see cref="DocumentSpec.DefaultTextStyle"/> registered through
-/// <c>Document.SetDefaultFont</c>, unlike every other content item, which
-/// resolves its own fallback directly and never consults that value.
+/// <c>Document.SetDefaultFont</c>. <see cref="HeadingSpec"/> and
+/// <see cref="ParagraphSpec"/> resolve their own fallback directly instead and
+/// never consult that value; see the remark on <see cref="DocumentSpec.DefaultTextStyle"/>
+/// for the two content items that are neither.
 /// </summary>
 public sealed record PlainTextSpec : ContentItemSpec
 {
-    public required string Text { get; init; }
+    public required string Text
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Text));
+    }
+
     public TextStyleSpec? Style { get; init; }
 }
 
@@ -234,7 +397,18 @@ public sealed record PlainTextSpec : ContentItemSpec
 public sealed record ListSpec : ContentItemSpec
 {
     public required ListStyle Style { get; init; }
-    public required IReadOnlyList<ListItemSpec> Items { get; init; }
+
+    /// <summary>Snapshotted with a collection expression at construction, per plan section 5.4.</summary>
+    public required IReadOnlyList<ListItemSpec> Items
+    {
+        get;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(Items));
+            field = [.. value];
+        }
+    }
+
     public double? Indent { get; init; }
     public EdgeInsets? Margins { get; init; }
     public TextStyleSpec? DefaultStyle { get; init; }
@@ -243,31 +417,94 @@ public sealed record ListSpec : ContentItemSpec
 /// <summary>One <c>ListItem</c>. Nesting is expressed through <see cref="Children"/>, matching <c>ListItem.AddChild</c>.</summary>
 public sealed record ListItemSpec
 {
-    public required string Text { get; init; }
+    public required string Text
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Text));
+    }
+
     public TextStyleSpec? Style { get; init; }
-    public string? Language { get; init; }
-    public IReadOnlyList<ListItemSpec> Children { get; init; } = [];
+
+    public string? Language
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxLanguageTagLength, nameof(Language));
+    }
+
+    /// <summary>
+    /// Per plan section 5.4 (C4-C-M2), snapshotted with a collection
+    /// expression at construction, and the nesting depth reachable through
+    /// this item is capped at <see cref="SpecLimits.MaxListNestingDepth"/>.
+    /// Unbounded nesting recurses without a bound in both the renderer and
+    /// the emitter and overflows the CLR stack; a stack overflow cannot be
+    /// caught, so this is the one control in section 5.4 that a wrapped
+    /// parser call cannot rescue.
+    /// </summary>
+    public IReadOnlyList<ListItemSpec> Children
+    {
+        get;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(Children));
+            var snapshot = value.Count == 0 ? (IReadOnlyList<ListItemSpec>)[] : [.. value];
+            var depth = snapshot.Count == 0 ? 1 : 1 + snapshot.Max(child => child.Depth);
+
+            if (depth > SpecLimits.MaxListNestingDepth)
+            {
+                throw new ArgumentException(
+                    $"List nesting must not exceed {SpecLimits.MaxListNestingDepth} levels; this item would reach depth {depth}.",
+                    nameof(Children));
+            }
+
+            field = snapshot;
+            Depth = depth;
+        }
+    } = [];
+
+    /// <summary>The greatest nesting depth reachable from this item, counting itself as depth 1. Not part of the library's own shape; used only to enforce <see cref="SpecLimits.MaxListNestingDepth"/> as each level is constructed.</summary>
+    private int Depth { get; set; } = 1;
 }
 
 /// <summary>A <c>TableElement</c>.</summary>
 public sealed record TableSpec : ContentItemSpec
 {
+    /// <summary>
+    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxTableRows"/>
+    /// and snapshotted with a collection expression at construction.
+    /// </summary>
     public required IReadOnlyList<TableRowSpec> Rows
     {
         get;
-        init => field = value switch
-        {
-            null => throw new ArgumentNullException(nameof(Rows)),
-            { Count: 0 } => throw new ArgumentException("A table must have at least one row.", nameof(Rows)),
-            _ => value,
-        };
+        init => field = ValidateRows(value);
     }
 
-    public IReadOnlyList<double>? ColumnWidths { get; init; }
+    public IReadOnlyList<double>? ColumnWidths
+    {
+        get;
+        init => field = value is null ? null : [.. value];
+    }
+
     public TextStyleSpec? DefaultCellStyle { get; init; }
     public double? BorderWidth { get; init; }
     public ColorRgb? BorderColor { get; init; }
     public EdgeInsets? Margins { get; init; }
+
+    private static IReadOnlyList<TableRowSpec> ValidateRows(IReadOnlyList<TableRowSpec> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(Rows));
+
+        if (value.Count == 0)
+        {
+            throw new ArgumentException("A table must have at least one row.", nameof(Rows));
+        }
+
+        if (value.Count > SpecLimits.MaxTableRows)
+        {
+            throw new ArgumentException($"A table must not have more than {SpecLimits.MaxTableRows} rows; got {value.Count}.", nameof(Rows));
+        }
+
+        return [.. value];
+    }
 }
 
 /// <summary>
@@ -286,31 +523,59 @@ public sealed record TableSpec : ContentItemSpec
 /// </summary>
 public sealed record TableRowSpec
 {
+    /// <summary>
+    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxTableCellsPerRow"/>
+    /// and snapshotted with a collection expression at construction.
+    /// </summary>
     public required IReadOnlyList<TableCellSpec> Cells
     {
         get;
-        init => field = value switch
-        {
-            null => throw new ArgumentNullException(nameof(Cells)),
-            { Count: 0 } => throw new ArgumentException("A table row must have at least one cell.", nameof(Cells)),
-            _ => value,
-        };
+        init => field = ValidateCells(value);
     }
 
     public bool IsHeader { get; init; }
+
+    private static IReadOnlyList<TableCellSpec> ValidateCells(IReadOnlyList<TableCellSpec> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(Cells));
+
+        if (value.Count == 0)
+        {
+            throw new ArgumentException("A table row must have at least one cell.", nameof(Cells));
+        }
+
+        if (value.Count > SpecLimits.MaxTableCellsPerRow)
+        {
+            throw new ArgumentException(
+                $"A table row must not have more than {SpecLimits.MaxTableCellsPerRow} cells; got {value.Count}.",
+                nameof(Cells));
+        }
+
+        return [.. value];
+    }
 }
 
 /// <summary>One <c>Cell</c> of a <see cref="TableRowSpec"/>. Content is plain text; the library does not support nested elements in a cell.</summary>
 public sealed record TableCellSpec
 {
-    public required string Content { get; init; }
+    public required string Content
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Content));
+    }
+
     public int ColSpan { get; init; } = 1;
     public int RowSpan { get; init; } = 1;
     public TextStyleSpec? Style { get; init; }
     public EdgeInsets? Padding { get; init; }
     public ColorRgb? Background { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
-    public string? Language { get; init; }
+
+    public string? Language
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxLanguageTagLength, nameof(Language));
+    }
 }
 
 /// <summary>The five raster formats the Kernel image loaders accept.</summary>
@@ -324,29 +589,46 @@ public enum ImageFormat
 }
 
 /// <summary>A <c>LayoutImage</c>, decoded through the matching Kernel loader for <see cref="Format"/>.</summary>
+/// <remarks>
+/// Per plan section 5.4, <see cref="Bytes"/> is capped at
+/// <see cref="SpecLimits.MaxAssetBytes"/> here; whether it actually matches
+/// <see cref="Format"/>'s magic bytes is checked by <see cref="DocumentSpec.Content"/>,
+/// which is the only property that ever sees both this record's properties
+/// fully set.
+/// </remarks>
 public sealed record ImageSpec : ContentItemSpec
 {
     public required ImageFormat Format { get; init; }
-    public required byte[] Bytes { get; init; }
+
+    public required byte[] Bytes
+    {
+        get;
+        init => field = SpecLimits.ValidateAssetBytes(value, nameof(Bytes));
+    }
+
     public double? Width { get; init; }
     public double? Height { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
     public EdgeInsets? Margins { get; init; }
-    public string? AltText { get; init; }
+
+    public string? AltText
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(AltText));
+    }
 }
 
 /// <summary>A <c>PieChart</c>, using the library's own <c>PieSlice</c> value for each slice.</summary>
 public sealed record PieChartSpec : ContentItemSpec
 {
+    /// <summary>
+    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxChartSlices"/>
+    /// and snapshotted with a collection expression at construction.
+    /// </summary>
     public required IReadOnlyList<PieSlice> Slices
     {
         get;
-        init => field = value switch
-        {
-            null => throw new ArgumentNullException(nameof(Slices)),
-            { Count: 0 } => throw new ArgumentException("A pie chart must have at least one slice.", nameof(Slices)),
-            _ => value,
-        };
+        init => field = ValidateSlices(value);
     }
 
     public required double Diameter { get; init; }
@@ -365,8 +647,31 @@ public sealed record PieChartSpec : ContentItemSpec
     public double StartAngle { get; init; } = double.Pi / 2;
 
     public bool Clockwise { get; init; } = true;
-    public string? AltText { get; init; }
+
+    public string? AltText
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(AltText));
+    }
+
     public bool Decorative { get; init; }
+
+    private static IReadOnlyList<PieSlice> ValidateSlices(IReadOnlyList<PieSlice> value)
+    {
+        ArgumentNullException.ThrowIfNull(value, nameof(Slices));
+
+        if (value.Count == 0)
+        {
+            throw new ArgumentException("A pie chart must have at least one slice.", nameof(Slices));
+        }
+
+        if (value.Count > SpecLimits.MaxChartSlices)
+        {
+            throw new ArgumentException($"A pie chart must not have more than {SpecLimits.MaxChartSlices} slices; got {value.Count}.", nameof(Slices));
+        }
+
+        return [.. value];
+    }
 }
 
 /// <summary>A <c>LineSeparator</c>, the library's only vector primitive in the Layout API.</summary>
@@ -383,7 +688,12 @@ public sealed record LineSeparatorSpec : ContentItemSpec
 /// </summary>
 public sealed record RunningBandSpec
 {
-    public required string Template { get; init; }
+    public required string Template
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Template));
+    }
+
     public required TextStyleSpec Style { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
     public double? Height { get; init; }
@@ -392,24 +702,78 @@ public sealed record RunningBandSpec
 /// <summary>Entries for the document's <c>PdfDocumentInfo</c>.</summary>
 public sealed record DocumentMetadataSpec
 {
-    public string? Title { get; init; }
-    public string? Author { get; init; }
-    public string? Subject { get; init; }
-    public string? Keywords { get; init; }
-    public string? Creator { get; init; }
-    public string? Producer { get; init; }
+    public string? Title
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Title));
+    }
+
+    public string? Author
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Author));
+    }
+
+    public string? Subject
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Subject));
+    }
+
+    public string? Keywords
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Keywords));
+    }
+
+    public string? Creator
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Creator));
+    }
+
+    public string? Producer
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Producer));
+    }
 }
 
 /// <summary>The base type for the two output intents <c>Document</c> can embed.</summary>
 public abstract record OutputIntentSpec;
 
-/// <summary>An ICC-based output intent for a PDF/A or PDF/UA claim, matching <c>Document.SetPdfAOutputIntent</c>.</summary>
+/// <summary>
+/// An ICC-based output intent for a PDF/A or PDF/UA claim, matching
+/// <c>Document.SetPdfAOutputIntent</c>.
+/// </summary>
+/// <remarks>
+/// Per plan section 5.4, <see cref="IccProfile"/> is capped at
+/// <see cref="SpecLimits.MaxAssetBytes"/> here; whether its header is
+/// internally consistent with <see cref="ComponentCount"/> is checked by
+/// <see cref="DocumentSpec.OutputIntent"/>, which is the only property that
+/// ever sees both this record's properties fully set.
+/// </remarks>
 public sealed record PdfAOutputIntentSpec : OutputIntentSpec
 {
-    public required byte[] IccProfile { get; init; }
+    public required byte[] IccProfile
+    {
+        get;
+        init => field = SpecLimits.ValidateAssetBytes(value, nameof(IccProfile));
+    }
+
     public required int ComponentCount { get; init; }
-    public required string OutputConditionIdentifier { get; init; }
-    public string? Info { get; init; }
+
+    public required string OutputConditionIdentifier
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(OutputConditionIdentifier));
+    }
+
+    public string? Info
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(Info));
+    }
 }
 
 /// <summary>
@@ -422,14 +786,40 @@ public sealed record PdfAOutputIntentSpec : OutputIntentSpec
 /// </summary>
 public sealed record CmykOutputIntentSpec : OutputIntentSpec
 {
-    public required string OutputConditionIdentifier { get; init; }
+    public required string OutputConditionIdentifier
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(OutputConditionIdentifier));
+    }
 }
 
-/// <summary>Encryption settings, matching <c>PdfEncryptionSettings</c>.</summary>
+/// <summary>
+/// Encryption settings, matching <c>PdfEncryptionSettings</c>.
+/// </summary>
+/// <remarks>
+/// Per plan section 5.4 (C4-C-M5): whether <see cref="OwnerPassword"/> may be
+/// left unset depends on <see cref="Permissions"/>, so that rule is enforced
+/// by <see cref="DocumentSpec.Encryption"/>, the only property that ever sees
+/// both fully set. Measured directly against the library: with
+/// <see cref="OwnerPassword"/> unset, the password that actually authenticates
+/// full (owner) access is <see cref="UserPassword"/>, so a restricted
+/// <see cref="Permissions"/> value would otherwise bind nobody who can open
+/// the file.
+/// </remarks>
 public sealed record EncryptionSpec
 {
-    public string? UserPassword { get; init; }
-    public string? OwnerPassword { get; init; }
+    public string? UserPassword
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(UserPassword));
+    }
+
+    public string? OwnerPassword
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(OwnerPassword));
+    }
+
     public PdfPermissions Permissions { get; init; } = PdfPermissions.All;
     public bool EncryptMetadata { get; init; } = true;
 }
