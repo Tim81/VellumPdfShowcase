@@ -23,9 +23,17 @@ internal static class DocumentSpecSamples
     private static readonly byte[] OnePixelBmp = Convert.FromBase64String(
         "Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABACAAAAAAAAAAAADEDgAAxA4AAAAAAAAAAAAAHhQK/w==");
 
-    /// <summary>A 1x1 red JPEG, used to exercise <see cref="ImageFormat.Jpeg"/>, the one Kernel image loader no other sample reached. See S4-M8.</summary>
+    /// <summary>A 1x1 red JPEG, used to exercise <see cref="ImageFormat.Jpeg"/>, one of the Kernel image loaders no other sample reaches.</summary>
     private static readonly byte[] OnePixelJpeg = Convert.FromBase64String(
         "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z");
+
+    /// <summary>A 1x1 red GIF, used to exercise <see cref="ImageFormat.Gif"/>.</summary>
+    private static readonly byte[] OnePixelGif = Convert.FromBase64String(
+        "R0lGODdhAQABAIEAAP8AAAAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==");
+
+    /// <summary>A 1x1 red, uncompressed, little-endian TIFF, used to exercise <see cref="ImageFormat.Tiff"/>.</summary>
+    private static readonly byte[] OnePixelTiff = Convert.FromBase64String(
+        "SUkqAAgAAAAKAAABBAABAAAAAQAAAAEBBAABAAAAAQAAAAIBAwADAAAAhgAAAAMBAwABAAAAAQAAAAYBAwABAAAAAgAAABEBBAABAAAAjAAAABUBAwABAAAAAwAAABYBBAABAAAAAQAAABcBBAABAAAAAwAAABwBAwABAAAAAQAAAAAAAAAIAAgACAD/AAA=");
 
     private static byte[] ReadTestAsset(string fileName) =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestAssets", fileName));
@@ -248,10 +256,10 @@ internal static class DocumentSpecSamples
     /// Two of every element whose emitted code declares a fixed-name local
     /// variable: two lists (in fact all four list styles, since plan section
     /// 6.2 requires unordered, decimal, alpha and roman in one document),
-    /// two tables and two multi-run paragraphs. This is what would have
-    /// caught S4-H1: the Roslyn round-trip test compiles the emitted code,
-    /// and a second <c>list</c>, <c>table</c> or <c>runs</c> sharing the name
-    /// of the first is a compile error the moment such a sample exists. Also
+    /// two tables and two multi-run paragraphs. The Roslyn round-trip test
+    /// compiles the emitted code, and a second <c>list</c>, <c>table</c> or
+    /// <c>runs</c> sharing the name of the first is a compile error the
+    /// moment such a sample exists. Also
     /// covers asymmetric document margins and cell padding, a non-default
     /// alignment on a heading, a paragraph and a cell, and an image format
     /// other than PNG.
@@ -399,7 +407,7 @@ internal static class DocumentSpecSamples
     /// backslash, LF, CR, TAB): the whole C0 control range, plus NEL, LINE
     /// SEPARATOR and PARAGRAPH SEPARATOR, together with a literal quote,
     /// backslash and brace pair, so the round-trip test both compiles and
-    /// executes the emitted string literal. See S4-H2.
+    /// executes the emitted string literal.
     /// </summary>
     public static DocumentSpec ControlCharactersAndLineSeparators()
     {
@@ -418,18 +426,15 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// The regression test for C2-H1 and A3-M3: two two-run paragraphs. The
-    /// first has both runs share one <see cref="TextStyleSpec"/> instance
-    /// (the ordinary way to author "two runs, one style"); the second has
-    /// two distinct instances that are value-equal but not reference-equal.
-    /// Before the fix, <see cref="Generation.SpecRenderer"/> built a fresh
-    /// <c>TextStyle</c> per run while <see cref="Generation.SpecCodeEmitter"/>
-    /// hoisted a style used twice into one shared local, so the library's
-    /// reference-identity run-merging diverged between the two sides for the
-    /// first paragraph; the second paragraph is the case A3-M3 describes,
-    /// where the emitter's now-value-equality-keyed hoisting must match a
-    /// renderer that also caches on value equality, or the two would diverge
-    /// the other way. Both paragraphs must round-trip identically.
+    /// Two two-run paragraphs. The first has both runs share one
+    /// <see cref="TextStyleSpec"/> instance (the ordinary way to author "two
+    /// runs, one style"); the second has two distinct instances that are
+    /// value-equal but not reference-equal. <see cref="Generation.SpecRenderer"/>'s
+    /// style cache and <see cref="Generation.SpecCodeEmitter"/>'s style
+    /// hoisting both key on this record's value equality, so a style used
+    /// twice, whether as one shared instance or two value-equal ones, must
+    /// merge into the library's reference-identity run-merging identically on
+    /// both sides. Both paragraphs must round-trip identically.
     /// </summary>
     public static DocumentSpec SharedAndValueEqualRunStyles()
     {
@@ -470,7 +475,7 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// The S4-M8 residual: a pie chart with non-default <c>Alignment</c>,
+    /// A pie chart with non-default <c>Alignment</c>,
     /// <c>StrokeColor</c> and <c>Decorative</c>; a list with
     /// <see cref="ListSpec.DefaultStyle"/>; a table with
     /// <see cref="TableSpec.DefaultCellStyle"/>; the JPEG loader; list
@@ -550,9 +555,9 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// A PDF/A-2a claim, the accessibility-conformant level of PDF/A-2,
-    /// covering the one profile plan section 6.2's four PDF/A and PDF/UA
-    /// profiles left untested after <see cref="PdfA2bWithOutputIntent"/> and
-    /// <see cref="PdfA2uWithOutputIntent"/>. See S4-M8.
+    /// covering one of the four PDF/A and PDF/UA profiles plan section 6.2
+    /// requires, alongside <see cref="PdfA2bWithOutputIntent"/>,
+    /// <see cref="PdfA2uWithOutputIntent"/> and <see cref="PdfUA1WithOutputIntent"/>.
     /// </summary>
     public static DocumentSpec PdfA2aWithOutputIntent()
     {
@@ -577,6 +582,156 @@ internal static class DocumentSpecSamples
                 ComponentCount = 3,
                 OutputConditionIdentifier = "sRGB IEC61966-2.1",
             },
+        };
+    }
+
+    /// <summary>
+    /// A PDF/UA-1 claim, the fourth and last of the four conformance profiles
+    /// plan section 6.2 requires, alongside <see cref="PdfA2bWithOutputIntent"/>,
+    /// <see cref="PdfA2uWithOutputIntent"/> and <see cref="PdfA2aWithOutputIntent"/>.
+    /// Also sets <see cref="PdfAOutputIntentSpec.Info"/> explicitly, the one
+    /// output intent member no other sample in this file sets.
+    /// </summary>
+    public static DocumentSpec PdfUA1WithOutputIntent()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A6),
+            DefaultTextStyle = style,
+            EmbeddedFonts = [LiberationSansBytes()],
+            Conformance = DocumentConformance.PdfUA1,
+            Tagged = true,
+            Language = "en",
+            Content =
+            [
+                new HeadingSpec { Text = "PDF/UA-1 sample", Level = 1, Style = style, Language = "en" },
+                ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
+            ],
+            OutputIntent = new PdfAOutputIntentSpec
+            {
+                IccProfile = SrgbIccProfileBytes(),
+                ComponentCount = 3,
+                OutputConditionIdentifier = "sRGB IEC61966-2.1",
+                Info = "sRGB IEC61966-2.1 output profile",
+            },
+        };
+    }
+
+    /// <summary>
+    /// AES-256 encryption using <see cref="EncryptionSpec"/>'s own defaults:
+    /// full permissions and metadata encryption left on. Exercises
+    /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.All</c> fast
+    /// path and its omit-when-default <c>EncryptMetadata</c> branch, neither
+    /// of which <see cref="Encrypted"/> reaches, since that sample restricts
+    /// permissions and disables metadata encryption.
+    /// </summary>
+    public static DocumentSpec EncryptedWithDefaults()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Letter),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("Encrypted with default permissions and metadata encryption, no conformance claim.", style)],
+            Encryption = new EncryptionSpec
+            {
+                UserPassword = "user-secret",
+                OwnerPassword = "owner-secret",
+            },
+        };
+    }
+
+    /// <summary>
+    /// A <see cref="PlainTextSpec"/> with no explicit <see cref="PlainTextSpec.Style"/>,
+    /// the one content item that resolves through the library's
+    /// <c>Document.Add(string, TextStyle?)</c> overload and so reads
+    /// <see cref="DocumentSpec.DefaultTextStyle"/>, rather than resolving its
+    /// own fallback the way every other content item does. The default style
+    /// is set to values distinct from every built-in fallback, so a renderer
+    /// or emitter that stopped consulting it would change the visible output.
+    /// </summary>
+    public static DocumentSpec PlainTextUsesDocumentDefault()
+    {
+        var defaultStyle = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.TimesBoldItalic),
+            FontSize = 17,
+            Color = new ColorRgb(0.2, 0.4, 0.1),
+        };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(350, 250),
+            DefaultTextStyle = defaultStyle,
+            Content = [new PlainTextSpec { Text = "Uses the document's registered default style." }],
+        };
+    }
+
+    /// <summary>
+    /// A device CMYK output intent, matching <c>Document.UseCmykOutputIntent</c>.
+    /// Declares a PDF/A-2b claim: measured directly against the library, the
+    /// call writes nothing into the saved bytes unless the document declares
+    /// a conformance profile, so a sample without one would not exercise this
+    /// branch at all, the same way the previous <c>DefaultTextStyle</c>
+    /// sample looked like coverage without being load-bearing. Plan section
+    /// 6.2's CMYK note records that mixing DeviceRGB content, which is all
+    /// this model can paint, with a pure CMYK output intent may be flagged by
+    /// strict validators, so this sample carries no preflight-compliance
+    /// assertion; it exists only to hold the renderer and emitter to the
+    /// same bytes.
+    /// </summary>
+    public static DocumentSpec CmykOutputIntent()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(400, 300),
+            DefaultTextStyle = style,
+            EmbeddedFonts = [LiberationSansBytes()],
+            Conformance = DocumentConformance.PdfA2b,
+            Tagged = true,
+            Language = "en",
+            Content = [ParagraphSpec.FromText("Declares a device CMYK output intent.", style)],
+            OutputIntent = new CmykOutputIntentSpec { OutputConditionIdentifier = "U.S. Web Coated (SWOP) v2" },
+        };
+    }
+
+    /// <summary>
+    /// The remaining emitter branches with no other coverage in this file:
+    /// <see cref="TextStyleSpec.Leading"/>, <see cref="ListSpec.Indent"/>,
+    /// <see cref="TableSpec.BorderWidth"/>, the GIF and TIFF Kernel image
+    /// loaders, and <see cref="ImageSpec.Height"/> set independently of
+    /// <see cref="ImageSpec.Width"/>.
+    /// </summary>
+    public static DocumentSpec RemainingBranchCoverage()
+    {
+        var leadedStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11, Leading = 16 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(500, 700),
+            DefaultTextStyle = leadedStyle,
+            Content =
+            [
+                ParagraphSpec.FromText("A paragraph with explicit leading.", leadedStyle),
+                new ListSpec
+                {
+                    Style = ListStyle.Unordered,
+                    Indent = 30,
+                    Items = [new ListItemSpec { Text = "Indented item" }],
+                },
+                new TableSpec
+                {
+                    BorderWidth = 2,
+                    Rows = [new TableRowSpec { Cells = [new TableCellSpec { Content = "Thick border" }] }],
+                },
+                new ImageSpec { Format = ImageFormat.Gif, Bytes = OnePixelGif, Height = 30 },
+                new ImageSpec { Format = ImageFormat.Tiff, Bytes = OnePixelTiff },
+            ],
         };
     }
 }

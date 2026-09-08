@@ -25,12 +25,8 @@ namespace VellumPdfShowcase.Web.Model;
 /// A collection the library requires to be non-empty rejects an empty value at
 /// construction, with a message naming the actual problem, rather than letting
 /// the caller build the spec and hear about it later from deep inside the
-/// library: see <see cref="PieChartSpec.Slices"/>, <see cref="TableSpec.Rows"/>
-/// and <see cref="TableRowSpec.Cells"/>. <see cref="Content"/> is the one
-/// exception: it defaults to empty, so an empty document is a valid, if
-/// useless, value of this record. <see cref="Generation.SpecRenderer"/> and
-/// <see cref="Generation.SpecCodeEmitter"/> both reject it explicitly, with
-/// their own legible message, before calling into the library.
+/// library: see <see cref="Content"/>, <see cref="PieChartSpec.Slices"/>,
+/// <see cref="TableSpec.Rows"/> and <see cref="TableRowSpec.Cells"/>.
 /// </remarks>
 public sealed record DocumentSpec
 {
@@ -48,16 +44,11 @@ public sealed record DocumentSpec
     /// The style registered as the document's default through
     /// <c>Document.SetDefaultFont</c>. Per section 3.4.0 of the plan, that
     /// member is consulted only by the <c>Document.Add(string, TextStyle?)</c>
-    /// overload, which neither <see cref="Generation.SpecRenderer"/> nor
-    /// <see cref="Generation.SpecCodeEmitter"/> ever calls: both always
-    /// construct an element directly, and every element resolves its own
-    /// per-element fallback, documented on that element's own <c>Style</c>
-    /// property, when left unset. Setting this property therefore changes
-    /// nothing about the document either side produces. It remains
-    /// <see langword="required"/> so every <see cref="DocumentSpec"/> states
-    /// an explicit value for it, matching every other member of this record,
-    /// and so the value is ready for a future caller of the one overload
-    /// that does consult it.
+    /// overload, which a <see cref="PlainTextSpec"/> with no explicit
+    /// <see cref="PlainTextSpec.Style"/> maps to. Every other content item is
+    /// constructed directly and resolves its own fallback at construction
+    /// time, before the document ever sees this value, so this property
+    /// governs only <see cref="PlainTextSpec"/> content left unstyled.
     /// </summary>
     public required TextStyleSpec DefaultTextStyle { get; init; }
 
@@ -69,8 +60,17 @@ public sealed record DocumentSpec
     /// </summary>
     public IReadOnlyList<byte[]> EmbeddedFonts { get; init; } = [];
 
-    /// <summary>The document's content, laid out in the order given.</summary>
-    public IReadOnlyList<ContentItemSpec> Content { get; init; } = [];
+    /// <summary>The document's content, laid out in the order given. A document must have at least one item.</summary>
+    public required IReadOnlyList<ContentItemSpec> Content
+    {
+        get;
+        init => field = value switch
+        {
+            null => throw new ArgumentNullException(nameof(Content)),
+            { Count: 0 } => throw new ArgumentException("A document must have at least one item of content.", nameof(Content)),
+            _ => value,
+        };
+    }
 
     /// <summary>The running header repeated on every page, if any.</summary>
     public RunningBandSpec? Header { get; init; }
@@ -136,6 +136,20 @@ public sealed record FontSpec
 }
 
 /// <summary>Mirrors the settable members of the library's <c>TextStyle</c>.</summary>
+/// <remarks>
+/// Per plan section 3.4.0.1, every member of this record must implement value
+/// equality. <see cref="Generation.SpecRenderer"/>'s style cache and
+/// <see cref="Generation.SpecCodeEmitter"/>'s style hoisting both key on this
+/// record's own equality, and they agree about when a style is shared only
+/// because both keys behave identically. C# record equality falls back to
+/// reference equality for any member whose type does not implement value
+/// equality, so adding a member of such a type here (an array or list, for
+/// instance) would silently make two value-equal styles compare unequal and
+/// reintroduce the divergence between the renderer and the emitter that took
+/// two review cycles to find and fix. If a future member cannot implement
+/// value equality, give this record an explicit <c>Equals</c> and
+/// <c>GetHashCode</c> covering it.
+/// </remarks>
 public sealed record TextStyleSpec
 {
     public required FontSpec Font { get; init; }
@@ -199,6 +213,21 @@ public sealed record ParagraphSpec : ContentItemSpec
 
     public static ParagraphSpec FromText(string text, TextStyleSpec style) =>
         new() { Runs = [new TextRunSpec(text, style)] };
+}
+
+/// <summary>
+/// A plain string added through the library's <c>Document.Add(string, TextStyle?)</c>
+/// overload, the one member of <c>Document</c> listed in plan section 3.1 that
+/// this model could not previously express. When <see cref="Style"/> is
+/// <see langword="null"/>, the rendered text uses whatever style
+/// <see cref="DocumentSpec.DefaultTextStyle"/> registered through
+/// <c>Document.SetDefaultFont</c>, unlike every other content item, which
+/// resolves its own fallback directly and never consults that value.
+/// </summary>
+public sealed record PlainTextSpec : ContentItemSpec
+{
+    public required string Text { get; init; }
+    public TextStyleSpec? Style { get; init; }
 }
 
 /// <summary>A <c>ListElement</c>, unordered or one of the three ordered forms.</summary>
@@ -383,7 +412,14 @@ public sealed record PdfAOutputIntentSpec : OutputIntentSpec
     public string? Info { get; init; }
 }
 
-/// <summary>A device CMYK output intent, matching <c>Document.UseCmykOutputIntent</c>.</summary>
+/// <summary>
+/// A device CMYK output intent, matching <c>Document.UseCmykOutputIntent</c>.
+/// Measured directly against the library: the call writes nothing into the
+/// saved bytes unless <see cref="DocumentSpec.Conformance"/> is set to
+/// something other than <see cref="DocumentConformance.None"/>. A sample
+/// using this type without a conformance claim would round-trip correctly
+/// while exercising nothing.
+/// </summary>
 public sealed record CmykOutputIntentSpec : OutputIntentSpec
 {
     public required string OutputConditionIdentifier { get; init; }

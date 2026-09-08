@@ -49,46 +49,43 @@ public class SpecRoundTripTests
         await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2uWithOutputIntent());
 
     /// <summary>
-    /// The regression test for S4-H1: two lists (in fact all four list
-    /// styles), two tables and two multi-run paragraphs in the same document.
-    /// Before that fix, the emitted code declared a second <c>list</c>,
-    /// <c>table</c> or <c>runs</c> local with the name of the first, which
-    /// this test would have failed to compile the moment it existed.
+    /// Two lists (in fact all four list styles), two tables and two
+    /// multi-run paragraphs in the same document. The emitted code names
+    /// each with a document-wide counter, so a second <c>list</c>,
+    /// <c>table</c> or <c>runs</c> local sharing the name of the first is a
+    /// compile error this test would catch the moment it existed.
     /// </summary>
     [Fact]
     public async Task RoundTrip_MultipleListsTablesAndParagraphs_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.MultipleListsTablesAndParagraphs());
 
     /// <summary>
-    /// The regression test for S4-H2: a string holding the whole C0 control
-    /// range plus NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR, alongside a
-    /// quote, a backslash and a brace pair. Before that fix, U+0085, U+2028
-    /// or U+2029 anywhere in visitor-supplied text terminated the emitted
-    /// string literal mid-string and the script failed to compile.
+    /// A string holding the whole C0 control range plus NEL, LINE SEPARATOR
+    /// and PARAGRAPH SEPARATOR, alongside a quote, a backslash and a brace
+    /// pair. U+0085, U+2028 or U+2029 anywhere in visitor-supplied text
+    /// terminates a naively emitted string literal mid-string, so this test
+    /// fails to compile if <see cref="Generation.SpecCodeEmitter.Emit"/> ever
+    /// stops escaping them.
     /// </summary>
     [Fact]
     public async Task RoundTrip_ControlCharactersAndLineSeparators_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.ControlCharactersAndLineSeparators());
 
     /// <summary>
-    /// The regression test for C2-H1 and A3-M3: see the doc comment on
-    /// <see cref="DocumentSpecSamples.SharedAndValueEqualRunStyles"/>. Before
-    /// the fix, a two-run paragraph sharing one <c>TextStyleSpec</c> instance
-    /// rendered as two merged runs on one side and two separate runs on the
-    /// other, because only <see cref="Generation.SpecCodeEmitter"/> merged on
-    /// value equality; <see cref="Generation.SpecRenderer"/> gave every run a
-    /// fresh <c>TextStyle</c> instance regardless.
+    /// See the doc comment on <see cref="DocumentSpecSamples.SharedAndValueEqualRunStyles"/>.
+    /// A two-run paragraph sharing one <c>TextStyleSpec</c> instance must
+    /// render identically to one whose two runs are distinct but value-equal
+    /// instances, since both <see cref="Generation.SpecRenderer"/> and
+    /// <see cref="Generation.SpecCodeEmitter"/> merge on value equality.
     /// </summary>
     [Fact]
     public async Task RoundTrip_SharedAndValueEqualRunStyles_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.SharedAndValueEqualRunStyles());
 
-    /// <summary>The S4-M8 residual: see <see cref="DocumentSpecSamples.AdditionalCoverage"/>.</summary>
     [Fact]
     public async Task RoundTrip_AdditionalCoverage_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.AdditionalCoverage());
 
-    /// <summary>The S4-M8 residual: PDF/A-2a, the one conformance profile left uncovered beyond PdfA2b and PdfA2u.</summary>
     [Fact]
     public async Task RoundTrip_PdfA2aWithOutputIntent_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
@@ -96,6 +93,34 @@ public class SpecRoundTripTests
     [Fact]
     public async Task RoundTrip_PdfA2aWithOutputIntent_IsReportedCompliantByPreflight() =>
         await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
+
+    /// <summary>PDF/UA-1, the fourth and last of the four conformance profiles plan section 6.2 requires.</summary>
+    [Fact]
+    public async Task RoundTrip_PdfUA1WithOutputIntent_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.PdfUA1WithOutputIntent());
+
+    /// <summary>
+    /// A <see cref="PlainTextSpec"/> with no explicit style. This is the one
+    /// content item that reads <see cref="DocumentSpec.DefaultTextStyle"/>
+    /// through the library's <c>Document.Add(string, TextStyle?)</c>
+    /// overload, so this test is what makes that property load-bearing: a
+    /// renderer or emitter that stopped consulting it, or that stopped
+    /// calling <c>Document.SetDefaultFont</c> with it, would produce a
+    /// visibly different PDF and fail this comparison.
+    /// </summary>
+    [Fact]
+    public async Task RoundTrip_PlainTextUsesDocumentDefault_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.PlainTextUsesDocumentDefault());
+
+    /// <summary>Covers the <see cref="CmykOutputIntentSpec"/> branch of both <see cref="SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>, which no other sample reaches.</summary>
+    [Fact]
+    public async Task RoundTrip_CmykOutputIntent_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.CmykOutputIntent());
+
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingBranchCoverage"/>.</summary>
+    [Fact]
+    public async Task RoundTrip_RemainingBranchCoverage_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.RemainingBranchCoverage());
 
     /// <summary>
     /// Encryption introduces its own nondeterminism beyond the document
@@ -110,7 +135,7 @@ public class SpecRoundTripTests
     /// first and compares the plaintext that comes back.
     /// </summary>
     /// <remarks>
-    /// S4-H3: decrypting first is not enough on its own.
+    /// Decrypting first is not enough on its own.
     /// <see cref="PdfReader.SaveDecrypted(System.IO.Stream)"/> strips the
     /// whole <c>/Encrypt</c> dictionary, which is the only place
     /// <c>UserPassword</c>, <c>Permissions</c> and <c>EncryptMetadata</c> live,
@@ -121,9 +146,23 @@ public class SpecRoundTripTests
     /// dictionary itself, on both outputs, before either is decrypted.
     /// </remarks>
     [Fact]
-    public async Task RoundTrip_Encrypted_DecryptsToMatchingContent()
+    public async Task RoundTrip_Encrypted_DecryptsToMatchingContent() =>
+        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.Encrypted());
+
+    /// <summary>
+    /// <see cref="EncryptionSpec"/>'s own defaults: full permissions and
+    /// metadata encryption left on. <see cref="Encrypted"/> above restricts
+    /// permissions and disables metadata encryption, which routes around
+    /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.All</c> fast
+    /// path and its omit-when-default <c>EncryptMetadata</c> branch; this
+    /// sample is what exercises both.
+    /// </summary>
+    [Fact]
+    public async Task RoundTrip_EncryptedWithDefaults_DecryptsToMatchingContent() =>
+        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedWithDefaults());
+
+    private static async Task AssertEncryptedRoundTripAsync(DocumentSpec spec)
     {
-        var spec = DocumentSpecSamples.Encrypted();
         var encryption = spec.Encryption!;
         var ownerPassword = encryption.OwnerPassword!;
         var userPassword = encryption.UserPassword!;
@@ -172,10 +211,10 @@ public class SpecRoundTripTests
     /// in force.
     /// </summary>
     /// <remarks>
-    /// C2-H2: transposing <c>UserPassword</c> and <c>OwnerPassword</c> in the
-    /// spec used to leave every assertion here green, because neither this
-    /// method nor <see cref="AssertPasswordAuthenticates"/> asked which role
-    /// actually authenticated; <c>Permissions</c> and <c>EncryptMetadata</c>
+    /// Transposing <c>UserPassword</c> and <c>OwnerPassword</c> in the spec
+    /// would leave every assertion here green if neither this method nor
+    /// <see cref="AssertPasswordAuthenticates"/> asked which role actually
+    /// authenticated; <c>Permissions</c> and <c>EncryptMetadata</c>
     /// are document-level and unaffected by which password is which.
     /// <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> pins that: it is
     /// <see langword="true"/> here because this method always opens with
@@ -206,8 +245,8 @@ public class SpecRoundTripTests
     /// with a wrong password throws <see cref="VellumPdf.Reader.PdfPasswordException"/>.
     /// </summary>
     /// <remarks>
-    /// See the C2-H2 remark on <see cref="AssertEncryptionMatchesSpec"/>:
-    /// this method always opens with <see cref="EncryptionSpec.UserPassword"/>,
+    /// See the remark on <see cref="AssertEncryptionMatchesSpec"/>: this
+    /// method always opens with <see cref="EncryptionSpec.UserPassword"/>,
     /// so asserting <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> is
     /// <see langword="false"/> here is what catches the user and owner
     /// passwords being transposed, which the mere fact of authenticating

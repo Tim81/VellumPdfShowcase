@@ -1,24 +1,28 @@
-using VellumPdfShowcase.Web.Generation;
+using VellumPdf.Layout.Core;
 using VellumPdfShowcase.Web.Model;
 
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// S4-M7: four ways to build a <see cref="DocumentSpec"/> the library cannot
-/// render. Three are rejected at construction, with a message naming the
-/// actual problem, because <see cref="PieChartSpec.Slices"/>,
-/// <see cref="TableSpec.Rows"/> and <see cref="TableRowSpec.Cells"/> are
-/// <see langword="required"/> properties with no sensible empty value. The
-/// fourth, <see cref="DocumentSpec.Content"/>, defaults to empty, so it
-/// remains constructible; <see cref="SpecRenderer"/> and
-/// <see cref="SpecCodeEmitter"/> both reject it explicitly, before calling
-/// into the library, with their own legible message rather than the
-/// library's "The document has no pages."
+/// Four ways to build a <see cref="DocumentSpec"/> the library cannot render,
+/// all four now rejected at construction with a message naming the actual
+/// problem, because <see cref="DocumentSpec.Content"/>,
+/// <see cref="PieChartSpec.Slices"/>, <see cref="TableSpec.Rows"/> and
+/// <see cref="TableRowSpec.Cells"/> are all <see langword="required"/>
+/// properties with a non-empty guard rather than a sensible empty value.
 /// </summary>
 public class DocumentSpecValidationTests
 {
     private static TextStyleSpec Style() =>
         new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    [Fact]
+    public void DocumentSpec_EmptyContent_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec { Page = new PageSizeSpec(200, 200), DefaultTextStyle = Style(), Content = [] });
+        Assert.Contains("content", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public void PieChartSpec_EmptySlices_ThrowsAtConstruction()
@@ -41,25 +45,6 @@ public class DocumentSpecValidationTests
         Assert.Contains("cell", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Render_EmptyContent_ThrowsLegibleMessageRatherThanLibraryException()
-    {
-        var spec = new DocumentSpec { Page = new PageSizeSpec(200, 200), DefaultTextStyle = Style() };
-
-        var exception = Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
-        Assert.Contains("Content", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("no pages", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void Emit_EmptyContent_ThrowsLegibleMessageRatherThanLibraryException()
-    {
-        var spec = new DocumentSpec { Page = new PageSizeSpec(200, 200), DefaultTextStyle = Style() };
-
-        var exception = Assert.Throws<InvalidOperationException>(() => SpecCodeEmitter.Emit(spec));
-        Assert.Contains("Content", exception.Message, StringComparison.Ordinal);
-    }
-
     [Theory]
     [InlineData("javascript:alert(1)")]
     [InlineData("data:text/html,<script>alert(1)</script>")]
@@ -76,5 +61,44 @@ public class DocumentSpecValidationTests
     {
         var style = new TextStyleSpec { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica), LinkUri = uri };
         Assert.Equal(uri, style.LinkUri);
+    }
+
+    /// <summary>
+    /// Plan section 3.4.0.1: every member of <see cref="TextStyleSpec"/> must
+    /// implement value equality, because <see cref="Generation.SpecRenderer"/>'s
+    /// style cache and <see cref="Generation.SpecCodeEmitter"/>'s style
+    /// hoisting both key on this record's own equality, and C# record
+    /// equality falls back to reference equality for any member whose type
+    /// does not implement value equality. Two independently constructed but
+    /// equal instances must therefore be <c>Equals</c>, hash alike, and
+    /// collide as the same dictionary key.
+    /// </summary>
+    [Fact]
+    public void TextStyleSpec_TwoEqualInstances_AreEqualHashAlikeAndCollideInADictionary()
+    {
+        var first = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.HelveticaBold),
+            FontSize = 13,
+            Leading = 15,
+            Color = new ColorRgb(0.1, 0.2, 0.3),
+            LinkUri = "https://example.com",
+        };
+        var second = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.HelveticaBold),
+            FontSize = 13,
+            Leading = 15,
+            Color = new ColorRgb(0.1, 0.2, 0.3),
+            LinkUri = "https://example.com",
+        };
+
+        Assert.NotSame(first, second);
+        Assert.Equal(first, second);
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
+
+        var dictionary = new Dictionary<TextStyleSpec, string> { [first] = "value" };
+        Assert.True(dictionary.ContainsKey(second));
+        Assert.Equal("value", dictionary[second]);
     }
 }

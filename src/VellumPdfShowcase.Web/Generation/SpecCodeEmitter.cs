@@ -13,10 +13,12 @@ namespace VellumPdfShowcase.Web.Generation;
 /// <c>VellumPdf.Layout</c> to produce the document described by a
 /// <see cref="DocumentSpec"/>. The output is a self-contained script: it opens
 /// with its own <see langword="using"/> directives and ends by returning the
-/// rendered <c>byte[]</c>, and it assumes the three asset collections described
-/// by <see cref="SpecAssets"/> (<c>EmbeddedFonts</c>, <c>Images</c>,
-/// <c>IccProfile</c>) are already in scope under those names, exactly as a page
-/// that fetched them once through <c>HttpClient</c> would have them.
+/// rendered <c>byte[]</c>, and it assumes the three names <see cref="SpecAssets"/>
+/// declares (<c>EmbeddedFonts</c>, <c>Images</c>, <c>IccProfile</c>) are
+/// already in scope under those names, exactly as a page that fetched them
+/// once through <c>HttpClient</c> would have them. <c>EmbeddedFonts</c> and
+/// <c>Images</c> are each an <see cref="IReadOnlyList{T}"/> of <c>byte[]</c>;
+/// <c>IccProfile</c> is a bare <c>byte[]</c>, not a collection.
 /// </summary>
 /// <remarks>
 /// This type and <see cref="SpecRenderer"/> both read only the
@@ -60,12 +62,6 @@ public static class SpecCodeEmitter
     /// </remarks>
     public static string Emit(DocumentSpec spec)
     {
-        if (spec.Content.Count == 0)
-        {
-            throw new InvalidOperationException(
-                "DocumentSpec.Content is empty. A document must have at least one item of content before code can be emitted for it.");
-        }
-
         var writer = new CodeWriter();
         new Emitter(spec, writer).EmitDocument();
         return writer.ToString();
@@ -91,7 +87,7 @@ public static class SpecCodeEmitter
         {
             EmitUsings();
             writer.Line();
-            EmitAssetCollectionComment();
+            EmitRequiredAssetsComment();
 
             var initializers = BuildDocumentInitializers(documentSpec);
             if (initializers.Count > 0)
@@ -119,12 +115,11 @@ public static class SpecCodeEmitter
                 EmitEmbeddedFonts();
                 EmitHoistedStyles();
 
-                // DocumentSpec.DefaultTextStyle documents that this call changes
-                // nothing about the document below: neither this emitter nor
-                // SpecRenderer ever calls the one Document.Add(string, TextStyle?)
-                // overload that consults it. It is emitted anyway so the snippet
-                // states the same value the model requires, explicitly, rather
-                // than silently dropping a field the caller set.
+                // Consulted only by the one Document.Add(string, TextStyle?)
+                // overload, which EmitPlainText emits for a PlainTextSpec left
+                // unstyled: see the remark on DocumentSpec.DefaultTextStyle.
+                // Every other content item resolves its own fallback directly
+                // and never reads this value.
                 writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
                 writer.Line();
                 EmitMetadata();
@@ -207,9 +202,9 @@ public static class SpecCodeEmitter
         /// disjoint subset of the three names shares either shape. Writes
         /// nothing when the snippet uses none of them.
         /// </summary>
-        private void EmitAssetCollectionComment()
+        private void EmitRequiredAssetsComment()
         {
-            var names = new List<string>();
+            List<string> names = [];
 
             if (documentSpec.EmbeddedFonts.Count > 0)
             {
@@ -329,6 +324,9 @@ public static class SpecCodeEmitter
         {
             switch (item)
             {
+                case PlainTextSpec plainText:
+                    EmitPlainText(plainText);
+                    break;
                 case HeadingSpec heading:
                     EmitHeading(heading);
                     break;
@@ -355,9 +353,23 @@ public static class SpecCodeEmitter
             }
         }
 
+        /// <summary>
+        /// The one call site that reads <see cref="DocumentSpec.DefaultTextStyle"/>
+        /// indirectly: an unstyled <see cref="PlainTextSpec"/> omits the trailing
+        /// style argument outright, the same convention <see cref="EmitHeading"/>
+        /// uses for an unset <c>Style</c>, so the document's registered default
+        /// governs the rendered text rather than a style spelled out here.
+        /// </summary>
+        private void EmitPlainText(PlainTextSpec plainTextSpec)
+        {
+            writer.Line(plainTextSpec.Style is { } style
+                ? $"document.Add({Literal(plainTextSpec.Text)}, {StyleExpression(style)});"
+                : $"document.Add({Literal(plainTextSpec.Text)});");
+        }
+
         private void EmitHeading(HeadingSpec headingSpec)
         {
-            var initializers = new List<string> { $"Level = {headingSpec.Level}" };
+            List<string> initializers = [$"Level = {headingSpec.Level}"];
 
             if (headingSpec.Alignment != HorizontalAlignment.Left)
             {
@@ -391,7 +403,7 @@ public static class SpecCodeEmitter
 
         private void EmitParagraph(ParagraphSpec paragraphSpec)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (paragraphSpec.Alignment != HorizontalAlignment.Left)
             {
@@ -432,20 +444,17 @@ public static class SpecCodeEmitter
 
         // ListElement, ListItem, TableElement and Cell all expose their settable
         // members as `init`, which the language only allows to be assigned inside
-        // the object-initializer expression that constructs the instance. The
-        // emitted code below therefore never assigns into one of these after
-        // declaring it; every optional property is folded into the same
-        // declaration through EmitDeclaration. Uniqueness across two lists,
-        // tables or multi-run paragraphs in the same document comes from a
-        // document-wide counter threaded through this class (_listIndex,
-        // _tableIndex, _multiRunIndex), the same mechanism EmitImage already
-        // used for image0, image1; row and cell names are then derived from
-        // their own table's already-unique name. No name is scoped to an
-        // artificial `{ }` block: the snippet stays a flat sequence of
-        // statements, matching what a developer would actually write.
+        // the object-initializer expression that constructs the instance, so the
+        // emitted code folds every optional property into the one declaration
+        // EmitDeclaration writes rather than assigning to it afterward.
+        // Uniqueness across two lists, tables or multi-run paragraphs in the same
+        // document comes from the per-class counters _listIndex, _tableIndex and
+        // _multiRunIndex, the same mechanism EmitImage uses for image0, image1;
+        // row and cell names are then derived from their own table's
+        // already-unique name.
         private void EmitList(ListSpec listSpec)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (listSpec.Indent is { } indent)
             {
@@ -476,7 +485,7 @@ public static class SpecCodeEmitter
 
         private string EmitListItem(ListItemSpec itemSpec, string variableName)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (itemSpec.Language is not null)
             {
@@ -500,7 +509,7 @@ public static class SpecCodeEmitter
 
         private void EmitTable(TableSpec tableSpec)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (tableSpec.DefaultCellStyle is not null)
             {
@@ -534,7 +543,8 @@ public static class SpecCodeEmitter
             {
                 var row = tableSpec.Rows[rowIndex];
                 var rowVariable = $"{tableVariable}Row{rowIndex}";
-                writer.Line($"var {rowVariable} = {tableVariable}.AddRow({(row.IsHeader ? "true" : "false")});");
+                var addRowCall = row.IsHeader ? $"{tableVariable}.AddHeaderRow()" : $"{tableVariable}.AddRow()";
+                writer.Line($"var {rowVariable} = {addRowCall};");
 
                 for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
                 {
@@ -547,7 +557,7 @@ public static class SpecCodeEmitter
 
         private void EmitCell(TableCellSpec cellSpec, string rowVariable, string cellVariable)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (cellSpec.ColSpan != 1)
             {
@@ -604,7 +614,7 @@ public static class SpecCodeEmitter
             writer.Line($"var {imageVariable} = {loaderName}.Load(Images[{_imageIndex}]);");
             _imageIndex++;
 
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (imageSpec.Width is { } width)
             {
@@ -636,11 +646,11 @@ public static class SpecCodeEmitter
 
         private void EmitPieChart(PieChartSpec pieChartSpec)
         {
-            var initializers = new List<string>
-            {
+            List<string> initializers =
+            [
                 $"Slices = [{string.Join(", ", pieChartSpec.Slices.Select(EmitPieSlice))}]",
                 $"Diameter = {Num(pieChartSpec.Diameter)}",
-            };
+            ];
 
             if (pieChartSpec.Margins is { } margins)
             {
@@ -687,7 +697,7 @@ public static class SpecCodeEmitter
 
         private void EmitLineSeparator(LineSeparatorSpec lineSeparatorSpec)
         {
-            var initializers = new List<string>();
+            List<string> initializers = [];
 
             if (lineSeparatorSpec.LineWidth != 1)
             {
@@ -717,7 +727,7 @@ public static class SpecCodeEmitter
                 ? $"new RunningBand({Literal(bandSpec.Template)}, {StyleExpression(bandSpec.Style)})"
                 : $"new RunningBand({Literal(bandSpec.Template)}, {StyleExpression(bandSpec.Style)}, HorizontalAlignment.{bandSpec.Alignment})";
 
-            var initializers = bandSpec.Height is { } height ? new List<string> { $"Height = {Num(height)}" } : [];
+            List<string> initializers = bandSpec.Height is { } height ? [$"Height = {Num(height)}"] : [];
             EmitAssignment($"document.{kind}", ctorExpr, initializers);
         }
 
@@ -821,13 +831,12 @@ public static class SpecCodeEmitter
     /// value-equal instances hoist to one shared local exactly as
     /// <see cref="SpecRenderer"/>'s own style cache merges them into one
     /// shared <c>TextStyle</c> instance. Changing one side without the other
-    /// would let the library's adjacent-run merging diverge between the two;
-    /// see C2-H1 and A3-M3.
+    /// would let the library's adjacent-run merging diverge between the two.
     /// </summary>
     private static Dictionary<TextStyleSpec, string> BuildHoistedStyleNames(DocumentSpec spec)
     {
         var counts = new Dictionary<TextStyleSpec, int>();
-        var firstSeenOrder = new List<TextStyleSpec>();
+        List<TextStyleSpec> firstSeenOrder = [];
 
         foreach (var style in CollectTextStyles(spec))
         {
@@ -883,6 +892,9 @@ public static class SpecCodeEmitter
     {
         switch (item)
         {
+            case PlainTextSpec { Style: { } style }:
+                yield return style;
+                break;
             case HeadingSpec { Style: { } style }:
                 yield return style;
                 break;
@@ -947,7 +959,7 @@ public static class SpecCodeEmitter
 
     private static List<string> BuildDocumentInitializers(DocumentSpec spec)
     {
-        var initializers = new List<string>();
+        List<string> initializers = [];
 
         if (EmitPageSizeInitializer(spec.Page) is { } pageSizeInitializer)
         {
@@ -1044,7 +1056,7 @@ public static class SpecCodeEmitter
             _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Font.Kind, "Unrecognised font kind."),
         };
 
-        var properties = new List<string> { $"FontRef = {fontRefExpr}", $"FontSize = {Num(spec.FontSize)}" };
+        List<string> properties = [$"FontRef = {fontRefExpr}", $"FontSize = {Num(spec.FontSize)}"];
 
         if (spec.Leading is { } leading)
         {

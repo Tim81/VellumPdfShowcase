@@ -39,12 +39,6 @@ public static class SpecRenderer
     /// <summary>Builds the document described by <paramref name="spec"/> and returns its PDF bytes.</summary>
     public static byte[] Render(DocumentSpec spec)
     {
-        if (spec.Content.Count == 0)
-        {
-            throw new InvalidOperationException(
-                "DocumentSpec.Content is empty. A document must have at least one item of content before it can be rendered.");
-        }
-
         using var document = new Document
         {
             PageSize = new VellumPdf.Document.PdfRectangle(0, 0, spec.Page.WidthPoints, spec.Page.HeightPoints),
@@ -61,10 +55,11 @@ public static class SpecRenderer
         var embeddedFonts = spec.EmbeddedFonts.Select(document.UseTrueTypeFont).ToArray();
         var context = new RenderContext(embeddedFonts, new Dictionary<TextStyleSpec, TextStyle>());
 
-        // This call changes nothing about the rendered document: see the
-        // remark on DocumentSpec.DefaultTextStyle. It is issued anyway so
-        // this method mirrors the model's field explicitly, the same way
-        // SpecCodeEmitter emits the matching document.SetDefaultFont call.
+        // Consulted only by the one Document.Add(string, TextStyle?) overload,
+        // which AddContentItem calls for a PlainTextSpec left unstyled: see
+        // the remark on DocumentSpec.DefaultTextStyle. Every other element
+        // built below resolves its own fallback directly and never reads
+        // this value.
         document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, context));
 
         if (spec.Metadata is { } metadata)
@@ -152,6 +147,9 @@ public static class SpecRenderer
     {
         switch (item)
         {
+            case PlainTextSpec plainText:
+                document.Add(plainText.Text, ToTextStyleOrNull(plainText.Style, context));
+                break;
             case HeadingSpec heading:
                 document.Add(BuildHeading(heading, context));
                 break;
@@ -248,7 +246,7 @@ public static class SpecRenderer
 
         foreach (var rowSpec in spec.Rows)
         {
-            var row = table.AddRow(rowSpec.IsHeader);
+            var row = rowSpec.IsHeader ? table.AddHeaderRow() : table.AddRow();
 
             foreach (var cellSpec in rowSpec.Cells)
             {
@@ -333,7 +331,7 @@ public static class SpecRenderer
     /// merges adjacent <c>TextRun</c>s whose <c>Style</c> is reference-identical,
     /// and <see cref="Generation.SpecCodeEmitter"/> hoists a style used more
     /// than once into one shared local by the same value-equality rule, so
-    /// this cache is what keeps the two sides merging runs identically. See C2-H1.
+    /// this cache is what keeps the two sides merging runs identically.
     /// </summary>
     private static TextStyle ToTextStyle(TextStyleSpec spec, RenderContext context)
     {
