@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using VellumPdf.Encryption;
 using VellumPdf.Layout.Core;
 using VellumPdf.Layout.Elements;
@@ -102,6 +104,71 @@ public class DocumentSpecValidationTests
         var dictionary = new Dictionary<TextStyleSpec, string> { [first] = "value" };
         Assert.True(dictionary.ContainsKey(second));
         Assert.Equal("value", dictionary[second]);
+    }
+
+    /// <summary>
+    /// Guards plan section 3.4.0.1 the way <see cref="TextStyleSpec_TwoEqualInstances_AreEqualHashAlikeAndCollideInADictionary"/>
+    /// cannot. That test constructs both instances by naming every member
+    /// this record has TODAY; a member added later defaults to
+    /// <see langword="null"/> on both without either instance ever setting
+    /// it, so the two stay equal regardless of the new member's own equality
+    /// behaviour, and the test that is supposed to guard the invariant stays
+    /// green while the invariant it names is silently broken. This test
+    /// instead reflects over whatever members <see cref="TextStyleSpec"/>
+    /// actually has, so it inspects a future member without anyone having to
+    /// remember to teach it that member's name.
+    /// <para>
+    /// A member's type has value equality here when it is a value type (a
+    /// <see langword="struct"/>, <see langword="enum"/>, or
+    /// <see cref="Nullable{T}"/> of one; <see cref="ValueType.Equals(object?)"/>
+    /// compares every field), a <see cref="string"/>, or a reference type
+    /// that itself overrides <c>Equals(object?)</c> rather than inheriting
+    /// <see cref="object.Equals(object?)"/>'s reference comparison, which is
+    /// exactly what a C# <see langword="record"/> generates automatically and
+    /// what an ordinary array or <see cref="List{T}"/> does NOT. An
+    /// array- or list-typed member, the shape plan section 3.4.0.1 names by
+    /// example (a dash pattern), is caught by this last rule: neither type
+    /// overrides <c>Equals(object?)</c>, so this test fails the moment one is
+    /// added, whether or not the two constructed instances happen to set it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetMethod cannot observe a member removed by the linker.")]
+    public void TextStyleSpec_EveryMember_HasValueEquality()
+    {
+        var properties = typeof(TextStyleSpec).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        Assert.NotEmpty(properties);
+
+        foreach (var property in properties)
+        {
+            Assert.True(
+                HasValueEquality(property.PropertyType),
+                $"TextStyleSpec.{property.Name} has type {property.PropertyType}, which does not implement " +
+                "value equality. Record equality falls back to reference equality for it, which would let " +
+                "two value-equal TextStyleSpec instances compare unequal; see the remark on TextStyleSpec.");
+        }
+    }
+
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetMethod cannot observe a member removed by the linker.")]
+    private static bool HasValueEquality(Type type)
+    {
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (underlyingType.IsValueType || underlyingType == typeof(string))
+        {
+            return true;
+        }
+
+        var equalsMethod = underlyingType.GetMethod(nameof(Equals), BindingFlags.Public | BindingFlags.Instance, [typeof(object)]);
+        return equalsMethod is not null && equalsMethod.DeclaringType != typeof(object);
     }
 }
 
