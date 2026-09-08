@@ -59,8 +59,13 @@ public static class SpecRenderer
         }
 
         var embeddedFonts = spec.EmbeddedFonts.Select(document.UseTrueTypeFont).ToArray();
+        var context = new RenderContext(embeddedFonts, new Dictionary<TextStyleSpec, TextStyle>());
 
-        document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, embeddedFonts));
+        // This call changes nothing about the rendered document: see the
+        // remark on DocumentSpec.DefaultTextStyle. It is issued anyway so
+        // this method mirrors the model's field explicitly, the same way
+        // SpecCodeEmitter emits the matching document.SetDefaultFont call.
+        document.SetDefaultFont(ToTextStyle(spec.DefaultTextStyle, context));
 
         if (spec.Metadata is { } metadata)
         {
@@ -69,17 +74,17 @@ public static class SpecRenderer
 
         foreach (var item in spec.Content)
         {
-            AddContentItem(document, item, embeddedFonts);
+            AddContentItem(document, item, context);
         }
 
         if (spec.Header is { } header)
         {
-            document.Header = BuildRunningBand(header, embeddedFonts);
+            document.Header = BuildRunningBand(header, context);
         }
 
         if (spec.Footer is { } footer)
         {
-            document.Footer = BuildRunningBand(footer, embeddedFonts);
+            document.Footer = BuildRunningBand(footer, context);
         }
 
         switch (spec.OutputIntent)
@@ -143,21 +148,21 @@ public static class SpecRenderer
         }
     }
 
-    private static void AddContentItem(Document document, ContentItemSpec item, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static void AddContentItem(Document document, ContentItemSpec item, RenderContext context)
     {
         switch (item)
         {
             case HeadingSpec heading:
-                document.Add(BuildHeading(heading, fonts));
+                document.Add(BuildHeading(heading, context));
                 break;
             case ParagraphSpec paragraph:
-                document.Add(BuildParagraph(paragraph, fonts));
+                document.Add(BuildParagraph(paragraph, context));
                 break;
             case ListSpec list:
-                document.Add(BuildList(list, fonts));
+                document.Add(BuildList(list, context));
                 break;
             case TableSpec table:
-                document.Add(BuildTable(table, fonts));
+                document.Add(BuildTable(table, context));
                 break;
             case ImageSpec image:
                 document.Add(BuildImage(image));
@@ -173,8 +178,8 @@ public static class SpecRenderer
         }
     }
 
-    private static Heading BuildHeading(HeadingSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts) =>
-        new(spec.Text, ToTextStyleOrNull(spec.Style, fonts))
+    private static Heading BuildHeading(HeadingSpec spec, RenderContext context) =>
+        new(spec.Text, ToTextStyleOrNull(spec.Style, context))
         {
             Level = spec.Level,
             Alignment = spec.Alignment,
@@ -183,9 +188,9 @@ public static class SpecRenderer
             Language = spec.Language,
         };
 
-    private static Paragraph BuildParagraph(ParagraphSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static Paragraph BuildParagraph(ParagraphSpec spec, RenderContext context)
     {
-        var runs = spec.Runs.Select(run => new TextRun(run.Text, ToTextStyle(run.Style, fonts)));
+        var runs = spec.Runs.Select(run => new TextRun(run.Text, ToTextStyle(run.Style, context)));
         return new Paragraph(runs)
         {
             Alignment = spec.Alignment,
@@ -194,43 +199,43 @@ public static class SpecRenderer
         };
     }
 
-    private static ListElement BuildList(ListSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static ListElement BuildList(ListSpec spec, RenderContext context)
     {
         var list = new ListElement(spec.Style)
         {
             Indent = spec.Indent ?? 20,
             Margins = spec.Margins ?? EdgeInsets.Zero,
-            DefaultStyle = ToTextStyleOrNull(spec.DefaultStyle, fonts),
+            DefaultStyle = ToTextStyleOrNull(spec.DefaultStyle, context),
         };
 
         foreach (var item in spec.Items)
         {
-            list.Add(BuildListItem(item, fonts));
+            list.Add(BuildListItem(item, context));
         }
 
         return list;
     }
 
-    private static ListItem BuildListItem(ListItemSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static ListItem BuildListItem(ListItemSpec spec, RenderContext context)
     {
-        var item = new ListItem(spec.Text, ToTextStyleOrNull(spec.Style, fonts))
+        var item = new ListItem(spec.Text, ToTextStyleOrNull(spec.Style, context))
         {
             Language = spec.Language,
         };
 
         foreach (var child in spec.Children)
         {
-            item.AddChild(BuildListItem(child, fonts));
+            item.AddChild(BuildListItem(child, context));
         }
 
         return item;
     }
 
-    private static TableElement BuildTable(TableSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static TableElement BuildTable(TableSpec spec, RenderContext context)
     {
         var table = new TableElement
         {
-            DefaultCellStyle = ToTextStyleOrNull(spec.DefaultCellStyle, fonts),
+            DefaultCellStyle = ToTextStyleOrNull(spec.DefaultCellStyle, context),
             BorderWidth = spec.BorderWidth ?? 0.5,
             BorderColor = spec.BorderColor ?? ColorRgb.Black,
             Margins = spec.Margins ?? EdgeInsets.Zero,
@@ -247,19 +252,19 @@ public static class SpecRenderer
 
             foreach (var cellSpec in rowSpec.Cells)
             {
-                row.AddCell(BuildCell(cellSpec, fonts));
+                row.AddCell(BuildCell(cellSpec, context));
             }
         }
 
         return table;
     }
 
-    private static Cell BuildCell(TableCellSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts) =>
+    private static Cell BuildCell(TableCellSpec spec, RenderContext context) =>
         new(spec.Content)
         {
             ColSpan = spec.ColSpan,
             RowSpan = spec.RowSpan,
-            Style = ToTextStyleOrNull(spec.Style, fonts),
+            Style = ToTextStyleOrNull(spec.Style, context),
             Padding = spec.Padding ?? new EdgeInsets(4, 6, 4, 6),
             Background = spec.Background,
             Alignment = spec.Alignment,
@@ -309,24 +314,42 @@ public static class SpecRenderer
         Margins = spec.Margins ?? new EdgeInsets(6, 0, 6, 0),
     };
 
-    private static RunningBand BuildRunningBand(RunningBandSpec spec, IReadOnlyList<EmbeddedFontHandle> fonts)
+    private static RunningBand BuildRunningBand(RunningBandSpec spec, RenderContext context)
     {
-        var style = ToTextStyle(spec.Style, fonts);
+        var style = ToTextStyle(spec.Style, context);
         return spec.Height is { } height
             ? new RunningBand(spec.Template, style, spec.Alignment) { Height = height }
             : new RunningBand(spec.Template, style, spec.Alignment);
     }
 
-    private static TextStyle ToTextStyle(TextStyleSpec spec, IReadOnlyList<EmbeddedFontHandle> embeddedFonts)
+    /// <summary>
+    /// Builds the <see cref="TextStyle"/> for <paramref name="spec"/>, or
+    /// returns the one already built for a value-equal <see cref="TextStyleSpec"/>
+    /// earlier in the same <see cref="Render"/> call. <see cref="RenderContext.StyleCache"/>
+    /// keys on <see cref="TextStyleSpec"/>'s own record value equality, so two
+    /// runs sharing a value-equal style (whether or not they share the same
+    /// instance) are always given the same <see cref="TextStyle"/> instance.
+    /// This matters beyond simply avoiding redundant allocation: the library
+    /// merges adjacent <c>TextRun</c>s whose <c>Style</c> is reference-identical,
+    /// and <see cref="Generation.SpecCodeEmitter"/> hoists a style used more
+    /// than once into one shared local by the same value-equality rule, so
+    /// this cache is what keeps the two sides merging runs identically. See C2-H1.
+    /// </summary>
+    private static TextStyle ToTextStyle(TextStyleSpec spec, RenderContext context)
     {
+        if (context.StyleCache.TryGetValue(spec, out var cached))
+        {
+            return cached;
+        }
+
         var fontRef = spec.Font.Kind switch
         {
             FontKind.Standard14 => new FontReference(spec.Font.Standard14Face),
-            FontKind.Embedded => new FontReference(embeddedFonts[spec.Font.EmbeddedFontIndex]),
+            FontKind.Embedded => new FontReference(context.Fonts[spec.Font.EmbeddedFontIndex]),
             _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Font.Kind, "Unrecognised font kind."),
         };
 
-        return new TextStyle
+        var style = new TextStyle
         {
             FontRef = fontRef,
             FontSize = spec.FontSize,
@@ -334,8 +357,20 @@ public static class SpecRenderer
             Color = spec.Color,
             LinkUri = spec.LinkUri,
         };
+
+        context.StyleCache.Add(spec, style);
+        return style;
     }
 
-    private static TextStyle? ToTextStyleOrNull(TextStyleSpec? spec, IReadOnlyList<EmbeddedFontHandle> embeddedFonts) =>
-        spec is null ? null : ToTextStyle(spec, embeddedFonts);
+    private static TextStyle? ToTextStyleOrNull(TextStyleSpec? spec, RenderContext context) =>
+        spec is null ? null : ToTextStyle(spec, context);
+
+    /// <summary>
+    /// The state threaded through one <see cref="Render"/> call: the embedded
+    /// font handles already registered with <c>document</c>, in
+    /// <see cref="DocumentSpec.EmbeddedFonts"/> order, and the cache
+    /// <see cref="ToTextStyle"/> uses to give every value-equal
+    /// <see cref="TextStyleSpec"/> the same <see cref="TextStyle"/> instance.
+    /// </summary>
+    private sealed record RenderContext(IReadOnlyList<EmbeddedFontHandle> Fonts, Dictionary<TextStyleSpec, TextStyle> StyleCache);
 }

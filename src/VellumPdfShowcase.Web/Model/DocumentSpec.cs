@@ -44,7 +44,21 @@ public sealed record DocumentSpec
     /// </summary>
     public EdgeInsets Margins { get; init; } = new(72);
 
-    /// <summary>The style applied to elements that do not specify their own.</summary>
+    /// <summary>
+    /// The style registered as the document's default through
+    /// <c>Document.SetDefaultFont</c>. Per section 3.4.0 of the plan, that
+    /// member is consulted only by the <c>Document.Add(string, TextStyle?)</c>
+    /// overload, which neither <see cref="Generation.SpecRenderer"/> nor
+    /// <see cref="Generation.SpecCodeEmitter"/> ever calls: both always
+    /// construct an element directly, and every element resolves its own
+    /// per-element fallback, documented on that element's own <c>Style</c>
+    /// property, when left unset. Setting this property therefore changes
+    /// nothing about the document either side produces. It remains
+    /// <see langword="required"/> so every <see cref="DocumentSpec"/> states
+    /// an explicit value for it, matching every other member of this record,
+    /// and so the value is ready for a future caller of the one overload
+    /// that does consult it.
+    /// </summary>
     public required TextStyleSpec DefaultTextStyle { get; init; }
 
     /// <summary>
@@ -212,9 +226,12 @@ public sealed record TableSpec : ContentItemSpec
     public required IReadOnlyList<TableRowSpec> Rows
     {
         get;
-        init => field = value.Count > 0
-            ? value
-            : throw new ArgumentException("A table must have at least one row.", nameof(Rows));
+        init => field = value switch
+        {
+            null => throw new ArgumentNullException(nameof(Rows)),
+            { Count: 0 } => throw new ArgumentException("A table must have at least one row.", nameof(Rows)),
+            _ => value,
+        };
     }
 
     public IReadOnlyList<double>? ColumnWidths { get; init; }
@@ -243,9 +260,12 @@ public sealed record TableRowSpec
     public required IReadOnlyList<TableCellSpec> Cells
     {
         get;
-        init => field = value.Count > 0
-            ? value
-            : throw new ArgumentException("A table row must have at least one cell.", nameof(Cells));
+        init => field = value switch
+        {
+            null => throw new ArgumentNullException(nameof(Cells)),
+            { Count: 0 } => throw new ArgumentException("A table row must have at least one cell.", nameof(Cells)),
+            _ => value,
+        };
     }
 
     public bool IsHeader { get; init; }
@@ -292,9 +312,12 @@ public sealed record PieChartSpec : ContentItemSpec
     public required IReadOnlyList<PieSlice> Slices
     {
         get;
-        init => field = value.Count > 0
-            ? value
-            : throw new ArgumentException("A pie chart must have at least one slice.", nameof(Slices));
+        init => field = value switch
+        {
+            null => throw new ArgumentNullException(nameof(Slices)),
+            { Count: 0 } => throw new ArgumentException("A pie chart must have at least one slice.", nameof(Slices)),
+            _ => value,
+        };
     }
 
     public required double Diameter { get; init; }

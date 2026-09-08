@@ -23,6 +23,10 @@ internal static class DocumentSpecSamples
     private static readonly byte[] OnePixelBmp = Convert.FromBase64String(
         "Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABACAAAAAAAAAAAADEDgAAxA4AAAAAAAAAAAAAHhQK/w==");
 
+    /// <summary>A 1x1 red JPEG, used to exercise <see cref="ImageFormat.Jpeg"/>, the one Kernel image loader no other sample reached. See S4-M8.</summary>
+    private static readonly byte[] OnePixelJpeg = Convert.FromBase64String(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z");
+
     private static byte[] ReadTestAsset(string fileName) =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestAssets", fileName));
 
@@ -410,6 +414,169 @@ internal static class DocumentSpecSamples
             DefaultTextStyle = style,
             Metadata = new DocumentMetadataSpec { Title = weird },
             Content = [ParagraphSpec.FromText(weird, style)],
+        };
+    }
+
+    /// <summary>
+    /// The regression test for C2-H1 and A3-M3: two two-run paragraphs. The
+    /// first has both runs share one <see cref="TextStyleSpec"/> instance
+    /// (the ordinary way to author "two runs, one style"); the second has
+    /// two distinct instances that are value-equal but not reference-equal.
+    /// Before the fix, <see cref="Generation.SpecRenderer"/> built a fresh
+    /// <c>TextStyle</c> per run while <see cref="Generation.SpecCodeEmitter"/>
+    /// hoisted a style used twice into one shared local, so the library's
+    /// reference-identity run-merging diverged between the two sides for the
+    /// first paragraph; the second paragraph is the case A3-M3 describes,
+    /// where the emitter's now-value-equality-keyed hoisting must match a
+    /// renderer that also caches on value equality, or the two would diverge
+    /// the other way. Both paragraphs must round-trip identically.
+    /// </summary>
+    public static DocumentSpec SharedAndValueEqualRunStyles()
+    {
+        var docDefault = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+        var sharedInstance = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.Helvetica),
+            FontSize = 11,
+            LinkUri = "https://example.com",
+        };
+        var valueEqualA = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.HelveticaBold), FontSize = 13 };
+        var valueEqualB = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.HelveticaBold), FontSize = 13 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(400, 300),
+            DefaultTextStyle = docDefault,
+            Content =
+            [
+                new ParagraphSpec
+                {
+                    Runs =
+                    [
+                        new TextRunSpec("Shared instance, ", sharedInstance),
+                        new TextRunSpec("run two.", sharedInstance),
+                    ],
+                },
+                new ParagraphSpec
+                {
+                    Runs =
+                    [
+                        new TextRunSpec("Value-equal, ", valueEqualA),
+                        new TextRunSpec("distinct instances.", valueEqualB),
+                    ],
+                },
+            ],
+        };
+    }
+
+    /// <summary>
+    /// The S4-M8 residual: a pie chart with non-default <c>Alignment</c>,
+    /// <c>StrokeColor</c> and <c>Decorative</c>; a list with
+    /// <see cref="ListSpec.DefaultStyle"/>; a table with
+    /// <see cref="TableSpec.DefaultCellStyle"/>; the JPEG loader; list
+    /// nesting two levels deep; and one cell combining <c>ColSpan</c> and
+    /// <c>RowSpan</c>.
+    /// </summary>
+    public static DocumentSpec AdditionalCoverage()
+    {
+        var bodyStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+        var listDefaultStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.HelveticaOblique), FontSize = 10 };
+        var cellDefaultStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.TimesRoman), FontSize = 10 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(500, 700),
+            DefaultTextStyle = bodyStyle,
+            Content =
+            [
+                new PieChartSpec
+                {
+                    Diameter = 80,
+                    Alignment = HorizontalAlignment.Right,
+                    StrokeColor = new ColorRgb(0.2, 0.2, 0.2),
+                    Decorative = true,
+                    Slices = [new PieSlice(1, new ColorRgb(0.3, 0.5, 0.7))],
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.Unordered,
+                    DefaultStyle = listDefaultStyle,
+                    Items =
+                    [
+                        new ListItemSpec
+                        {
+                            Text = "Level one",
+                            Children =
+                            [
+                                new ListItemSpec
+                                {
+                                    Text = "Level two",
+                                    Children = [new ListItemSpec { Text = "Level three" }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                new TableSpec
+                {
+                    DefaultCellStyle = cellDefaultStyle,
+                    Rows =
+                    [
+                        new TableRowSpec
+                        {
+                            IsHeader = true,
+                            Cells =
+                            [
+                                new TableCellSpec { Content = "Spans two columns and two rows", ColSpan = 2, RowSpan = 2 },
+                                new TableCellSpec { Content = "Top right" },
+                            ],
+                        },
+                        new TableRowSpec
+                        {
+                            Cells = [new TableCellSpec { Content = "Bottom right" }],
+                        },
+                    ],
+                },
+                new ImageSpec
+                {
+                    Format = ImageFormat.Jpeg,
+                    Bytes = OnePixelJpeg,
+                    Width = 20,
+                    AltText = "A single test pixel, JPEG-encoded.",
+                },
+            ],
+        };
+    }
+
+    /// <summary>
+    /// A PDF/A-2a claim, the accessibility-conformant level of PDF/A-2,
+    /// covering the one profile plan section 6.2's four PDF/A and PDF/UA
+    /// profiles left untested after <see cref="PdfA2bWithOutputIntent"/> and
+    /// <see cref="PdfA2uWithOutputIntent"/>. See S4-M8.
+    /// </summary>
+    public static DocumentSpec PdfA2aWithOutputIntent()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A5),
+            DefaultTextStyle = style,
+            EmbeddedFonts = [LiberationSansBytes()],
+            Conformance = DocumentConformance.PdfA2a,
+            Tagged = true,
+            Language = "en",
+            Content =
+            [
+                new HeadingSpec { Text = "PDF/A-2a sample", Level = 1, Style = style, Language = "en" },
+                ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
+            ],
+            OutputIntent = new PdfAOutputIntentSpec
+            {
+                IccProfile = SrgbIccProfileBytes(),
+                ComponentCount = 3,
+                OutputConditionIdentifier = "sRGB IEC61966-2.1",
+            },
         };
     }
 }

@@ -71,6 +71,33 @@ public class SpecRoundTripTests
         await AssertRoundTripAsync(DocumentSpecSamples.ControlCharactersAndLineSeparators());
 
     /// <summary>
+    /// The regression test for C2-H1 and A3-M3: see the doc comment on
+    /// <see cref="DocumentSpecSamples.SharedAndValueEqualRunStyles"/>. Before
+    /// the fix, a two-run paragraph sharing one <c>TextStyleSpec</c> instance
+    /// rendered as two merged runs on one side and two separate runs on the
+    /// other, because only <see cref="Generation.SpecCodeEmitter"/> merged on
+    /// value equality; <see cref="Generation.SpecRenderer"/> gave every run a
+    /// fresh <c>TextStyle</c> instance regardless.
+    /// </summary>
+    [Fact]
+    public async Task RoundTrip_SharedAndValueEqualRunStyles_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.SharedAndValueEqualRunStyles());
+
+    /// <summary>The S4-M8 residual: see <see cref="DocumentSpecSamples.AdditionalCoverage"/>.</summary>
+    [Fact]
+    public async Task RoundTrip_AdditionalCoverage_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.AdditionalCoverage());
+
+    /// <summary>The S4-M8 residual: PDF/A-2a, the one conformance profile left uncovered beyond PdfA2b and PdfA2u.</summary>
+    [Fact]
+    public async Task RoundTrip_PdfA2aWithOutputIntent_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
+
+    [Fact]
+    public async Task RoundTrip_PdfA2aWithOutputIntent_IsReportedCompliantByPreflight() =>
+        await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
+
+    /// <summary>
     /// Encryption introduces its own nondeterminism beyond the document
     /// identifier and the XMP timestamps: rendering the identical
     /// <see cref="DocumentSpec"/> through <see cref="SpecRenderer"/> twice
@@ -138,32 +165,59 @@ public class SpecRoundTripTests
     /// <summary>
     /// Reads the <c>/Encrypt</c> dictionary of <paramref name="pdf"/> directly,
     /// through the owner password, and asserts its <c>Permissions</c> and
-    /// <c>EncryptMetadata</c> match what <paramref name="encryption"/> claims.
-    /// Opening with the owner password (rather than the user password)
-    /// guarantees full access regardless of which permissions are in force.
+    /// <c>EncryptMetadata</c> match what <paramref name="encryption"/> claims,
+    /// and that the password used to open it actually authenticated as the
+    /// owner. Opening with the owner password (rather than the user
+    /// password) guarantees full access regardless of which permissions are
+    /// in force.
     /// </summary>
+    /// <remarks>
+    /// C2-H2: transposing <c>UserPassword</c> and <c>OwnerPassword</c> in the
+    /// spec used to leave every assertion here green, because neither this
+    /// method nor <see cref="AssertPasswordAuthenticates"/> asked which role
+    /// actually authenticated; <c>Permissions</c> and <c>EncryptMetadata</c>
+    /// are document-level and unaffected by which password is which.
+    /// <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> pins that: it is
+    /// <see langword="true"/> here because this method always opens with
+    /// <see cref="EncryptionSpec.OwnerPassword"/>. A negative assertion (this
+    /// password does not also authenticate as the user password) is
+    /// deliberately not made: at R&lt;=4 an owner password always also
+    /// authenticates as the user password by specification, so that
+    /// assertion would be false generally and would pass today only because
+    /// <c>PdfEncryptionSettings</c> is fixed at AES-256 V5/R6.
+    /// </remarks>
     private static void AssertEncryptionMatchesSpec(byte[] pdf, EncryptionSpec encryption)
     {
         using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = encryption.OwnerPassword! });
         var info = reader.Encryption;
 
         Assert.NotNull(info);
-        Assert.Equal(encryption.Permissions, info!.Permissions);
+        Assert.True(info!.IsOwnerAccess);
+        Assert.Equal(encryption.Permissions, info.Permissions);
         Assert.Equal(encryption.EncryptMetadata, info.EncryptMetadata);
     }
 
     /// <summary>
     /// Opens <paramref name="pdf"/> with <paramref name="password"/> and
-    /// asserts that it authenticates. Neither <c>/U</c> nor <c>/UE</c> stores
-    /// the plaintext user password, so this is the only way to confirm the
-    /// password actually baked into the PDF matches the one the spec claims,
-    /// short of decrypting: authenticating with a wrong password throws
-    /// <see cref="VellumPdf.Reader.PdfPasswordException"/>.
+    /// asserts that it authenticates as the user, not the owner. Neither
+    /// <c>/U</c> nor <c>/UE</c> stores the plaintext user password, so this
+    /// is the only way to confirm the password actually baked into the PDF
+    /// matches the one the spec claims, short of decrypting: authenticating
+    /// with a wrong password throws <see cref="VellumPdf.Reader.PdfPasswordException"/>.
     /// </summary>
+    /// <remarks>
+    /// See the C2-H2 remark on <see cref="AssertEncryptionMatchesSpec"/>:
+    /// this method always opens with <see cref="EncryptionSpec.UserPassword"/>,
+    /// so asserting <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> is
+    /// <see langword="false"/> here is what catches the user and owner
+    /// passwords being transposed, which the mere fact of authenticating
+    /// does not.
+    /// </remarks>
     private static void AssertPasswordAuthenticates(byte[] pdf, string password)
     {
         using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = password });
         Assert.NotNull(reader.Encryption);
+        Assert.False(reader.Encryption!.IsOwnerAccess);
     }
 
     private static async Task<byte[]> RunEmittedCodeAsync(DocumentSpec spec)

@@ -42,13 +42,6 @@ public static class SpecCodeEmitter
 
     /// <summary>Produces the C# snippet that builds the document described by <paramref name="spec"/>.</summary>
     /// <remarks>
-    /// The classic <c>using (...) { }</c> statement is used in place of the
-    /// newer <c>using var</c> declaration. Both are equally idiomatic modern
-    /// C#, but only the block form is accepted by the Roslyn scripting host
-    /// the round-trip test compiles this snippet with; a script's top level is
-    /// not a method body, and the compiler rejects a using declaration there.
-    /// </remarks>
-    /// <remarks>
     /// SECURITY: the returned text carries visitor-supplied content (headings,
     /// paragraph runs, metadata, passwords, and so on) verbatim, with only the
     /// C# string-literal escaping <see cref="Literal"/> applies. It must never
@@ -57,6 +50,13 @@ public static class SpecCodeEmitter
     /// No such sink exists in this application today; none may be added
     /// without first HTML-encoding this text, or choosing a highlighter that
     /// encodes its own input.
+    /// <para>
+    /// The classic <c>using (...) { }</c> statement is used in place of the
+    /// newer <c>using var</c> declaration. Both are equally idiomatic modern
+    /// C#, but only the block form is accepted by the Roslyn scripting host
+    /// the round-trip test compiles this snippet with; a script's top level is
+    /// not a method body, and the compiler rejects a using declaration there.
+    /// </para>
     /// </remarks>
     public static string Emit(DocumentSpec spec)
     {
@@ -83,6 +83,9 @@ public static class SpecCodeEmitter
     {
         private readonly Dictionary<TextStyleSpec, string> _hoistedStyles = BuildHoistedStyleNames(documentSpec);
         private int _imageIndex;
+        private int _listIndex;
+        private int _tableIndex;
+        private int _multiRunIndex;
 
         public void EmitDocument()
         {
@@ -115,19 +118,20 @@ public static class SpecCodeEmitter
             {
                 EmitEmbeddedFonts();
                 EmitHoistedStyles();
+
+                // DocumentSpec.DefaultTextStyle documents that this call changes
+                // nothing about the document below: neither this emitter nor
+                // SpecRenderer ever calls the one Document.Add(string, TextStyle?)
+                // overload that consults it. It is emitted anyway so the snippet
+                // states the same value the model requires, explicitly, rather
+                // than silently dropping a field the caller set.
                 writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
                 writer.Line();
                 EmitMetadata();
 
                 foreach (var item in documentSpec.Content)
                 {
-                    writer.Line("{");
-                    using (writer.Indent())
-                    {
-                        EmitContentItem(item);
-                    }
-
-                    writer.Line("}");
+                    EmitContentItem(item);
                     writer.Line();
                 }
 
@@ -169,6 +173,11 @@ public static class SpecCodeEmitter
             writer.Line("using VellumPdf.Layout.Elements;");
             writer.Line("using VellumPdf.Layout.Elements.Table;");
 
+            if (EmitPageSizeInitializer(documentSpec.Page) is not null)
+            {
+                writer.Line("using VellumPdf.Document;");
+            }
+
             if (documentSpec.Content.OfType<ImageSpec>().Any())
             {
                 writer.Line("using VellumPdf.Images;");
@@ -186,11 +195,17 @@ public static class SpecCodeEmitter
         }
 
         /// <summary>
-        /// Names, in the register of plan section 13.3, whichever of the three
-        /// asset collections <see cref="SpecAssets"/> declares this particular
-        /// snippet actually reads as bare identifiers, so a reader is not left
-        /// to guess where <c>EmbeddedFonts</c>, <c>Images</c> or <c>IccProfile</c>
-        /// come from. Writes nothing when the snippet uses none of them.
+        /// Names, in the register of plan section 13.3, whichever of the
+        /// three asset names <see cref="SpecAssets"/> declares this
+        /// particular snippet actually reads as a bare identifier, together
+        /// with its real type, so a reader is not left to guess where
+        /// <c>EmbeddedFonts</c>, <c>Images</c> or <c>IccProfile</c> come from
+        /// or what to declare in their place. <c>EmbeddedFonts</c> and
+        /// <c>Images</c> are each an <see cref="IReadOnlyList{T}"/> of
+        /// <c>byte[]</c>; <c>IccProfile</c> is a bare <c>byte[]</c>. The two
+        /// shapes are never conflated into one sentence, since only a
+        /// disjoint subset of the three names shares either shape. Writes
+        /// nothing when the snippet uses none of them.
         /// </summary>
         private void EmitAssetCollectionComment()
         {
@@ -216,18 +231,23 @@ public static class SpecCodeEmitter
                 return;
             }
 
-            var subject = names.Count switch
+            writer.Line("// This snippet expects the following to already be in scope, fetched");
+            writer.Line("// exactly as HttpClient would return them:");
+
+            foreach (var name in names)
             {
-                1 => names[0],
-                2 => $"{names[0]} and {names[1]}",
-                _ => $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}",
-            };
-            var verb = names.Count == 1 ? "is" : "are";
-            var collectionNoun = names.Count == 1 ? "asset collection" : "asset collections";
-            writer.Line($"// {subject} below {verb} {collectionNoun} this snippet expects the caller to have");
-            writer.Line("// already fetched, each a byte[] exactly as HttpClient would return it.");
+                writer.Line($"// {name}, {AssetTypeDescriptions[name]}.");
+            }
+
             writer.Line();
         }
+
+        private static readonly Dictionary<string, string> AssetTypeDescriptions = new()
+        {
+            ["EmbeddedFonts"] = "an IReadOnlyList<byte[]>",
+            ["Images"] = "an IReadOnlyList<byte[]>",
+            ["IccProfile"] = "a byte[]",
+        };
 
         private void EmitEmbeddedFonts()
         {
@@ -249,13 +269,21 @@ public static class SpecCodeEmitter
                 return;
             }
 
-            foreach (var (style, name) in _hoistedStyles.OrderBy(pair => pair.Value, StringComparer.Ordinal))
+            foreach (var (style, name) in _hoistedStyles.OrderBy(pair => StyleIndex(pair.Value)))
             {
                 writer.Line($"var {name} = {BuildTextStyleExpression(style)};");
             }
 
             writer.Line();
         }
+
+        /// <summary>
+        /// Extracts the numeric suffix of a hoisted style name such as
+        /// <c>style12</c>, so declarations sort in numeric rather than
+        /// ordinal order: ordinal sorting would place <c>style10</c> before
+        /// <c>style2</c> once ten or more styles are hoisted.
+        /// </summary>
+        private static int StyleIndex(string name) => int.Parse(name.AsSpan("style".Length), CultureInfo.InvariantCulture);
 
         private void EmitMetadata()
         {
@@ -387,7 +415,8 @@ public static class SpecCodeEmitter
                 return;
             }
 
-            writer.Line("var runs = new TextRun[]");
+            var runsVariable = $"runs{_multiRunIndex++}";
+            writer.Line($"var {runsVariable} = new TextRun[]");
             writer.Line("{");
             using (writer.Indent())
             {
@@ -398,7 +427,7 @@ public static class SpecCodeEmitter
             }
 
             writer.Line("};");
-            EmitAdd("new Paragraph(runs)", initializers);
+            EmitAdd($"new Paragraph({runsVariable})", initializers);
         }
 
         // ListElement, ListItem, TableElement and Cell all expose their settable
@@ -406,10 +435,14 @@ public static class SpecCodeEmitter
         // the object-initializer expression that constructs the instance. The
         // emitted code below therefore never assigns into one of these after
         // declaring it; every optional property is folded into the same
-        // declaration through EmitDeclaration. Each content item is wrapped in
-        // its own `{ }` block (see EmitDocument), so the fixed local names
-        // below (list, listItemN, table, rowN, ...) never collide with a
-        // second list, table or paragraph elsewhere in the same document.
+        // declaration through EmitDeclaration. Uniqueness across two lists,
+        // tables or multi-run paragraphs in the same document comes from a
+        // document-wide counter threaded through this class (_listIndex,
+        // _tableIndex, _multiRunIndex), the same mechanism EmitImage already
+        // used for image0, image1; row and cell names are then derived from
+        // their own table's already-unique name. No name is scoped to an
+        // artificial `{ }` block: the snippet stays a flat sequence of
+        // statements, matching what a developer would actually write.
         private void EmitList(ListSpec listSpec)
         {
             var initializers = new List<string>();
@@ -429,15 +462,16 @@ public static class SpecCodeEmitter
                 initializers.Add($"DefaultStyle = {StyleExpression(listSpec.DefaultStyle)}");
             }
 
-            EmitDeclaration("list", $"new ListElement(ListStyle.{listSpec.Style})", initializers);
+            var listVariable = $"list{_listIndex++}";
+            EmitDeclaration(listVariable, $"new ListElement(ListStyle.{listSpec.Style})", initializers);
 
             for (var i = 0; i < listSpec.Items.Count; i++)
             {
-                var itemVariable = EmitListItem(listSpec.Items[i], $"listItem{i}");
-                writer.Line($"list.Add({itemVariable});");
+                var itemVariable = EmitListItem(listSpec.Items[i], $"{listVariable}Item{i}");
+                writer.Line($"{listVariable}.Add({itemVariable});");
             }
 
-            writer.Line("document.Add(list);");
+            writer.Line($"document.Add({listVariable});");
         }
 
         private string EmitListItem(ListItemSpec itemSpec, string variableName)
@@ -488,18 +522,19 @@ public static class SpecCodeEmitter
                 initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
             }
 
-            EmitDeclaration("table", "new TableElement()", initializers);
+            var tableVariable = $"table{_tableIndex++}";
+            EmitDeclaration(tableVariable, "new TableElement()", initializers);
 
             if (tableSpec.ColumnWidths is { Count: > 0 } widths)
             {
-                writer.Line($"table.SetColumnWidths([{string.Join(", ", widths.Select(Num))}]);");
+                writer.Line($"{tableVariable}.SetColumnWidths([{string.Join(", ", widths.Select(Num))}]);");
             }
 
             for (var rowIndex = 0; rowIndex < tableSpec.Rows.Count; rowIndex++)
             {
                 var row = tableSpec.Rows[rowIndex];
-                var rowVariable = $"row{rowIndex}";
-                writer.Line($"var {rowVariable} = table.AddRow({(row.IsHeader ? "true" : "false")});");
+                var rowVariable = $"{tableVariable}Row{rowIndex}";
+                writer.Line($"var {rowVariable} = {tableVariable}.AddRow({(row.IsHeader ? "true" : "false")});");
 
                 for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
                 {
@@ -507,7 +542,7 @@ public static class SpecCodeEmitter
                 }
             }
 
-            writer.Line("document.Add(table);");
+            writer.Line($"document.Add({tableVariable});");
         }
 
         private void EmitCell(TableCellSpec cellSpec, string rowVariable, string cellVariable)
@@ -778,13 +813,20 @@ public static class SpecCodeEmitter
 
     /// <summary>
     /// Walks every corner of <paramref name="spec"/> a <see cref="TextStyleSpec"/>
-    /// can appear in, and assigns a shared local variable name to each instance
+    /// can appear in, and assigns a shared local variable name to each style
     /// referenced two or more times, in first-encountered order. A style used
-    /// only once is left to be inlined at its one use site.
+    /// only once is left to be inlined at its one use site. Keyed on
+    /// <see cref="TextStyleSpec"/>'s own record value equality (the default
+    /// dictionary comparer, not a reference comparer), so two distinct but
+    /// value-equal instances hoist to one shared local exactly as
+    /// <see cref="SpecRenderer"/>'s own style cache merges them into one
+    /// shared <c>TextStyle</c> instance. Changing one side without the other
+    /// would let the library's adjacent-run merging diverge between the two;
+    /// see C2-H1 and A3-M3.
     /// </summary>
     private static Dictionary<TextStyleSpec, string> BuildHoistedStyleNames(DocumentSpec spec)
     {
-        var counts = new Dictionary<TextStyleSpec, int>(ReferenceEqualityComparer.Instance);
+        var counts = new Dictionary<TextStyleSpec, int>();
         var firstSeenOrder = new List<TextStyleSpec>();
 
         foreach (var style in CollectTextStyles(spec))
@@ -800,7 +842,7 @@ public static class SpecCodeEmitter
             }
         }
 
-        var names = new Dictionary<TextStyleSpec, string>(ReferenceEqualityComparer.Instance);
+        var names = new Dictionary<TextStyleSpec, string>();
         var index = 0;
 
         foreach (var style in firstSeenOrder)
@@ -940,7 +982,12 @@ public static class SpecCodeEmitter
     /// <c>VellumPdf.Document.PageSize</c> declares, so the emitted code can
     /// read <c>PageSize.Letter</c> rather than the four raw points that
     /// constant expands to, and omits the initializer entirely when it
-    /// matches A4, <c>Document</c>'s own default page size.
+    /// matches A4, <c>Document</c>'s own default page size. <c>PageSize</c>
+    /// and <c>PdfRectangle</c> are referenced unqualified: <see cref="EmitUsings"/>
+    /// adds <c>using VellumPdf.Document;</c> whenever this method returns a
+    /// non-null initializer, and neither name collides with anything else
+    /// the snippet imports, so the full <c>VellumPdf.Document.</c> prefix
+    /// this method used to emit was unnecessary.
     /// </summary>
     private static string? EmitPageSizeInitializer(PageSizeSpec page)
     {
@@ -955,8 +1002,8 @@ public static class SpecCodeEmitter
         }
 
         var pageSizeExpr = preset is not null
-            ? $"VellumPdf.Document.PageSize.{preset}"
-            : $"new VellumPdf.Document.PdfRectangle(0, 0, {Num(page.WidthPoints)}, {Num(page.HeightPoints)})";
+            ? $"PageSize.{preset}"
+            : $"new PdfRectangle(0, 0, {Num(page.WidthPoints)}, {Num(page.HeightPoints)})";
 
         return $"PageSize = {pageSizeExpr},";
     }
@@ -1029,29 +1076,51 @@ public static class SpecCodeEmitter
 
     /// <summary>
     /// Renders <paramref name="value"/> as a C# string literal. Beyond the
-    /// quote, backslash and the three named escapes, every character in the
-    /// C0 control range (U+0000-U+001F) and the three additional characters
-    /// the C# lexer itself treats as a line terminator inside a string but
-    /// that no named escape covers (U+0085 NEL, U+2028 LINE SEPARATOR, U+2029
-    /// PARAGRAPH SEPARATOR) is escaped as <c>\uXXXX</c>. Left raw, any one of
-    /// those three terminates the literal mid-string, producing a cascade of
-    /// unrelated-looking compiler errors; U+2028 and U+2029 in particular
-    /// survive an ordinary copy-paste from a word processor or a PDF with no
-    /// malicious intent required.
+    /// quote, backslash and the eight named escapes, every remaining
+    /// character in the C0 control range (U+0000-U+001F) and the three
+    /// additional characters the C# lexer itself treats as a line terminator
+    /// inside a string but that no named escape covers (U+0085 NEL, U+2028
+    /// LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR) is escaped as <c>\uXXXX</c>.
+    /// Left raw, any one of those three terminates the literal mid-string,
+    /// producing a cascade of unrelated-looking compiler errors; U+2028 and
+    /// U+2029 in particular survive an ordinary copy-paste from a word
+    /// processor or a PDF with no malicious intent required.
     /// </summary>
+    /// <remarks>
+    /// This method walks UTF-16 code units, so it also escapes an unpaired
+    /// (lone) surrogate rather than passing it through raw: a well-formed
+    /// surrogate pair is left untouched, but a high surrogate with no
+    /// following low surrogate, or a low surrogate with no preceding high
+    /// surrogate, is not valid UTF-16 on its own and would not survive
+    /// re-encoding the snippet as UTF-8 for display.
+    /// </remarks>
     private static string Literal(string value)
     {
         var builder = new StringBuilder(value.Length + 2).Append('"');
 
-        foreach (var ch in value)
+        for (var i = 0; i < value.Length; i++)
         {
+            var ch = value[i];
+
+            if (char.IsHighSurrogate(ch) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                builder.Append(ch).Append(value[i + 1]);
+                i++;
+                continue;
+            }
+
             builder.Append(ch switch
             {
                 '"' => "\\\"",
                 '\\' => "\\\\",
+                '\0' => "\\0",
+                '\a' => "\\a",
+                '\b' => "\\b",
+                '\f' => "\\f",
                 '\n' => "\\n",
                 '\r' => "\\r",
                 '\t' => "\\t",
+                '\v' => "\\v",
                 _ when RequiresUnicodeEscape(ch) => $"\\u{(int)ch:x4}",
                 _ => ch.ToString(),
             });
@@ -1061,7 +1130,7 @@ public static class SpecCodeEmitter
     }
 
     private static bool RequiresUnicodeEscape(char ch) =>
-        ch <= '\u001f' || ch is '\u0085' or '\u2028' or '\u2029';
+        ch <= '\u001f' || ch is '\u0085' or '\u2028' or '\u2029' || char.IsSurrogate(ch);
 
     /// <summary>A minimal indenting text builder, private to this emitter.</summary>
     private sealed class CodeWriter
