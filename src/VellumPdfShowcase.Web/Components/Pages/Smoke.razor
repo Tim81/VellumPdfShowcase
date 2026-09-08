@@ -13,14 +13,14 @@
     <code>VellumPdf.Conformance</code> in the same process, and its result appears below it.
 </p>
 
-<section aria-busy="@_busyHardCoded">
+<section aria-busy="@(_busyHardCoded ? "true" : "false")">
     <h2>1. Hard-coded document</h2>
     <p>
-        A heading, a paragraph, a table, a pie chart and a running footer, written to a
-        <code>MemoryStream</code> with the Standard 14 faces.
+        This document contains a heading, a paragraph, a table, a pie chart and a running
+        footer, written to a <code>MemoryStream</code> with the Standard 14 faces.
     </p>
 
-    <button type="button" @onclick="GenerateHardCodedAsync" disabled="@_busyHardCoded">
+    <button type="button" @onclick="GenerateHardCodedAsync" aria-disabled="@(_busyHardCoded ? "true" : "false")">
         @(_busyHardCoded ? "Generating…" : "Generate")
     </button>
 
@@ -52,14 +52,15 @@
     }
 </section>
 
-<section aria-busy="@_busyPdfA">
+<section aria-busy="@(_busyPdfA ? "true" : "false")">
     <h2>2. PDF/A-2b document</h2>
     <p>
-        A heading and a paragraph set in an embedded Liberation Sans face, tagged, with an sRGB output
-        intent, validated against the PDF/A-2b profile immediately after generation.
+        This document sets a heading and a paragraph in an embedded Liberation Sans face. It is
+        tagged, declares an sRGB output intent, and is validated against the PDF/A-2b profile
+        immediately after generation.
     </p>
 
-    <button type="button" @onclick="GeneratePdfAAsync" disabled="@_busyPdfA">
+    <button type="button" @onclick="GeneratePdfAAsync" aria-disabled="@(_busyPdfA ? "true" : "false")">
         @(_busyPdfA ? "Generating and validating…" : "Generate and validate")
     </button>
 

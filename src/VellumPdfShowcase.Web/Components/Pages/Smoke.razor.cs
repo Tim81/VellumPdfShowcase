@@ -77,6 +77,11 @@ public partial class Smoke
 
     private async Task GenerateHardCodedAsync()
     {
+        if (_busyHardCoded)
+        {
+            return;
+        }
+
         _busyHardCoded = true;
         _hardCodedError = null;
         StateHasChanged();
@@ -111,7 +116,7 @@ public partial class Smoke
 
             if (_disposed)
             {
-                await module.InvokeVoidAsync("revokeBlobUrl", newUrl);
+                await RevokeBlobUrlAsync(newUrl);
                 return;
             }
 
@@ -122,7 +127,7 @@ public partial class Smoke
 
             if (previousUrl is not null)
             {
-                await module.InvokeVoidAsync("revokeBlobUrl", previousUrl);
+                await RevokeBlobUrlAsync(previousUrl);
             }
         }
         catch (Exception ex)
@@ -130,6 +135,13 @@ public partial class Smoke
             if (!_disposed)
             {
                 _hardCodedError = ex.ToString();
+
+                var staleUrl = _hardCodedBlobUrl;
+                _hardCodedBytes = null;
+                _hardCodedBlobUrl = null;
+                _hardCodedSupportsInline = true;
+
+                await RevokeBlobUrlAsync(staleUrl);
             }
         }
         finally
@@ -144,6 +156,11 @@ public partial class Smoke
 
     private async Task GeneratePdfAAsync()
     {
+        if (_busyPdfA)
+        {
+            return;
+        }
+
         _busyPdfA = true;
         _pdfAError = null;
         StateHasChanged();
@@ -196,7 +213,7 @@ public partial class Smoke
 
             if (_disposed)
             {
-                await module.InvokeVoidAsync("revokeBlobUrl", newUrl);
+                await RevokeBlobUrlAsync(newUrl);
                 return;
             }
 
@@ -209,7 +226,7 @@ public partial class Smoke
 
             if (previousUrl is not null)
             {
-                await module.InvokeVoidAsync("revokeBlobUrl", previousUrl);
+                await RevokeBlobUrlAsync(previousUrl);
             }
         }
         catch (Exception ex)
@@ -217,6 +234,14 @@ public partial class Smoke
             if (!_disposed)
             {
                 _pdfAError = ex.ToString();
+
+                var staleUrl = _pdfABlobUrl;
+                _pdfABytes = null;
+                _pdfABlobUrl = null;
+                _pdfASupportsInline = true;
+                _preflightResult = null;
+
+                await RevokeBlobUrlAsync(staleUrl);
             }
         }
         finally
@@ -226,6 +251,33 @@ public partial class Smoke
                 _busyPdfA = false;
                 StateHasChanged();
             }
+        }
+    }
+
+    /// <summary>
+    /// Revokes a blob URL through the root <see cref="IJSRuntime"/> rather than the
+    /// interop module. <c>URL.revokeObjectURL</c> is a global on <c>window</c>, and the
+    /// root runtime outlives the module, so this stays safe to call after the module has
+    /// been disposed, whether by a concurrent <see cref="DisposeAsync"/> mid-generation or
+    /// during teardown itself. Any failure is swallowed here, in its own try/catch, rather
+    /// than left to the caller's broader catch, so it cannot mask an unrelated exception.
+    /// </summary>
+    private async Task RevokeBlobUrlAsync(string? url)
+    {
+        if (url is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("URL.revokeObjectURL", url);
+        }
+        catch
+        {
+            // Best-effort: the browsing context may already be gone (navigation away),
+            // or the runtime may be mid-teardown. Either way there is nothing further
+            // to clean up and nothing to surface to the visitor.
         }
     }
 
@@ -324,6 +376,12 @@ public partial class Smoke
     {
         _disposed = true;
 
+        // Revoked through the root IJSRuntime, not the module, so this drains both
+        // URLs even when a generation still in flight races this disposal and the
+        // module ends up disposed first. See RevokeBlobUrlAsync.
+        await RevokeBlobUrlAsync(_hardCodedBlobUrl);
+        await RevokeBlobUrlAsync(_pdfABlobUrl);
+
         if (_module is null)
         {
             return;
@@ -331,17 +389,6 @@ public partial class Smoke
 
         var module = _module;
         _module = null;
-
-        if (_hardCodedBlobUrl is not null)
-        {
-            await module.InvokeVoidAsync("revokeBlobUrl", _hardCodedBlobUrl);
-        }
-
-        if (_pdfABlobUrl is not null)
-        {
-            await module.InvokeVoidAsync("revokeBlobUrl", _pdfABlobUrl);
-        }
-
         await module.DisposeAsync();
     }
 }

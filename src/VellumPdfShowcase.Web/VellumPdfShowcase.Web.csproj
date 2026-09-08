@@ -4,6 +4,15 @@
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <TrimMode>full</TrimMode>
     <CompressionEnabled>false</CompressionEnabled>
+    <!--
+      Microsoft.NET.Sdk.BlazorWebAssembly defaults this to true when the project
+      leaves it unset, which replaces BCL exception messages with resource keys
+      (for example "Arg_IndexOutOfRangeException" instead of a sentence). This
+      site displays exception text when generation fails, so the setting is
+      overridden explicitly. Verify in the emitted runtimeconfig.json rather
+      than by reading this file: the key is System.Resources.UseSystemResourceKeys.
+    -->
+    <UseSystemResourceKeys>false</UseSystemResourceKeys>
     <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
     <RunAOTCompilation>false</RunAOTCompilation>
     <DebuggerSupport>false</DebuggerSupport>

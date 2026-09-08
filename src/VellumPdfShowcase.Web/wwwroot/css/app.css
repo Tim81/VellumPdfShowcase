@@ -119,3 +119,8 @@ code {
     height: 480px;
     border: 1px solid #ccc;
 }
+
+button[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 0.6;
+}

@@ -19,3 +19,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Scope: this grant does not extend to the bundled Liberation Sans font (src/VellumPdfShowcase.Web/wwwroot/fonts/) or the sRGB ICC profile (src/VellumPdfShowcase.Web/wwwroot/icc/), each of which carries its own licence recorded alongside it.
