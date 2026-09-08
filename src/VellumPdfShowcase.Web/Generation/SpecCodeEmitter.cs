@@ -1082,13 +1082,17 @@ public static class SpecCodeEmitter
         return $"PageSize = {pageSizeExpr},";
     }
 
+    /// <summary>
+    /// Never called with <see cref="PdfPermissions.All"/>: <see cref="Emitter.EmitEncryption"/>
+    /// omits the <c>Permissions</c> initializer entirely whenever
+    /// <see cref="EncryptionSpec.Permissions"/> equals <c>All</c>, the same
+    /// default <see cref="PdfEncryptionSettings"/> itself applies, so a
+    /// dedicated fast path for that value here would be dead code; there was
+    /// one until measurement showed no sample, and no possible caller, could
+    /// ever reach it.
+    /// </summary>
     private static string EmitPermissions(PdfPermissions permissions)
     {
-        if (permissions == PdfPermissions.All)
-        {
-            return "PdfPermissions.All";
-        }
-
         if (permissions == PdfPermissions.None)
         {
             return "PdfPermissions.None";
