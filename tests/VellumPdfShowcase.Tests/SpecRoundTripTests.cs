@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
@@ -69,6 +70,51 @@ public class SpecRoundTripTests
         await AssertPreflightCompliantAsync(InvokeSample(sampleName));
 
     /// <summary>
+    /// Every sample claiming a conformance profile, checked directly against
+    /// its own <see cref="HeadingSpec.Level"/> values rather than against a
+    /// preflight verdict. Measured directly: raising the heading level in the
+    /// PDF/UA-1 sample, or deleting that sample's <see cref="DocumentMetadataSpec.Title"/>,
+    /// turns <see cref="Sample_ClaimingConformance_IsPreflightCompliant"/> red,
+    /// because ISO 14289-1:2014 clauses 7.4.2 and 7.1 are genuinely enforced
+    /// by preflight against PDF/UA-1. The IDENTICAL heading change against a
+    /// PDF/A-2a or PDF/A-2b sample leaves that same theory fully green,
+    /// because PDF/A preflight carries no heading-hierarchy rule at all (see
+    /// the remark on <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/>).
+    /// That is not a defect in the library; ISO 19005-2:2011 clause 6.7.3.3
+    /// carries only a requirement that the structure hierarchy exist and be
+    /// rooted, plus a recommendation about granularity, so a sub-heading with
+    /// no top-level heading above it passing PDF/A-2a is plausibly correct.
+    /// The defect was on this side: every sample claiming PDF/A carried no
+    /// guard on its own heading order, so it could regress silently, which is
+    /// exactly how a sub-heading came to serve as a document's sole heading
+    /// in several sample sites and survive review. This test closes that gap
+    /// independently of what any profile's preflight rules happen to check,
+    /// for every sample claiming any profile, present or future.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SampleNamesClaimingConformance))]
+    public void Sample_ClaimingConformance_HasValidHeadingHierarchy(string sampleName)
+    {
+        var levels = InvokeSample(sampleName).Content.OfType<HeadingSpec>().Select(heading => heading.Level).ToList();
+
+        if (levels.Count == 0)
+        {
+            return;
+        }
+
+        Assert.Equal(SpecLimits.MinHeadingLevel, levels[0]);
+
+        var deepestSeen = levels[0];
+        foreach (var level in levels.Skip(1))
+        {
+            Assert.True(
+                level <= deepestSeen + 1,
+                $"{sampleName} jumps from a deepest heading level of {deepestSeen} to {level}, skipping a level.");
+            deepestSeen = Math.Max(deepestSeen, level);
+        }
+    }
+
+    /// <summary>
     /// Every public, parameterless, <see cref="DocumentSpec"/>-returning
     /// method on <see cref="DocumentSpecSamples"/> whose result claims a
     /// conformance profile other than <see cref="DocumentConformance.None"/>.
@@ -137,6 +183,30 @@ public class SpecRoundTripTests
     [Fact]
     public async Task RoundTrip_ControlCharactersAndLineSeparators_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.ControlCharactersAndLineSeparators());
+
+    /// <summary>
+    /// The isolated-surrogate arm of <c>SpecCodeEmitter.Literal</c> cannot be
+    /// proven by the round-trip byte comparison above: measured directly,
+    /// Roslyn compiles a raw isolated surrogate sitting unescaped inside an
+    /// ordinary string literal without complaint, and the resulting runtime
+    /// string is byte-identical to what escaping it would have produced, so
+    /// <see cref="RoundTrip_ControlCharactersAndLineSeparators_MatchesSpecRenderer"/>
+    /// stays green whether or not that arm runs. What the arm actually
+    /// guards, per the remark on <c>Literal</c>, is that the DISPLAYED
+    /// snippet remains valid text once re-encoded as UTF-8, which an isolated
+    /// surrogate cannot survive. This test checks that directly: the emitted
+    /// snippet must decode back to itself after a UTF-8 round trip, which
+    /// fails the instant a raw isolated surrogate reaches the output, since
+    /// <see cref="Encoding.UTF8"/> substitutes U+FFFD for one on encoding.
+    /// </summary>
+    [Fact]
+    public void Emit_ControlCharactersAndLineSeparators_TextSurvivesUtf8RoundTrip()
+    {
+        var code = SpecCodeEmitter.Emit(DocumentSpecSamples.ControlCharactersAndLineSeparators());
+        var roundTripped = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(code));
+
+        Assert.Equal(code, roundTripped);
+    }
 
     /// <summary>
     /// See the doc comment on <see cref="DocumentSpecSamples.SharedAndValueEqualRunStyles"/>.
@@ -217,17 +287,15 @@ public class SpecRoundTripTests
     public async Task RoundTrip_Encrypted_DecryptsToMatchingContent() =>
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.Encrypted());
 
-    /// <summary>
-    /// <see cref="EncryptionSpec"/>'s own defaults: full permissions and
-    /// metadata encryption left on. <see cref="Encrypted"/> above restricts
-    /// permissions and disables metadata encryption, which routes around
-    /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.All</c> fast
-    /// path and its omit-when-default <c>EncryptMetadata</c> branch; this
-    /// sample is what exercises both.
-    /// </summary>
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.EncryptedWithDefaults"/>.</summary>
     [Fact]
     public async Task RoundTrip_EncryptedWithDefaults_DecryptsToMatchingContent() =>
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedWithDefaults());
+
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoPermissions"/>.</summary>
+    [Fact]
+    public async Task RoundTrip_EncryptedNoPermissions_DecryptsToMatchingContent() =>
+        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedNoPermissions());
 
     /// <summary>
     /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedOwnerPasswordOnly"/>.

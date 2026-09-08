@@ -47,7 +47,11 @@ internal static class DocumentSpecSamples
     /// non-default value: mixed-style inline paragraph runs, a nested list, a
     /// spanning table cell with a background, an embedded font, a running
     /// header and footer, tagged output, document and per-element language,
-    /// and document metadata.
+    /// and document metadata. The footer's non-default, non-centre
+    /// <see cref="RunningBandSpec.Alignment"/> is also the one place this
+    /// file reaches the trailing-argument arm of <c>SpecCodeEmitter.EmitRunningBand</c>,
+    /// which every other header and footer in this file omits by leaving
+    /// alignment at its own default, <see cref="HorizontalAlignment.Center"/>.
     /// </summary>
     public static DocumentSpec EveryContentItemTypeFullyCustomised()
     {
@@ -79,7 +83,7 @@ internal static class DocumentSpecSamples
                 Producer = "VellumPdf",
             },
             Header = new RunningBandSpec { Template = "VellumPdf Showcase", Style = bodyStyle },
-            Footer = new RunningBandSpec { Template = "Page {page} of {pages}", Style = bodyStyle, Height = 30 },
+            Footer = new RunningBandSpec { Template = "Page {page} of {pages}", Style = bodyStyle, Height = 30, Alignment = HorizontalAlignment.Right },
             Content =
             [
                 new HeadingSpec
@@ -262,7 +266,14 @@ internal static class DocumentSpecSamples
     /// moment such a sample exists. Also
     /// covers asymmetric document margins and cell padding, a non-default
     /// alignment on a heading, a paragraph and a cell, and an image format
-    /// other than PNG.
+    /// other than PNG. The first paragraph's <see cref="ParagraphSpec.Alignment"/>
+    /// of <see cref="HorizontalAlignment.Justify"/> is long enough to wrap
+    /// onto a second line within this document's column width: measured
+    /// directly, a single-line justified paragraph is byte-identical to a
+    /// left-aligned one, since there is no trailing space on a line short of
+    /// the column width for justification to distribute, so a shorter run of
+    /// text here would exercise the alignment property without it being able
+    /// to fail the round trip if corrupted.
     /// </summary>
     public static DocumentSpec MultipleListsTablesAndParagraphs()
     {
@@ -288,7 +299,9 @@ internal static class DocumentSpecSamples
                     Runs =
                     [
                         new TextRunSpec("First multi-run paragraph, ", bodyStyle),
-                        new TextRunSpec("with an emphasised second run.", emphasisStyle),
+                        new TextRunSpec(
+                            "with an emphasised second run that runs on for long enough to wrap onto a second line within the available column width.",
+                            emphasisStyle),
                     ],
                 },
                 new ParagraphSpec
@@ -407,18 +420,31 @@ internal static class DocumentSpecSamples
     /// backslash, LF, CR, TAB): the whole C0 control range, plus NEL, LINE
     /// SEPARATOR and PARAGRAPH SEPARATOR, together with a literal quote,
     /// backslash and brace pair, so the round-trip test both compiles and
-    /// executes the emitted string literal.
+    /// executes the emitted string literal. Also carries both surrogate arms
+    /// <c>SpecCodeEmitter.Literal</c> treats differently: a well-formed
+    /// surrogate pair (an emoji outside the Basic Multilingual Plane), left
+    /// unescaped and passed through raw, and an isolated high surrogate and
+    /// an isolated low surrogate, each with no partner and each escaped as
+    /// <c>\uXXXX</c> on its own. Measured directly against both the library
+    /// and Roslyn: neither throws for either shape (an isolated surrogate is
+    /// not valid Unicode text, but the library substitutes a replacement
+    /// glyph rather than rejecting it, and Roslyn compiles a <c>\uXXXX</c>
+    /// escape for any code unit, surrogate or not), so this sample asserts
+    /// the round trip rather than a particular substitution the library
+    /// happens to make today. Also uses <c>PageSize.A2</c>, one of the three
+    /// named page sizes (with A0 and A1) no other sample reached.
     /// </summary>
     public static DocumentSpec ControlCharactersAndLineSeparators()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
         var weird = "quote\" backslash\\ brace{}" +
             new string([.. Enumerable.Range(0, 0x20).Select(codePoint => (char)codePoint)]) +
-            "\u0085\u2028\u2029end";
+            "\u0085\u2028\u2029end" +
+            "pair:\ud83d\ude00;loneHigh:\uD800X;loneLow:Y\uDC00;";
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(400, 400),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A2),
             DefaultTextStyle = style,
             Metadata = new DocumentMetadataSpec { Title = weird },
             Content = [ParagraphSpec.FromText(weird, style)],
@@ -434,7 +460,9 @@ internal static class DocumentSpecSamples
     /// hoisting both key on this record's value equality, so a style used
     /// twice, whether as one shared instance or two value-equal ones, must
     /// merge into the library's reference-identity run-merging identically on
-    /// both sides. Both paragraphs must round-trip identically.
+    /// both sides. Both paragraphs must round-trip identically. Also uses
+    /// <c>PageSize.A1</c>, one of the three named page sizes (with A0 and
+    /// A2) no other sample reached.
     /// </summary>
     public static DocumentSpec SharedAndValueEqualRunStyles()
     {
@@ -450,7 +478,7 @@ internal static class DocumentSpecSamples
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(400, 300),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A1),
             DefaultTextStyle = docDefault,
             Content =
             [
@@ -480,7 +508,12 @@ internal static class DocumentSpecSamples
     /// <see cref="ListSpec.DefaultStyle"/>; a table with
     /// <see cref="TableSpec.DefaultCellStyle"/>; the JPEG loader; list
     /// nesting two levels deep; and one cell combining <c>ColSpan</c> and
-    /// <c>RowSpan</c>.
+    /// <c>RowSpan</c>. The document is tagged: <see cref="PieChartSpec.Decorative"/>
+    /// only reaches the saved bytes through the structure tree (it marks the
+    /// chart as an artefact absent from an untagged document's structure
+    /// tree in the first place), which an untagged document has none of, so
+    /// a previous version of this sample set it without that being able to
+    /// fail the round trip if corrupted.
     /// </summary>
     public static DocumentSpec AdditionalCoverage()
     {
@@ -492,6 +525,8 @@ internal static class DocumentSpecSamples
         {
             Page = new PageSizeSpec(500, 700),
             DefaultTextStyle = bodyStyle,
+            Tagged = true,
+            Language = "en",
             Content =
             [
                 new PieChartSpec
@@ -638,11 +673,16 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// AES-256 encryption using <see cref="EncryptionSpec"/>'s own defaults:
-    /// full permissions and metadata encryption left on. Exercises
-    /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.All</c> fast
-    /// path and its omit-when-default <c>EncryptMetadata</c> branch, neither
-    /// of which <see cref="Encrypted"/> reaches, since that sample restricts
-    /// permissions and disables metadata encryption.
+    /// full permissions and metadata encryption left on. With
+    /// <see cref="EncryptionSpec.Permissions"/> at <see cref="PdfPermissions.All"/>,
+    /// the same default <c>PdfEncryptionSettings</c> itself applies,
+    /// <c>SpecCodeEmitter.EmitEncryption</c> omits the <c>Permissions</c>
+    /// initializer outright, so this sample never calls
+    /// <c>SpecCodeEmitter.EmitPermissions</c> at all; <see cref="EncryptedNoPermissions"/>
+    /// is what exercises that method. This sample exists for the
+    /// omit-when-default <c>EncryptMetadata</c> branch, which
+    /// <see cref="Encrypted"/> does not reach, since that sample disables
+    /// metadata encryption explicitly.
     /// </summary>
     public static DocumentSpec EncryptedWithDefaults()
     {
@@ -657,6 +697,37 @@ internal static class DocumentSpecSamples
             {
                 UserPassword = "user-secret",
                 OwnerPassword = "owner-secret",
+            },
+        };
+    }
+
+    /// <summary>
+    /// AES-256 encryption with every permission withheld
+    /// (<see cref="PdfPermissions.None"/>). Exercises
+    /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.None</c>
+    /// fast path, which no other sample reaches: <see cref="Encrypted"/> and
+    /// <see cref="EncryptedOwnerPasswordOnly"/> both restrict only some
+    /// permissions, taking the flags-union arm instead, and
+    /// <see cref="EncryptedWithDefaults"/> leaves permissions at
+    /// <see cref="PdfPermissions.All"/>, which never reaches
+    /// <c>EmitPermissions</c> at all (see the remark there). Also uses
+    /// <c>PageSize.A0</c>, one of the three named page sizes (with A1 and
+    /// A2) no other sample reached.
+    /// </summary>
+    public static DocumentSpec EncryptedNoPermissions()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A0),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("Encrypted with no permissions granted, no conformance claim.", style)],
+            Encryption = new EncryptionSpec
+            {
+                UserPassword = "user-secret",
+                OwnerPassword = "owner-secret",
+                Permissions = PdfPermissions.None,
             },
         };
     }
@@ -814,34 +885,63 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// The thirteen emitter branches with no coverage anywhere else
-    /// in this file. The largest cluster is element-level <c>Margins</c> on
-    /// all seven content item types that expose it (heading, paragraph, list,
-    /// table, image, pie chart and line separator), each given a fully
-    /// asymmetric <see cref="EdgeInsets"/> so a scrambled parameter order in
+    /// The remaining emitter branches with no coverage anywhere else in this
+    /// file. The largest cluster is element-level <c>Margins</c> on all seven
+    /// content item types that expose it (heading, paragraph, list, table,
+    /// image, pie chart and line separator), each given a fully asymmetric
+    /// <see cref="EdgeInsets"/> so a scrambled parameter order in
     /// <c>SpecCodeEmitter.EmitEdgeInsets</c> (previously provable only through
     /// document-level margins) would render the recompiled document
-    /// differently and fail the round trip. The rest:
-    /// <see cref="ParagraphSpec.Language"/>; an explicit
-    /// <see cref="TableCellSpec.Style"/> and <see cref="TableCellSpec.Language"/>;
-    /// a non-default <see cref="ImageSpec.Alignment"/>; a non-default
-    /// <see cref="PieChartSpec.StrokeWidth"/> and an explicit
-    /// <see cref="PieChartSpec.AltText"/>; and an explicit
-    /// <see cref="ListItemSpec.Style"/>.
+    /// differently and fail the round trip; see the remark on
+    /// <see cref="LineSeparatorSpec"/> for the one exception, whose
+    /// <c>Left</c> and <c>Right</c> margin components this sample sets but
+    /// cannot make observable, being a library behaviour rather than a gap
+    /// here. Also covers <see cref="DocumentSpec.Margins"/> set to a uniform,
+    /// non-default <see cref="EdgeInsets"/>, the single-argument form
+    /// <c>SpecCodeEmitter.EmitEdgeInsets</c> emits when all four components
+    /// match, which no other sample's <c>Margins</c> is ever both explicit
+    /// and uniform.
+    /// <para>
+    /// The document is tagged: <see cref="ParagraphSpec.Language"/>,
+    /// <see cref="TableCellSpec.Language"/> and <see cref="PieChartSpec.AltText"/>
+    /// only reach the saved bytes through the structure tree, which an
+    /// untagged document has none of, so a previous version of this sample
+    /// set every one of them without any of them actually being able to fail
+    /// the round trip if corrupted.
+    /// </para>
+    /// The rest: an explicit <see cref="TableCellSpec.Style"/>; a non-default
+    /// <see cref="ImageSpec.Alignment"/>, now paired with an explicit
+    /// <see cref="ImageSpec.Width"/> narrower than the line, since alignment
+    /// cannot show on an image that already fills it; a non-default
+    /// <see cref="PieChartSpec.StrokeWidth"/>, now paired with an explicit
+    /// <see cref="PieChartSpec.StrokeColor"/>, since a stroke width strokes
+    /// nothing without a stroke colour; two unlabelled slices of different
+    /// <see cref="PieSlice.Value"/>, rather than one, since a chart's sole
+    /// slice always fills the whole circle regardless of its own value; an
+    /// explicit <see cref="ListItemSpec.Style"/>; and a styled
+    /// <see cref="PlainTextSpec"/>, the arm <c>SpecCodeEmitter.EmitPlainText</c>
+    /// takes for a <see cref="PlainTextSpec.Style"/> set explicitly rather
+    /// than left to <see cref="DocumentSpec.DefaultTextStyle"/> (see
+    /// <see cref="PlainTextUsesDocumentDefault"/> for the other arm).
     /// </summary>
     public static DocumentSpec RemainingEmitterBranchCoverage()
     {
         var bodyStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
         var cellStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.TimesItalic), FontSize = 9 };
         var listItemStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Courier), FontSize = 10 };
+        var plainTextStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.CourierOblique), FontSize = 10 };
 
         return new DocumentSpec
         {
             Page = new PageSizeSpec(500, 700),
+            Margins = new EdgeInsets(50),
             DefaultTextStyle = bodyStyle,
+            Tagged = true,
+            Language = "en",
             Content =
             [
                 new HeadingSpec { Text = "Margins on every element", Level = 0, Margins = new EdgeInsets(4, 8, 12, 16) },
+                new PlainTextSpec { Text = "Plain text with its own explicit style.", Style = plainTextStyle },
                 new ParagraphSpec
                 {
                     Runs = [new TextRunSpec("A paragraph with margins and an explicit language.", bodyStyle)],
@@ -869,6 +969,7 @@ internal static class DocumentSpecSamples
                 {
                     Format = ImageFormat.Png,
                     Bytes = OnePixelPng,
+                    Width = 40,
                     Alignment = HorizontalAlignment.Center,
                     Margins = new EdgeInsets(7, 14, 21, 28),
                 },
@@ -876,9 +977,10 @@ internal static class DocumentSpecSamples
                 {
                     Diameter = 60,
                     Margins = new EdgeInsets(2, 4, 6, 8),
+                    StrokeColor = new ColorRgb(0.2, 0.2, 0.2),
                     StrokeWidth = 1.5,
                     AltText = "A pie chart with a thick stroke.",
-                    Slices = [new PieSlice(1, new ColorRgb(0.1, 0.6, 0.3))],
+                    Slices = [new PieSlice(30, new ColorRgb(0.1, 0.6, 0.3)), new PieSlice(70, new ColorRgb(0.6, 0.1, 0.3))],
                 },
                 new LineSeparatorSpec { Margins = new EdgeInsets(9, 18, 27, 36) },
             ],
