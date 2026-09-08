@@ -4,7 +4,7 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// C4-F-M2: <c>document.SetDefaultFont</c> is emitted only when the
+/// <c>document.SetDefaultFont</c> is emitted only when the
 /// specification actually contains a <see cref="PlainTextSpec"/> left
 /// unstyled, the one content item whose emitted code reads
 /// <see cref="DocumentSpec.DefaultTextStyle"/>. Emitting it unconditionally,

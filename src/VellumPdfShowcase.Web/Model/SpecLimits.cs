@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
+using VellumPdf.Encryption;
+using VellumPdf.Layout.Core;
 
 namespace VellumPdfShowcase.Web.Model;
 
@@ -143,6 +145,247 @@ public static class SpecLimits
     /// actually doing the astronomical amount of work itself.
     /// </summary>
     public const int MaxWalkedNodes = 5_000;
+
+    /// <summary>
+    /// Caps the total number of characters a specification may carry across
+    /// every text-bearing node the same walk of <see cref="Model.DocumentSpec.Content"/>
+    /// that enforces <see cref="MaxWalkedNodes"/> visits, counted the same way:
+    /// by position during the walk, so that a shared subtree cannot amplify
+    /// its own text length any more than it can amplify its own node count.
+    /// </summary>
+    /// <remarks>
+    /// This closes the gap <see cref="MaxWalkedNodes"/> and <see cref="MaxTextLength"/>
+    /// leave when multiplied together: 5,000 nodes at 100,000 characters each is
+    /// 500,000,000 characters, about 954 MB of UTF-16. Measured on the way there,
+    /// a specification carrying 200,062,485 characters emitted its C# in 1.3 s
+    /// and rendered a 40.6 MB PDF in 8,972 ms on desktop x64; WebAssembly is
+    /// single-threaded and materially slower. This limit targets rendering well
+    /// under 250 ms on desktop x64, which measurement puts comfortably above
+    /// 100,000 characters in every geometry this file also bounds.
+    /// <para>
+    /// Text volume is not only a CPU-time hazard. Measured directly:
+    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c> recurses once per page continuation, so a
+    /// specification that forces enough pages overflows the CLR stack, which
+    /// cannot be caught. <see cref="MinPageDimensionPoints"/>, <see cref="MaxFontSize"/>
+    /// and <see cref="MaxLeadingPoints"/> bound how few characters one page can
+    /// hold; this bounds how many characters there are to place. The worst
+    /// specification every cap in this file together still permits (the
+    /// smallest permitted page, the largest permitted font and leading, and
+    /// exactly this many characters in one run) was measured to render
+    /// successfully, with page counts staying a small fraction of the roughly
+    /// 3,659-frame depth at which this machine's desktop x64 CLR overflowed the
+    /// stack on an unbounded specification; WebAssembly's stack is smaller
+    /// still, which is why the margin is wide rather than exact.
+    /// </para>
+    /// </remarks>
+    public const int MaxTotalTextLength = 100_000;
+
+    /// <summary>
+    /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
+    /// <see cref="Model.PageSizeSpec.HeightPoints"/>. Measured directly: a
+    /// <see cref="Model.PageSizeSpec"/> of (36, 36), zero margins, and a single
+    /// run of exactly <see cref="MaxTextLength"/> characters overflows the CLR
+    /// stack, because <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
+    /// recurses once per page continuation and page count is content volume
+    /// divided by page area. The same content at 200 x 200 renders successfully
+    /// with a wide margin below the point measurement found the stack to
+    /// overflow at this font size and text volume; see <see cref="MaxFontSize"/>
+    /// and <see cref="MaxTotalTextLength"/> for the other two levers this
+    /// figure was chosen together with. 200 is also small enough that no
+    /// existing specification in this repository, several of which use a
+    /// 200 x 200 page for a minimal test document, needed to change.
+    /// </summary>
+    public const double MinPageDimensionPoints = 200;
+
+    /// <summary>
+    /// The upper bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
+    /// <see cref="Model.PageSizeSpec.HeightPoints"/>. A generous sanity ceiling
+    /// (about 278 inches) rather than a measured one: an oversized page is not
+    /// part of the stack-overflow mechanism <see cref="MinPageDimensionPoints"/>
+    /// guards against, since more area means fewer pages, not more.
+    /// </summary>
+    public const double MaxPageDimensionPoints = 20_000;
+
+    /// <summary>
+    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. Measured directly: a
+    /// large font size shrinks how much text fits on one page as sharply as a
+    /// small page does, and the two compound. At <see cref="MinPageDimensionPoints"/>
+    /// with <see cref="MaxTotalTextLength"/> characters, this machine's desktop
+    /// x64 CLR still overflowed the stack at some font sizes clearly larger
+    /// than this figure; 20 points was chosen with a wide margin below every
+    /// font size measurement found dangerous at that page size, while
+    /// remaining larger than any font size a shipped sample in this repository
+    /// uses today (18 points, the largest).
+    /// </summary>
+    public const double MaxFontSize = 20;
+
+    /// <summary>
+    /// Caps <see cref="Model.TextStyleSpec.Leading"/> when set. Leading
+    /// enlarges each line's height exactly as a larger font does, so it was
+    /// measured against the same worst-case page and font-size combination as
+    /// <see cref="MaxFontSize"/>; 50 points left a wide margin below the point
+    /// measurement found dangerous there.
+    /// </summary>
+    public const double MaxLeadingPoints = 50;
+
+    /// <summary>
+    /// The lowest value <see cref="Model.HeadingSpec.Level"/> accepts. Zero is
+    /// top-level, matching the library's own <c>Heading.Level</c> convention.
+    /// </summary>
+    public const int MinHeadingLevel = 0;
+
+    /// <summary>
+    /// The highest value <see cref="Model.HeadingSpec.Level"/> accepts. Measured
+    /// directly against the library: <c>HeadingRenderer.HeadingStructType</c>
+    /// clamps every level above this to the same PDF structure type an H6
+    /// heading gets, so <c>-5</c>, <c>7</c>, <c>100</c> and <c>int.MaxValue</c>
+    /// all currently produce identical output. Rejecting them at construction,
+    /// rather than letting the library silently clamp them, is what keeps the
+    /// displayed level and the rendered structure type in agreement.
+    /// </summary>
+    public const int MaxHeadingLevel = 5;
+
+    /// <summary>
+    /// Caps every <c>EdgeInsets</c> component (<c>Top</c>, <c>Right</c>,
+    /// <c>Bottom</c>, <c>Left</c>) wherever this specification accepts one, on
+    /// <see cref="Model.DocumentSpec.Margins"/> and every element's own
+    /// <c>Margins</c> or <c>Padding</c>. A generous sanity ceiling: the library
+    /// itself rejects a page whose margins leave no content area, at render
+    /// time; this bound exists so a NaN or a wildly disproportionate value is
+    /// rejected at construction instead, with a legible message, rather than
+    /// constructing successfully and failing only when rendered.
+    /// </summary>
+    public const double MaxEdgeInsetPoints = 10_000;
+
+    /// <summary>Caps <see cref="Model.PieChartSpec.Diameter"/>. A generous sanity ceiling, comfortably above the library's own 200-point default.</summary>
+    public const double MaxPieChartDiameterPoints = 10_000;
+
+    /// <summary>
+    /// Caps a stroke or border width in points: <see cref="Model.PieChartSpec.StrokeWidth"/>,
+    /// <see cref="Model.TableSpec.BorderWidth"/> and <see cref="Model.LineSeparatorSpec.LineWidth"/>.
+    /// A generous sanity ceiling, far beyond any line a page this size could
+    /// usefully show.
+    /// </summary>
+    public const double MaxStrokeWidthPoints = 1_000;
+
+    /// <summary>Caps <see cref="Model.ListSpec.Indent"/>. A generous sanity ceiling, comfortably above the library's own 20-point default.</summary>
+    public const double MaxIndentPoints = 10_000;
+
+    /// <summary>Caps <see cref="Model.ImageSpec.Width"/> and <see cref="Model.ImageSpec.Height"/>. A generous sanity ceiling matching the order of magnitude of <see cref="MaxPageDimensionPoints"/>.</summary>
+    public const double MaxImageDimensionPoints = 10_000;
+
+    /// <summary>
+    /// Caps the magnitude of <see cref="Model.PieChartSpec.StartAngle"/>, in
+    /// radians. A generous sanity ceiling of roughly 159 full turns either
+    /// way, far more than any legitimate value, that exists only to reject a
+    /// NaN, an infinity, or a value so large it signals a caller error rather
+    /// than an intended rotation.
+    /// </summary>
+    public const double MaxAngleMagnitudeRadians = 1_000;
+
+    /// <summary>Throws when <paramref name="value"/> is not a finite number (rejects <see cref="double.NaN"/> and both infinities); returns it otherwise.</summary>
+    public static double ValidateFinite(double value, string paramName) =>
+        double.IsFinite(value)
+            ? value
+            : throw new ArgumentException($"{paramName} must be a finite number; got {value}.", paramName);
+
+    /// <summary>Throws when <paramref name="value"/> is not finite or falls outside <c>[minInclusive, maxInclusive]</c>; returns it otherwise.</summary>
+    public static double ValidateRange(double value, double minInclusive, double maxInclusive, string paramName)
+    {
+        ValidateFinite(value, paramName);
+        return value < minInclusive || value > maxInclusive
+            ? throw new ArgumentException(
+                $"{paramName} must be between {minInclusive} and {maxInclusive}; got {value}.",
+                paramName)
+            : value;
+    }
+
+    /// <summary>Validates a page dimension against <see cref="MinPageDimensionPoints"/> and <see cref="MaxPageDimensionPoints"/>.</summary>
+    public static double ValidatePageDimension(double value, string paramName) =>
+        ValidateRange(value, MinPageDimensionPoints, MaxPageDimensionPoints, paramName);
+
+    /// <summary>Validates <see cref="Model.TextStyleSpec.FontSize"/>: finite, strictly positive, and no larger than <see cref="MaxFontSize"/>.</summary>
+    public static double ValidateFontSize(double value, string paramName)
+    {
+        ValidateFinite(value, paramName);
+        return value switch
+        {
+            <= 0 => throw new ArgumentException($"{paramName} must be greater than zero; got {value}.", paramName),
+            > MaxFontSize => throw new ArgumentException($"{paramName} must not exceed {MaxFontSize} points; got {value}.", paramName),
+            _ => value,
+        };
+    }
+
+    /// <summary>Validates <see cref="Model.TextStyleSpec.Leading"/> when set: finite and within <c>[0, MaxLeadingPoints]</c>.</summary>
+    public static double ValidateLeading(double value, string paramName) =>
+        ValidateRange(value, 0, MaxLeadingPoints, paramName);
+
+    /// <summary>Same as <see cref="ValidateLeading(double, string)"/>, but passes a null value through unchanged.</summary>
+    public static double? ValidateOptionalLeading(double? value, string paramName) =>
+        value is null ? null : ValidateLeading(value.Value, paramName);
+
+    /// <summary>Validates <see cref="Model.HeadingSpec.Level"/> against <see cref="MinHeadingLevel"/> and <see cref="MaxHeadingLevel"/>.</summary>
+    public static int ValidateHeadingLevel(int value, string paramName) =>
+        value is >= MinHeadingLevel and <= MaxHeadingLevel
+            ? value
+            : throw new ArgumentException(
+                $"{paramName} must be between {MinHeadingLevel} and {MaxHeadingLevel}; got {value}.",
+                paramName);
+
+    /// <summary>Validates every component of an <c>EdgeInsets</c>: each of <c>Top</c>, <c>Right</c>, <c>Bottom</c> and <c>Left</c> finite and within <c>[0, MaxEdgeInsetPoints]</c>.</summary>
+    public static EdgeInsets ValidateEdgeInsets(EdgeInsets value, string paramName)
+    {
+        ValidateRange(value.Top, 0, MaxEdgeInsetPoints, paramName);
+        ValidateRange(value.Right, 0, MaxEdgeInsetPoints, paramName);
+        ValidateRange(value.Bottom, 0, MaxEdgeInsetPoints, paramName);
+        ValidateRange(value.Left, 0, MaxEdgeInsetPoints, paramName);
+        return value;
+    }
+
+    /// <summary>Same as <see cref="ValidateEdgeInsets(EdgeInsets, string)"/>, but passes a null value through unchanged.</summary>
+    public static EdgeInsets? ValidateOptionalEdgeInsets(EdgeInsets? value, string paramName) =>
+        value is null ? null : ValidateEdgeInsets(value.Value, paramName);
+
+    /// <summary>Validates every component of a <c>ColorRgb</c>: each of <c>R</c>, <c>G</c> and <c>B</c> finite and within <c>[0, 1]</c>, matching the library's own normalised-colour contract.</summary>
+    public static ColorRgb ValidateColor(ColorRgb value, string paramName)
+    {
+        ValidateRange(value.R, 0, 1, paramName);
+        ValidateRange(value.G, 0, 1, paramName);
+        ValidateRange(value.B, 0, 1, paramName);
+        return value;
+    }
+
+    /// <summary>Same as <see cref="ValidateColor(ColorRgb, string)"/>, but passes a null value through unchanged.</summary>
+    public static ColorRgb? ValidateOptionalColor(ColorRgb? value, string paramName) =>
+        value is null ? null : ValidateColor(value.Value, paramName);
+
+    /// <summary>
+    /// Validates <see cref="Model.EncryptionSpec.Permissions"/>: every bit set
+    /// must belong to one of the library's named <see cref="PdfPermissions"/>
+    /// flags. <see cref="Generation.SpecCodeEmitter"/>'s <c>EmitPermissions</c>
+    /// reconstructs a value from exactly those named flags, so a raw value
+    /// carrying an undefined bit would either emit invalid C# (a lone comma,
+    /// for a value with no named flag at all) or silently drop that bit from
+    /// the displayed code while the renderer still applied it, letting the
+    /// document the code produces diverge from the one it is shown beside.
+    /// </summary>
+    public static PdfPermissions ValidatePermissions(PdfPermissions value, string paramName) =>
+        (value & ~AllNamedPermissionFlags) == 0
+            ? value
+            : throw new ArgumentException(
+                $"{paramName} must be a union of named PdfPermissions flags; got a raw value with undefined bits set (0x{(int)value:x}).",
+                paramName);
+
+    /// <summary>
+    /// The bitwise union of every named <see cref="PdfPermissions"/> flag other
+    /// than <see cref="PdfPermissions.None"/> and <see cref="PdfPermissions.All"/>.
+    /// Verified by test to equal <see cref="PdfPermissions.All"/> exactly, which
+    /// is what makes <see cref="ValidatePermissions"/> accept <c>All</c> without
+    /// naming it as a special case.
+    /// </summary>
+    internal static readonly PdfPermissions AllNamedPermissionFlags = Enum.GetValues<PdfPermissions>()
+        .Where(flag => flag is not (PdfPermissions.None or PdfPermissions.All))
+        .Aggregate(PdfPermissions.None, (acc, flag) => acc | flag);
 
     /// <summary>Throws when <paramref name="value"/> is null or longer than <paramref name="maxLength"/>; returns it otherwise.</summary>
     public static string ValidateString(string value, int maxLength, string paramName)

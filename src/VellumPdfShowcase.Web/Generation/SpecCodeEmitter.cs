@@ -62,6 +62,8 @@ public static class SpecCodeEmitter
     /// </remarks>
     public static string Emit(DocumentSpec spec)
     {
+        spec.ValidateEmbeddedFontReferences();
+
         var writer = new CodeWriter();
         new Emitter(spec, writer).EmitDocument();
         return writer.ToString();

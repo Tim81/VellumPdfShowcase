@@ -106,7 +106,7 @@ public class DocumentSpecValidationTests
 }
 
 /// <summary>
-/// C4-C-M1: every collection member snapshots the caller's value with a
+/// Every collection member snapshots the caller's value with a
 /// collection expression at construction, so a fully constructed record
 /// cannot be emptied out from under itself by mutating a list the caller
 /// happened to alias. Before the fix, each of these nine tests failed: the
@@ -232,7 +232,7 @@ public class DocumentSpecCollectionAliasingTests
 }
 
 /// <summary>
-/// C4-C-M2: <see cref="ListItemSpec.Children"/> caps nesting depth at
+/// <see cref="ListItemSpec.Children"/> caps nesting depth at
 /// <see cref="SpecLimits.MaxListNestingDepth"/>, the one plan section 5.4
 /// control a wrapped parser call cannot rescue, because an uncaught stack
 /// overflow terminates the process outright.
@@ -483,7 +483,7 @@ public class IccProfileHeaderTests
 }
 
 /// <summary>
-/// C4-C-M5: a restricted <see cref="EncryptionSpec.Permissions"/> value
+/// A restricted <see cref="EncryptionSpec.Permissions"/> value
 /// requires an <see cref="EncryptionSpec.OwnerPassword"/>, because the
 /// library authenticates full owner access to whichever password opens the
 /// document, and with no owner password set that password is
@@ -731,6 +731,19 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(100, SpecLimits.MaxListItemChildren);
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
+        Assert.Equal(100_000, SpecLimits.MaxTotalTextLength);
+        Assert.Equal(200, SpecLimits.MinPageDimensionPoints);
+        Assert.Equal(20_000, SpecLimits.MaxPageDimensionPoints);
+        Assert.Equal(20, SpecLimits.MaxFontSize);
+        Assert.Equal(50, SpecLimits.MaxLeadingPoints);
+        Assert.Equal(0, SpecLimits.MinHeadingLevel);
+        Assert.Equal(5, SpecLimits.MaxHeadingLevel);
+        Assert.Equal(10_000, SpecLimits.MaxEdgeInsetPoints);
+        Assert.Equal(10_000, SpecLimits.MaxPieChartDiameterPoints);
+        Assert.Equal(1_000, SpecLimits.MaxStrokeWidthPoints);
+        Assert.Equal(10_000, SpecLimits.MaxIndentPoints);
+        Assert.Equal(10_000, SpecLimits.MaxImageDimensionPoints);
+        Assert.Equal(1_000, SpecLimits.MaxAngleMagnitudeRadians);
     }
 }
 

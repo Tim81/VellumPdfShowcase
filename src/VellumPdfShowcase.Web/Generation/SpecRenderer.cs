@@ -37,8 +37,35 @@ namespace VellumPdfShowcase.Web.Generation;
 public static class SpecRenderer
 {
     /// <summary>Builds the document described by <paramref name="spec"/> and returns its PDF bytes.</summary>
+    /// <remarks>
+    /// Exception contract: every failure this method can produce, other than
+    /// an uncatchable <see cref="StackOverflowException"/> or
+    /// <see cref="OutOfMemoryException"/>, surfaces as <see cref="ArgumentException"/>
+    /// (including its <see cref="ArgumentOutOfRangeException"/> and
+    /// <see cref="ArgumentNullException"/> subtypes, for a malformed <paramref name="spec"/>
+    /// the model failed to reject) or <see cref="InvalidOperationException"/>
+    /// (for everything the library itself refuses only once construction is
+    /// under way: a malformed image or font, an inconsistent ICC profile, an
+    /// object-streams-plus-encryption or PDF/A-plus-encryption combination,
+    /// or a page geometry that cannot be laid out). A caller that wants one
+    /// catch clause to be complete can therefore catch <see cref="ArgumentException"/>.
+    /// Before this contract was made uniform, <c>Document.Encrypt</c> and
+    /// <c>Document.Save</c> were called unwrapped: measured directly, a bad
+    /// combination of settings could throw <see cref="NotSupportedException"/>,
+    /// <see cref="InvalidOperationException"/>, <see cref="ArgumentOutOfRangeException"/>
+    /// or <see cref="ArgumentException"/> depending on which rule it broke,
+    /// while every wrapped path already normalised to <see cref="InvalidOperationException"/>
+    /// alone, so a caller catching only that type let three others through.
+    /// NOTE: this deliberately does not guard <see cref="DocumentSpec.UseObjectStreams"/>
+    /// combined with <see cref="DocumentSpec.Encryption"/>, consistently with
+    /// every other cross-feature incompatibility the library enforces at save
+    /// time rather than at construction; see the remark on
+    /// <see cref="DocumentSpec.UseObjectStreams"/>.
+    /// </remarks>
     public static byte[] Render(DocumentSpec spec)
     {
+        spec.ValidateEmbeddedFontReferences();
+
         using var document = new Document
         {
             PageSize = new VellumPdf.Document.PdfRectangle(0, 0, spec.Page.WidthPoints, spec.Page.HeightPoints),
@@ -114,18 +141,32 @@ public static class SpecRenderer
 
         if (spec.Encryption is { } encryption)
         {
-            document.Encrypt(new PdfEncryptionSettings
+            try
             {
-                UserPassword = encryption.UserPassword,
-                OwnerPassword = encryption.OwnerPassword,
-                Permissions = encryption.Permissions,
-                EncryptMetadata = encryption.EncryptMetadata,
-            });
+                document.Encrypt(new PdfEncryptionSettings
+                {
+                    UserPassword = encryption.UserPassword,
+                    OwnerPassword = encryption.OwnerPassword,
+                    Permissions = encryption.Permissions,
+                    EncryptMetadata = encryption.EncryptMetadata,
+                });
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or ArgumentException)
+            {
+                throw new InvalidOperationException($"Could not encrypt the document: {ex.Message}", ex);
+            }
         }
 
-        using var stream = new MemoryStream();
-        document.Save(stream);
-        return stream.ToArray();
+        try
+        {
+            using var stream = new MemoryStream();
+            document.Save(stream);
+            return stream.ToArray();
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or ArgumentException)
+        {
+            throw new InvalidOperationException($"Could not save the document: {ex.Message}", ex);
+        }
     }
 
     private static void ApplyMetadata(VellumPdf.Document.PdfDocumentInfo info, DocumentMetadataSpec metadata)

@@ -662,7 +662,7 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// C4-C-M5: an owner password with no user password. Anyone can open the
+    /// An owner password with no user password. Anyone can open the
     /// file; only the owner password grants the restricted permissions.
     /// Exercises <c>SpecCodeEmitter.EmitEncryption</c>'s omit-when-null branch
     /// for <see cref="EncryptionSpec.UserPassword"/>, which no other sample
@@ -686,7 +686,7 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// C4-C-M5: a user password with no owner password and unrestricted
+    /// A user password with no owner password and unrestricted
     /// permissions, the one combination <see cref="EncryptionSpec"/> still
     /// allows a null <see cref="EncryptionSpec.OwnerPassword"/> for. Measured
     /// directly against the library and recorded on the type: with no owner
@@ -814,7 +814,7 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// C4-C-M6: the thirteen emitter branches with no coverage anywhere else
+    /// The thirteen emitter branches with no coverage anywhere else
     /// in this file. The largest cluster is element-level <c>Margins</c> on
     /// all seven content item types that expose it (heading, paragraph, list,
     /// table, image, pie chart and line separator), each given a fully

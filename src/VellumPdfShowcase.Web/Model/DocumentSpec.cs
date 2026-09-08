@@ -1,3 +1,4 @@
+using System.Text;
 using VellumPdf.Encryption;
 using VellumPdf.Fonts;
 using VellumPdf.Layout.Core;
@@ -38,7 +39,11 @@ public sealed record DocumentSpec
     /// 72 points (one inch) on every edge, matching <c>Document</c>'s own
     /// default exactly, for the same reason given on <see cref="PieChartSpec.StartAngle"/>.
     /// </summary>
-    public EdgeInsets Margins { get; init; } = new(72);
+    public EdgeInsets Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateEdgeInsets(value, nameof(Margins));
+    } = new(72);
 
     /// <summary>
     /// The style registered as the document's default through
@@ -56,6 +61,13 @@ public sealed record DocumentSpec
     /// (<see cref="ListSpec.DefaultStyle"/> or <see cref="TableSpec.DefaultCellStyle"/>),
     /// which may itself be <see langword="null"/>; this property governs
     /// neither. Only an unstyled <see cref="PlainTextSpec"/> reads it.
+    /// </remarks>
+    /// <remarks>
+    /// If this style's <see cref="TextStyleSpec.Font"/> is <see cref="FontKind.Embedded"/>,
+    /// its index must name an actual entry of <see cref="EmbeddedFonts"/>; see
+    /// <see cref="ValidateEmbeddedFontReferences"/> for why that cannot be
+    /// checked here, at construction, the way every other cross-property
+    /// check in this type is.
     /// </remarks>
     public required TextStyleSpec DefaultTextStyle { get; init; }
 
@@ -89,15 +101,29 @@ public sealed record DocumentSpec
     /// <see cref="ImageSpec.Format"/> checked against the magic bytes of its
     /// own <see cref="ImageSpec.Bytes"/>, which requires both properties to be
     /// already set and so cannot be done inside <see cref="ImageSpec"/> itself.
-    /// Finally, the total number of nodes walking this list would visit
-    /// (counted exactly as <see cref="Generation.SpecRenderer"/> and
+    /// The total number of nodes walking this list would visit (counted
+    /// exactly as <see cref="Generation.SpecRenderer"/> and
     /// <see cref="Generation.SpecCodeEmitter"/> walk it, once per position
     /// rather than once per distinct object) is checked against
     /// <see cref="SpecLimits.MaxWalkedNodes"/>, which is the only thing that
     /// stops a small number of objects sharing one deeply reused subtree from
     /// multiplying the work either side performs; every other cap in
     /// <see cref="SpecLimits"/> bounds a collection's own size and cannot, by
-    /// itself, prevent that multiplication.
+    /// itself, prevent that multiplication. The same walk sums every
+    /// text-bearing node's own text length against <see cref="SpecLimits.MaxTotalTextLength"/>,
+    /// which is what stops <see cref="SpecLimits.MaxWalkedNodes"/> and
+    /// <see cref="SpecLimits.MaxTextLength"/> from being multiplied together
+    /// into an unreasonably large total.
+    /// </remarks>
+    /// <remarks>
+    /// Every <see cref="TextStyleSpec"/> reachable from this list, from
+    /// <see cref="Header"/> and <see cref="Footer"/>, and
+    /// <see cref="DefaultTextStyle"/> itself, must eventually have its
+    /// <see cref="FontSpec.EmbeddedFontIndex"/> checked against
+    /// <see cref="EmbeddedFonts"/> whenever its <see cref="FontSpec.Kind"/> is
+    /// <see cref="FontKind.Embedded"/>. See <see cref="ValidateEmbeddedFontReferences"/>
+    /// for that check and for why it is NOT performed here, at construction,
+    /// unlike every other cross-property check in this type.
     /// </remarks>
     public required IReadOnlyList<ContentItemSpec> Content
     {
@@ -105,10 +131,16 @@ public sealed record DocumentSpec
         init => field = ValidateContent(value);
     }
 
-    /// <summary>The running header repeated on every page, if any.</summary>
+    /// <summary>
+    /// The running header repeated on every page, if any. See the remark on
+    /// <see cref="DefaultTextStyle"/> about its style's embedded font index.
+    /// </summary>
     public RunningBandSpec? Header { get; init; }
 
-    /// <summary>The running footer repeated on every page, if any.</summary>
+    /// <summary>
+    /// The running footer repeated on every page, if any. See the remark on
+    /// <see cref="DefaultTextStyle"/> about its style's embedded font index.
+    /// </summary>
     public RunningBandSpec? Footer { get; init; }
 
     /// <summary>The conformance profile the document claims, or <see cref="DocumentConformance.None"/>.</summary>
@@ -230,7 +262,17 @@ public sealed record DocumentSpec
             }
         }
 
-        if (WalksBeyondNodeLimit(snapshot))
+        var walk = new ContentWalkState();
+
+        foreach (var item in snapshot)
+        {
+            if (!walk.TryVisitNode(item))
+            {
+                break;
+            }
+        }
+
+        if (walk.NodeLimitExceeded)
         {
             throw new ArgumentException(
                 $"This specification's content would require walking more than {SpecLimits.MaxWalkedNodes} " +
@@ -240,125 +282,296 @@ public sealed record DocumentSpec
                 nameof(Content));
         }
 
+        if (walk.CharacterLimitExceeded)
+        {
+            throw new ArgumentException(
+                $"This specification's content would carry more than {SpecLimits.MaxTotalTextLength} " +
+                "characters across every text-bearing node, counted the same way as the node walk above so " +
+                "that sharing cannot amplify it. Reduce the total amount of text.",
+                nameof(Content));
+        }
+
         return snapshot;
     }
 
     /// <summary>
-    /// Whether walking <paramref name="content"/> exactly as
+    /// Threads two running totals through one walk of <see cref="Content"/>,
+    /// visiting a shared reference once per position it occupies exactly as
     /// <see cref="Generation.SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>
-    /// do (visiting a shared reference once per position it occupies, never
-    /// deduplicated by object identity) would visit more than
-    /// <see cref="SpecLimits.MaxWalkedNodes"/> nodes. Every counting helper
-    /// below stops the instant the running total would exceed the limit, so a
-    /// specification engineered to make the TRUE total astronomically large
-    /// (for instance by nesting shared subtrees inside shared subtrees) is
-    /// rejected after doing only <see cref="SpecLimits.MaxWalkedNodes"/> units
-    /// of counting work, never after actually performing the astronomical
-    /// amount of work the true total implies.
+    /// do, never deduplicated by object identity: the node count against
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> and the character count
+    /// against <see cref="SpecLimits.MaxTotalTextLength"/>. Both stop the
+    /// walk the instant the running total would exceed them, so a
+    /// specification engineered to make either TRUE total astronomically
+    /// large is rejected after doing only that many units of counting work,
+    /// never after actually performing the astronomical amount of work the
+    /// true total implies.
     /// </summary>
-    private static bool WalksBeyondNodeLimit(IReadOnlyList<ContentItemSpec> content)
+    private sealed class ContentWalkState
     {
-        var count = 0;
-        foreach (var item in content)
+        private int NodeCount { get; set; }
+
+        private long CharacterCount { get; set; }
+
+        public bool NodeLimitExceeded { get; private set; }
+
+        public bool CharacterLimitExceeded { get; private set; }
+
+        public bool TryVisitNode(ContentItemSpec item)
         {
-            if (!TryVisitNode(item, ref count))
+            if (!TryVisit())
             {
-                return true;
+                return false;
             }
-        }
 
-        return false;
-    }
+            switch (item)
+            {
+                case PlainTextSpec plainText:
+                    return TryAddCharacters(plainText.Text.Length);
 
-    private static bool TryVisitNode(ContentItemSpec item, ref int count)
-    {
-        if (!TryVisit(ref count))
-        {
-            return false;
-        }
+                case HeadingSpec heading:
+                    return TryAddCharacters(heading.Text.Length);
 
-        switch (item)
-        {
-            case ParagraphSpec paragraph:
-                foreach (var unused in paragraph.Runs)
-                {
-                    if (!TryVisit(ref count))
+                case ParagraphSpec paragraph:
+                    foreach (var run in paragraph.Runs)
                     {
-                        return false;
-                    }
-                }
-
-                break;
-
-            case ListSpec list:
-                foreach (var listItem in list.Items)
-                {
-                    if (!TryVisitListItem(listItem, ref count))
-                    {
-                        return false;
-                    }
-                }
-
-                break;
-
-            case TableSpec table:
-                foreach (var row in table.Rows)
-                {
-                    if (!TryVisit(ref count))
-                    {
-                        return false;
-                    }
-
-                    foreach (var unused in row.Cells)
-                    {
-                        if (!TryVisit(ref count))
+                        if (!TryVisit() || !TryAddCharacters(run.Text.Length))
                         {
                             return false;
                         }
                     }
-                }
 
-                break;
+                    return true;
 
-            case PieChartSpec pieChart:
-                foreach (var unused in pieChart.Slices)
-                {
-                    if (!TryVisit(ref count))
+                case ListSpec list:
+                    foreach (var listItem in list.Items)
                     {
-                        return false;
+                        if (!TryVisitListItem(listItem))
+                        {
+                            return false;
+                        }
                     }
-                }
 
-                break;
-        }
+                    return true;
 
-        return true;
-    }
+                case TableSpec table:
+                    foreach (var row in table.Rows)
+                    {
+                        if (!TryVisit())
+                        {
+                            return false;
+                        }
 
-    private static bool TryVisitListItem(ListItemSpec item, ref int count)
-    {
-        if (!TryVisit(ref count))
-        {
-            return false;
-        }
+                        foreach (var cell in row.Cells)
+                        {
+                            if (!TryVisit() || !TryAddCharacters(cell.Content.Length))
+                            {
+                                return false;
+                            }
+                        }
+                    }
 
-        foreach (var child in item.Children)
-        {
-            if (!TryVisitListItem(child, ref count))
-            {
-                return false;
+                    return true;
+
+                case PieChartSpec pieChart:
+                    foreach (var unused in pieChart.Slices)
+                    {
+                        if (!TryVisit())
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+
+                default:
+                    return true;
             }
         }
 
-        return true;
-    }
+        private bool TryVisitListItem(ListItemSpec item)
+        {
+            if (!TryVisit() || !TryAddCharacters(item.Text.Length))
+            {
+                return false;
+            }
 
-    private static bool TryVisit(ref int count) => ++count <= SpecLimits.MaxWalkedNodes;
+            foreach (var child in item.Children)
+            {
+                if (!TryVisitListItem(child))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool TryVisit()
+        {
+            if (++NodeCount <= SpecLimits.MaxWalkedNodes)
+            {
+                return true;
+            }
+
+            NodeLimitExceeded = true;
+            return false;
+        }
+
+        private bool TryAddCharacters(int length)
+        {
+            CharacterCount += length;
+            if (CharacterCount <= SpecLimits.MaxTotalTextLength)
+            {
+                return true;
+            }
+
+            CharacterLimitExceeded = true;
+            return false;
+        }
+    }
 
     private static PdfAOutputIntentSpec Validated(PdfAOutputIntentSpec pdfA)
     {
         IccProfileHeader.Validate(pdfA.IccProfile, pdfA.ComponentCount);
         return pdfA;
+    }
+
+    /// <summary>
+    /// Checks every <see cref="TextStyleSpec"/> reachable from <see cref="Content"/>,
+    /// <see cref="Header"/>, <see cref="Footer"/> and <see cref="DefaultTextStyle"/>:
+    /// whenever one's <see cref="FontSpec.Kind"/> is <see cref="FontKind.Embedded"/>,
+    /// its <see cref="FontSpec.EmbeddedFontIndex"/> must name an actual entry
+    /// of <see cref="EmbeddedFonts"/>. <see cref="Generation.SpecRenderer.Render"/>
+    /// and <see cref="Generation.SpecCodeEmitter.Emit"/> both call this before
+    /// doing anything else with a <see cref="DocumentSpec"/>, and it is the
+    /// single place this check is stated.
+    /// </summary>
+    /// <remarks>
+    /// This cannot be done at construction, unlike every other cross-property
+    /// check in this type. Those checks (<see cref="OutputIntent"/> against a
+    /// nested <see cref="PdfAOutputIntentSpec"/>'s own two properties,
+    /// <see cref="Encryption"/> against a nested <see cref="EncryptionSpec"/>'s
+    /// own two properties) validate a single ALREADY-FULLY-CONSTRUCTED nested
+    /// object, which is safe regardless of the order its own properties were
+    /// set in, because object-initializer syntax fully evaluates a nested
+    /// <c>new PdfAOutputIntentSpec { ... }</c> expression before the result is
+    /// ever assigned to <see cref="OutputIntent"/>. <see cref="EmbeddedFonts"/>,
+    /// <see cref="Content"/>, <see cref="Header"/>, <see cref="Footer"/> and
+    /// <see cref="DefaultTextStyle"/> are five independent top-level
+    /// properties of THIS SAME record, with no such nesting relationship, and
+    /// a caller may set them in any order inside <c>new DocumentSpec { ... }</c>:
+    /// object-initializer member assignments run in the order written, so
+    /// whichever of these five is assigned first would see the other four
+    /// still at their construction-time defaults, not their final values.
+    /// Measured directly: several samples in this repository set
+    /// <see cref="DefaultTextStyle"/> to an embedded-font style before
+    /// <see cref="EmbeddedFonts"/> itself, which is exactly the order that
+    /// breaks a check made from <see cref="DefaultTextStyle"/>'s own <see langword="init"/>.
+    /// Only after every property of a fully constructed <see cref="DocumentSpec"/>
+    /// holds its final value can this run correctly regardless of the order
+    /// its caller happened to write, which is why it runs once, explicitly,
+    /// at the start of both real consumers instead.
+    /// </remarks>
+    public void ValidateEmbeddedFontReferences()
+    {
+        var embeddedFontCount = EmbeddedFonts.Count;
+
+        ValidateFontReference(DefaultTextStyle, embeddedFontCount, nameof(DefaultTextStyle));
+        ValidateBandFontReference(Header, embeddedFontCount, nameof(Header));
+        ValidateBandFontReference(Footer, embeddedFontCount, nameof(Footer));
+
+        foreach (var item in Content)
+        {
+            ValidateContentFontReferences(item, embeddedFontCount);
+        }
+    }
+
+    private static void ValidateContentFontReferences(ContentItemSpec item, int embeddedFontCount)
+    {
+        switch (item)
+        {
+            case PlainTextSpec { Style: { } style }:
+                ValidateFontReference(style, embeddedFontCount, nameof(Content));
+                break;
+
+            case HeadingSpec { Style: { } style }:
+                ValidateFontReference(style, embeddedFontCount, nameof(Content));
+                break;
+
+            case ParagraphSpec paragraph:
+                foreach (var run in paragraph.Runs)
+                {
+                    ValidateFontReference(run.Style, embeddedFontCount, nameof(Content));
+                }
+
+                break;
+
+            case ListSpec list:
+                if (list.DefaultStyle is { } listDefaultStyle)
+                {
+                    ValidateFontReference(listDefaultStyle, embeddedFontCount, nameof(Content));
+                }
+
+                foreach (var listItem in list.Items)
+                {
+                    ValidateListItemFontReferences(listItem, embeddedFontCount);
+                }
+
+                break;
+
+            case TableSpec table:
+                if (table.DefaultCellStyle is { } tableDefaultStyle)
+                {
+                    ValidateFontReference(tableDefaultStyle, embeddedFontCount, nameof(Content));
+                }
+
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        if (cell.Style is { } cellStyle)
+                        {
+                            ValidateFontReference(cellStyle, embeddedFontCount, nameof(Content));
+                        }
+                    }
+                }
+
+                break;
+        }
+    }
+
+    private static void ValidateListItemFontReferences(ListItemSpec item, int embeddedFontCount)
+    {
+        if (item.Style is { } style)
+        {
+            ValidateFontReference(style, embeddedFontCount, nameof(Content));
+        }
+
+        foreach (var child in item.Children)
+        {
+            ValidateListItemFontReferences(child, embeddedFontCount);
+        }
+    }
+
+    private static void ValidateFontReference(TextStyleSpec style, int embeddedFontCount, string paramName)
+    {
+        if (style.Font.Kind == FontKind.Embedded && style.Font.EmbeddedFontIndex >= embeddedFontCount)
+        {
+            throw new ArgumentException(
+                $"{paramName} references FontSpec.FromEmbedded({style.Font.EmbeddedFontIndex}), but " +
+                $"EmbeddedFonts has only {embeddedFontCount} " +
+                (embeddedFontCount == 1 ? "entry." : "entries."),
+                paramName);
+        }
+    }
+
+    private static void ValidateBandFontReference(RunningBandSpec? value, int embeddedFontCount, string paramName)
+    {
+        if (value is not null)
+        {
+            ValidateFontReference(value.Style, embeddedFontCount, paramName);
+        }
     }
 
     private static EncryptionSpec? ValidateEncryption(EncryptionSpec? value)
@@ -368,7 +581,7 @@ public sealed record DocumentSpec
             return value;
         }
 
-        if (string.IsNullOrEmpty(value.OwnerPassword) || value.OwnerPassword == value.UserPassword)
+        if (string.IsNullOrEmpty(value.OwnerPassword) || AuthenticatesIdentically(value.OwnerPassword, value.UserPassword))
         {
             throw new ArgumentException(
                 "EncryptionSpec.OwnerPassword must be set to a value distinct from UserPassword whenever " +
@@ -379,11 +592,53 @@ public sealed record DocumentSpec
 
         return value;
     }
+
+    /// <summary>
+    /// Whether the library's own AES-256 security handler would treat
+    /// <paramref name="ownerPassword"/> and <paramref name="userPassword"/> as
+    /// the SAME password. Comparing the two strings for exact equality is not
+    /// enough: <c>VellumPdf.Encryption.StandardSecurityHandler.PasswordBytes</c>
+    /// encodes a password as UTF-8 and truncates it to 127 bytes before
+    /// deriving key material from it, so two strings that differ only after
+    /// byte 127 authenticate identically even though a plain <c>==</c> on the
+    /// strings says they differ. A 127-byte user password with a 128-byte
+    /// owner password sharing the same
+    /// first 127 bytes is therefore the SAME defeat of the owner-password rule
+    /// as leaving <see cref="EncryptionSpec.OwnerPassword"/> unset, and must be
+    /// rejected the same way.
+    /// </summary>
+    private static bool AuthenticatesIdentically(string? ownerPassword, string? userPassword) =>
+        TruncatedPasswordBytes(ownerPassword).AsSpan().SequenceEqual(TruncatedPasswordBytes(userPassword));
+
+    /// <summary>Mirrors <c>VellumPdf.Encryption.StandardSecurityHandler.PasswordBytes</c>: UTF-8, truncated to 127 bytes. A null password is the library's own empty-string fallback.</summary>
+    private static byte[] TruncatedPasswordBytes(string? password)
+    {
+        var bytes = Encoding.UTF8.GetBytes(password ?? string.Empty);
+        return bytes.Length > 127 ? bytes[..127] : bytes;
+    }
 }
 
-/// <summary>A page size expressed directly in PDF points.</summary>
+/// <summary>
+/// A page size expressed directly in PDF points. Both dimensions are capped to
+/// <see cref="SpecLimits.MinPageDimensionPoints"/> through
+/// <see cref="SpecLimits.MaxPageDimensionPoints"/> and must be finite; see the
+/// remark on <see cref="SpecLimits.MinPageDimensionPoints"/> for why the lower
+/// bound exists.
+/// </summary>
 public sealed record PageSizeSpec(double WidthPoints, double HeightPoints)
 {
+    public double WidthPoints
+    {
+        get;
+        init => field = SpecLimits.ValidatePageDimension(value, nameof(WidthPoints));
+    } = SpecLimits.ValidatePageDimension(WidthPoints, nameof(WidthPoints));
+
+    public double HeightPoints
+    {
+        get;
+        init => field = SpecLimits.ValidatePageDimension(value, nameof(HeightPoints));
+    } = SpecLimits.ValidatePageDimension(HeightPoints, nameof(HeightPoints));
+
     /// <summary>Builds a <see cref="PageSizeSpec"/> from a Kernel <c>PdfRectangle</c>, such as one of the <c>PageSize</c> presets.</summary>
     public static PageSizeSpec FromRectangle(VellumPdf.Document.PdfRectangle rectangle) =>
         new(rectangle.Width, rectangle.Height);
@@ -410,7 +665,22 @@ public sealed record FontSpec
 {
     public required FontKind Kind { get; init; }
     public Standard14 Standard14Face { get; init; }
-    public int EmbeddedFontIndex { get; init; }
+
+    /// <summary>
+    /// Rejected here when negative, which is meaningless regardless of how
+    /// many embedded fonts a document ends up with. Whether it names an
+    /// actual entry of <see cref="DocumentSpec.EmbeddedFonts"/> can only be
+    /// checked once that list is known, so <see cref="DocumentSpec.Content"/>,
+    /// <see cref="DocumentSpec.Header"/>, <see cref="DocumentSpec.Footer"/> and
+    /// <see cref="DocumentSpec.DefaultTextStyle"/> each check it there.
+    /// </summary>
+    public int EmbeddedFontIndex
+    {
+        get;
+        init => field = value >= 0
+            ? value
+            : throw new ArgumentException($"EmbeddedFontIndex must not be negative; got {value}.", nameof(EmbeddedFontIndex));
+    }
 
     public static FontSpec FromStandard14(Standard14 face) =>
         new() { Kind = FontKind.Standard14, Standard14Face = face };
@@ -438,11 +708,32 @@ public sealed record TextStyleSpec
 {
     public required FontSpec Font { get; init; }
 
-    /// <summary>Defaults to 12, matching <c>TextStyle</c>'s own default exactly, for the same reason given on <see cref="PieChartSpec.StartAngle"/>.</summary>
-    public double FontSize { get; init; } = 12;
+    /// <summary>
+    /// Defaults to 12, matching <c>TextStyle</c>'s own default exactly, for the
+    /// same reason given on <see cref="PieChartSpec.StartAngle"/>. Capped at
+    /// <see cref="SpecLimits.MaxFontSize"/>: measured directly, a large font
+    /// size on a small page overflows the CLR stack the same way an
+    /// unbounded page size does, by forcing an unbounded page count from a
+    /// bounded amount of text. See the remark on <see cref="SpecLimits.MaxFontSize"/>.
+    /// </summary>
+    public double FontSize
+    {
+        get;
+        init => field = SpecLimits.ValidateFontSize(value, nameof(FontSize));
+    } = 12;
 
-    public double? Leading { get; init; }
-    public ColorRgb Color { get; init; } = ColorRgb.Black;
+    /// <summary>Capped at <see cref="SpecLimits.MaxLeadingPoints"/> when set, for the same reason as <see cref="FontSize"/>: a large leading enlarges every line exactly as a large font size does.</summary>
+    public double? Leading
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalLeading(value, nameof(Leading));
+    }
+
+    public ColorRgb Color
+    {
+        get;
+        init => field = SpecLimits.ValidateColor(value, nameof(Color));
+    } = ColorRgb.Black;
 
     /// <summary>
     /// A URI a run of this style links to, or <see langword="null"/> for none.
@@ -480,10 +771,28 @@ public sealed record HeadingSpec : ContentItemSpec
         init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Text));
     }
 
-    public required int Level { get; init; }
+    /// <summary>
+    /// Zero-based: 0 is top-level, matching the library's own <c>Heading.Level</c>
+    /// convention. Capped at <see cref="SpecLimits.MaxHeadingLevel"/>: measured
+    /// directly against the library, every level above that is silently
+    /// clamped to the same PDF structure type an H6 heading gets, so rejecting
+    /// an out-of-range level here is what keeps the displayed level and the
+    /// rendered structure type from disagreeing.
+    /// </summary>
+    public required int Level
+    {
+        get;
+        init => field = SpecLimits.ValidateHeadingLevel(value, nameof(Level));
+    }
+
     public TextStyleSpec? Style { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
-    public EdgeInsets? Margins { get; init; }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
 
     public string? BookmarkTitle
     {
@@ -517,7 +826,12 @@ public sealed record ParagraphSpec : ContentItemSpec
     }
 
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
-    public EdgeInsets? Margins { get; init; }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
 
     public string? Language
     {
@@ -601,8 +915,18 @@ public sealed record ListSpec : ContentItemSpec
         }
     }
 
-    public double? Indent { get; init; }
-    public EdgeInsets? Margins { get; init; }
+    public double? Indent
+    {
+        get;
+        init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxIndentPoints, nameof(Indent));
+    }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
+
     public TextStyleSpec? DefaultStyle { get; init; }
 }
 
@@ -687,9 +1011,24 @@ public sealed record TableSpec : ContentItemSpec
     }
 
     public TextStyleSpec? DefaultCellStyle { get; init; }
-    public double? BorderWidth { get; init; }
-    public ColorRgb? BorderColor { get; init; }
-    public EdgeInsets? Margins { get; init; }
+
+    public double? BorderWidth
+    {
+        get;
+        init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxStrokeWidthPoints, nameof(BorderWidth));
+    }
+
+    public ColorRgb? BorderColor
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalColor(value, nameof(BorderColor));
+    }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
 
     private static IReadOnlyList<double>? ValidateColumnWidths(IReadOnlyList<double>? value)
     {
@@ -703,6 +1042,11 @@ public sealed record TableSpec : ContentItemSpec
             throw new ArgumentException(
                 $"A table must not have more than {SpecLimits.MaxTableColumnWidths} column widths; got {value.Count}.",
                 nameof(ColumnWidths));
+        }
+
+        foreach (var width in value)
+        {
+            SpecLimits.ValidateRange(width, 0, SpecLimits.MaxPageDimensionPoints, nameof(ColumnWidths));
         }
 
         return [.. value];
@@ -783,11 +1127,38 @@ public sealed record TableCellSpec
         init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Content));
     }
 
-    public int ColSpan { get; init; } = 1;
-    public int RowSpan { get; init; } = 1;
+    /// <summary>Capped at <see cref="SpecLimits.MaxTableCellsPerRow"/>: a cell cannot usefully span more columns than a row may ever have.</summary>
+    public int ColSpan
+    {
+        get;
+        init => field = value is >= 1 and <= SpecLimits.MaxTableCellsPerRow
+            ? value
+            : throw new ArgumentException($"ColSpan must be between 1 and {SpecLimits.MaxTableCellsPerRow}; got {value}.", nameof(ColSpan));
+    } = 1;
+
+    /// <summary>Capped at <see cref="SpecLimits.MaxTableRows"/>: a cell cannot usefully span more rows than a table may ever have.</summary>
+    public int RowSpan
+    {
+        get;
+        init => field = value is >= 1 and <= SpecLimits.MaxTableRows
+            ? value
+            : throw new ArgumentException($"RowSpan must be between 1 and {SpecLimits.MaxTableRows}; got {value}.", nameof(RowSpan));
+    } = 1;
+
     public TextStyleSpec? Style { get; init; }
-    public EdgeInsets? Padding { get; init; }
-    public ColorRgb? Background { get; init; }
+
+    public EdgeInsets? Padding
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Padding));
+    }
+
+    public ColorRgb? Background
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalColor(value, nameof(Background));
+    }
+
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
 
     public string? Language
@@ -828,10 +1199,25 @@ public sealed record ImageSpec : ContentItemSpec
         init => field = SpecLimits.ValidateAssetBytes(value, nameof(Bytes));
     }
 
-    public double? Width { get; init; }
-    public double? Height { get; init; }
+    public double? Width
+    {
+        get;
+        init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxImageDimensionPoints, nameof(Width));
+    }
+
+    public double? Height
+    {
+        get;
+        init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxImageDimensionPoints, nameof(Height));
+    }
+
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
-    public EdgeInsets? Margins { get; init; }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
 
     public string? AltText
     {
@@ -853,10 +1239,34 @@ public sealed record PieChartSpec : ContentItemSpec
         init => field = ValidateSlices(value);
     }
 
-    public required double Diameter { get; init; }
-    public EdgeInsets? Margins { get; init; }
-    public ColorRgb? StrokeColor { get; init; }
-    public double StrokeWidth { get; init; } = 0.5;
+    public required double Diameter
+    {
+        get;
+        init => field = value is > 0 and <= SpecLimits.MaxPieChartDiameterPoints
+            ? value
+            : throw new ArgumentException(
+                $"Diameter must be greater than zero and no more than {SpecLimits.MaxPieChartDiameterPoints}; got {value}.",
+                nameof(Diameter));
+    }
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
+
+    public ColorRgb? StrokeColor
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalColor(value, nameof(StrokeColor));
+    }
+
+    public double StrokeWidth
+    {
+        get;
+        init => field = SpecLimits.ValidateRange(value, 0, SpecLimits.MaxStrokeWidthPoints, nameof(StrokeWidth));
+    } = 0.5;
+
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
 
     /// <summary>
@@ -865,8 +1275,14 @@ public sealed record PieChartSpec : ContentItemSpec
     /// that <see cref="Generation.SpecCodeEmitter"/> can safely omit an
     /// unset property from the code it emits, relying on the library to apply
     /// the identical default that <see cref="Generation.SpecRenderer"/> set explicitly.
+    /// Capped at <see cref="SpecLimits.MaxAngleMagnitudeRadians"/> in magnitude,
+    /// which exists only to reject a non-finite or wildly out-of-range value.
     /// </summary>
-    public double StartAngle { get; init; } = double.Pi / 2;
+    public double StartAngle
+    {
+        get;
+        init => field = SpecLimits.ValidateRange(value, -SpecLimits.MaxAngleMagnitudeRadians, SpecLimits.MaxAngleMagnitudeRadians, nameof(StartAngle));
+    } = double.Pi / 2;
 
     public bool Clockwise { get; init; } = true;
 
@@ -892,6 +1308,21 @@ public sealed record PieChartSpec : ContentItemSpec
             throw new ArgumentException($"A pie chart must not have more than {SpecLimits.MaxChartSlices} slices; got {value.Count}.", nameof(Slices));
         }
 
+        foreach (var slice in value)
+        {
+            // Matches the library's own contract on PieSlice.Value ("must be
+            // finite and non-negative"), checked here rather than left to
+            // PieChart's own construction, since PieSlice is the library's
+            // type and offers nowhere for this model to hook in.
+            SpecLimits.ValidateRange(slice.Value, 0, double.MaxValue, nameof(Slices));
+            SpecLimits.ValidateColor(slice.Color, nameof(Slices));
+
+            if (slice.Label is not null)
+            {
+                SpecLimits.ValidateString(slice.Label, SpecLimits.MaxTextLength, nameof(Slices));
+            }
+        }
+
         return [.. value];
     }
 }
@@ -899,9 +1330,23 @@ public sealed record PieChartSpec : ContentItemSpec
 /// <summary>A <c>LineSeparator</c>, the library's only vector primitive in the Layout API.</summary>
 public sealed record LineSeparatorSpec : ContentItemSpec
 {
-    public double LineWidth { get; init; } = 1;
-    public ColorRgb Color { get; init; } = ColorRgb.Black;
-    public EdgeInsets? Margins { get; init; }
+    public double LineWidth
+    {
+        get;
+        init => field = SpecLimits.ValidateRange(value, 0, SpecLimits.MaxStrokeWidthPoints, nameof(LineWidth));
+    } = 1;
+
+    public ColorRgb Color
+    {
+        get;
+        init => field = SpecLimits.ValidateColor(value, nameof(Color));
+    } = ColorRgb.Black;
+
+    public EdgeInsets? Margins
+    {
+        get;
+        init => field = SpecLimits.ValidateOptionalEdgeInsets(value, nameof(Margins));
+    }
 }
 
 /// <summary>
@@ -918,7 +1363,12 @@ public sealed record RunningBandSpec
 
     public required TextStyleSpec Style { get; init; }
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
-    public double? Height { get; init; }
+
+    public double? Height
+    {
+        get;
+        init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxEdgeInsetPoints, nameof(Height));
+    }
 }
 
 /// <summary>Entries for the document's <c>PdfDocumentInfo</c>.</summary>
@@ -1023,7 +1473,7 @@ public sealed record CmykOutputIntentSpec : OutputIntentSpec
 /// Encryption settings, matching <c>PdfEncryptionSettings</c>.
 /// </summary>
 /// <remarks>
-/// Per plan section 5.4 (C4-C-M5): whether <see cref="OwnerPassword"/> may be
+/// Per plan section 5.4: whether <see cref="OwnerPassword"/> may be
 /// left unset depends on <see cref="Permissions"/>, so that rule is enforced
 /// by <see cref="DocumentSpec.Encryption"/>, the only property that ever sees
 /// both fully set. Measured directly against the library: with
@@ -1046,6 +1496,18 @@ public sealed record EncryptionSpec
         init => field = SpecLimits.ValidateOptionalString(value, SpecLimits.MaxTextLength, nameof(OwnerPassword));
     }
 
-    public PdfPermissions Permissions { get; init; } = PdfPermissions.All;
+    /// <summary>
+    /// Capped to a union of the library's own named flags. See the remark on
+    /// <see cref="SpecLimits.ValidatePermissions"/>: an undefined bit here
+    /// would make <c>SpecCodeEmitter.EmitPermissions</c> either produce
+    /// invalid C# or emit code that grants fewer permissions than the
+    /// rendered document actually carries.
+    /// </summary>
+    public PdfPermissions Permissions
+    {
+        get;
+        init => field = SpecLimits.ValidatePermissions(value, nameof(Permissions));
+    } = PdfPermissions.All;
+
     public bool EncryptMetadata { get; init; } = true;
 }

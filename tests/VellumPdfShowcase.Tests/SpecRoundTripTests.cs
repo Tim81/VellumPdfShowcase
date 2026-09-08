@@ -185,7 +185,7 @@ public class SpecRoundTripTests
     public async Task RoundTrip_RemainingBranchCoverage_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.RemainingBranchCoverage());
 
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingEmitterBranchCoverage"/> (C4-C-M6).</summary>
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingEmitterBranchCoverage"/>.</summary>
     [Fact]
     public async Task RoundTrip_RemainingEmitterBranchCoverage_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.RemainingEmitterBranchCoverage());
@@ -230,8 +230,8 @@ public class SpecRoundTripTests
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedWithDefaults());
 
     /// <summary>
-    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedOwnerPasswordOnly"/>
-    /// (C4-C-M5). Opening with an empty user password must succeed and must
+    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedOwnerPasswordOnly"/>.
+    /// Opening with an empty user password must succeed and must
     /// authenticate as the user, not the owner, since only the owner password
     /// was actually set.
     /// </summary>
@@ -240,8 +240,8 @@ public class SpecRoundTripTests
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedOwnerPasswordOnly());
 
     /// <summary>
-    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted"/>
-    /// (C4-C-M5). This is the one sample that proves the recorded behaviour
+    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted"/>.
+    /// This is the one sample that proves the recorded behaviour
     /// directly: opening with the user password authenticates as OWNER,
     /// because no distinct owner password was ever set.
     /// </summary>
@@ -250,7 +250,7 @@ public class SpecRoundTripTests
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted());
 
     /// <summary>
-    /// Per the remark on <see cref="EncryptionSpec"/> (C4-C-M5): the password
+    /// Per the remark on <see cref="EncryptionSpec"/>: the password
     /// that actually authenticates full (owner) access is
     /// <see cref="EncryptionSpec.OwnerPassword"/> when set, otherwise
     /// <see cref="EncryptionSpec.UserPassword"/>; and the password that opens
