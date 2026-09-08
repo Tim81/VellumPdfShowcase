@@ -25,16 +25,26 @@ namespace VellumPdfShowcase.Web.Generation;
 /// so every property this code assigns is set inside the single object-initializer
 /// expression that constructs the instance; only <c>Document</c> and
 /// <c>PdfDocumentInfo</c> use ordinary mutable properties. Fallback values used
-/// for an unset optional spec field are the library's own defaults, read directly
-/// off a default-constructed instance of the corresponding type, so leaving a
-/// field unset in a <see cref="DocumentSpec"/> renders identically to leaving it
-/// unset when calling the API by hand.
+/// for an unset optional spec field (<see cref="BuildCell"/>'s <c>Padding</c>,
+/// <see cref="BuildTable"/>'s <c>BorderWidth</c> and <c>BorderColor</c>,
+/// <see cref="BuildList"/>'s <c>Indent</c>, and every element's <c>Margins</c>)
+/// are hardcoded literals, each checked against the library's own default by
+/// hand rather than read off a default-constructed instance at run time. What
+/// actually guards them against drifting out of step with the library is the
+/// round-trip sample built with every optional field left unset: it fails the
+/// moment a fallback here stops matching what the library itself defaults to.
 /// </remarks>
 public static class SpecRenderer
 {
     /// <summary>Builds the document described by <paramref name="spec"/> and returns its PDF bytes.</summary>
     public static byte[] Render(DocumentSpec spec)
     {
+        if (spec.Content.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "DocumentSpec.Content is empty. A document must have at least one item of content before it can be rendered.");
+        }
+
         using var document = new Document
         {
             PageSize = new VellumPdf.Document.PdfRectangle(0, 0, spec.Page.WidthPoints, spec.Page.HeightPoints),

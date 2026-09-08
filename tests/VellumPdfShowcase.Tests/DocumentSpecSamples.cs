@@ -19,6 +19,10 @@ internal static class DocumentSpecSamples
     private static readonly byte[] OnePixelPng = Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
 
+    /// <summary>A 1x1, 32-bit uncompressed BMP, used to exercise an image loader other than <see cref="ImageFormat.Png"/>.</summary>
+    private static readonly byte[] OnePixelBmp = Convert.FromBase64String(
+        "Qk06AAAAAAAAADYAAAAoAAAAAQAAAAEAAAABACAAAAAAAAAAAADEDgAAxA4AAAAAAAAAAAAAHhQK/w==");
+
     private static byte[] ReadTestAsset(string fileName) =>
         File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestAssets", fileName));
 
@@ -47,7 +51,7 @@ internal static class DocumentSpecSamples
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(595.2756, 841.8898),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Letter),
             Margins = new EdgeInsets(72),
             DefaultTextStyle = bodyStyle,
             EmbeddedFonts = [LiberationSansBytes()],
@@ -147,12 +151,14 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// Every content item type again, but with every optional property left
-    /// unset. This is what actually exercises the fallback value each builder
-    /// applies for an omitted field: <see cref="Generation.SpecRenderer"/> must
-    /// fall back to the same value the library itself defaults to, or this
-    /// spec would render one way and the code <see cref="Generation.SpecCodeEmitter"/>
-    /// emits for it — which omits the same unset properties rather than
-    /// spelling out the library's default — would render another.
+    /// unset, including the page size, which is why this is the one sample
+    /// that uses <c>PageSize.A4</c>, <c>Document</c>'s own default: it exercises
+    /// the fallback value each builder applies for an omitted field.
+    /// <see cref="Generation.SpecRenderer"/> must fall back to the same value
+    /// the library itself defaults to, or this spec would render one way and
+    /// the code <see cref="Generation.SpecCodeEmitter"/> emits for it, which
+    /// omits the same unset properties rather than spelling out the library's
+    /// default, would render another.
     /// </summary>
     public static DocumentSpec EveryContentItemTypeAtDefault()
     {
@@ -160,7 +166,7 @@ internal static class DocumentSpecSamples
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(595.2756, 841.8898),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A4),
             DefaultTextStyle = style,
             Content =
             [
@@ -193,7 +199,7 @@ internal static class DocumentSpecSamples
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(595.2756, 841.8898),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Legal),
             Margins = new EdgeInsets(72),
             DefaultTextStyle = style,
             EmbeddedFonts = [LiberationSansBytes()],
@@ -221,7 +227,7 @@ internal static class DocumentSpecSamples
 
         return new DocumentSpec
         {
-            Page = new PageSizeSpec(595.2756, 841.8898),
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Ledger),
             DefaultTextStyle = style,
             Content = [ParagraphSpec.FromText("Encrypted, no conformance claim.", style)],
             Encryption = new EncryptionSpec
@@ -231,6 +237,179 @@ internal static class DocumentSpecSamples
                 Permissions = PdfPermissions.Print | PdfPermissions.Copy,
                 EncryptMetadata = false,
             },
+        };
+    }
+
+    /// <summary>
+    /// Two of every element whose emitted code declares a fixed-name local
+    /// variable: two lists (in fact all four list styles, since plan section
+    /// 6.2 requires unordered, decimal, alpha and roman in one document),
+    /// two tables and two multi-run paragraphs. This is what would have
+    /// caught S4-H1: the Roslyn round-trip test compiles the emitted code,
+    /// and a second <c>list</c>, <c>table</c> or <c>runs</c> sharing the name
+    /// of the first is a compile error the moment such a sample exists. Also
+    /// covers asymmetric document margins and cell padding, a non-default
+    /// alignment on a heading, a paragraph and a cell, and an image format
+    /// other than PNG.
+    /// </summary>
+    public static DocumentSpec MultipleListsTablesAndParagraphs()
+    {
+        var bodyStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+        var emphasisStyle = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.HelveticaBoldOblique),
+            FontSize = 11,
+            Color = new ColorRgb(0.6, 0.1, 0.1),
+        };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(500, 700),
+            Margins = new EdgeInsets(50, 60, 40, 30),
+            DefaultTextStyle = bodyStyle,
+            Content =
+            [
+                new HeadingSpec { Text = "Repeated content types", Level = 1, Alignment = HorizontalAlignment.Right },
+                new ParagraphSpec
+                {
+                    Alignment = HorizontalAlignment.Justify,
+                    Runs =
+                    [
+                        new TextRunSpec("First multi-run paragraph, ", bodyStyle),
+                        new TextRunSpec("with an emphasised second run.", emphasisStyle),
+                    ],
+                },
+                new ParagraphSpec
+                {
+                    Runs =
+                    [
+                        new TextRunSpec("Second multi-run paragraph, ", bodyStyle),
+                        new TextRunSpec("also with two runs.", emphasisStyle),
+                    ],
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.Unordered,
+                    Items = [new ListItemSpec { Text = "Unordered first" }, new ListItemSpec { Text = "Unordered second" }],
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.OrderedDecimal,
+                    Items = [new ListItemSpec { Text = "Decimal first" }, new ListItemSpec { Text = "Decimal second" }],
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.OrderedAlpha,
+                    Items = [new ListItemSpec { Text = "Alpha first" }, new ListItemSpec { Text = "Alpha second" }],
+                },
+                new ListSpec
+                {
+                    Style = ListStyle.OrderedRoman,
+                    Items = [new ListItemSpec { Text = "Roman first" }, new ListItemSpec { Text = "Roman second" }],
+                },
+                new TableSpec
+                {
+                    Rows =
+                    [
+                        new TableRowSpec
+                        {
+                            IsHeader = true,
+                            Cells = [new TableCellSpec { Content = "First table" }, new TableCellSpec { Content = "Column two" }],
+                        },
+                        new TableRowSpec
+                        {
+                            Cells = [new TableCellSpec { Content = "A" }, new TableCellSpec { Content = "B" }],
+                        },
+                    ],
+                },
+                new TableSpec
+                {
+                    ColumnWidths = [150, 150],
+                    Rows =
+                    [
+                        new TableRowSpec
+                        {
+                            IsHeader = true,
+                            Cells = [new TableCellSpec { Content = "Second table" }, new TableCellSpec { Content = "Column two" }],
+                        },
+                        new TableRowSpec
+                        {
+                            Cells =
+                            [
+                                new TableCellSpec
+                                {
+                                    Content = "Padded and centred",
+                                    Padding = new EdgeInsets(2, 4, 6, 8),
+                                    Alignment = HorizontalAlignment.Center,
+                                },
+                                new TableCellSpec { Content = "Plain" },
+                            ],
+                        },
+                    ],
+                },
+                new ImageSpec
+                {
+                    Format = ImageFormat.Bmp,
+                    Bytes = OnePixelBmp,
+                    Width = 20,
+                    AltText = "A single test pixel, BMP-encoded.",
+                },
+            ],
+        };
+    }
+
+    /// <summary>
+    /// A PDF/A-2u claim, the conformance profile the round trip exercises
+    /// alongside PDF/A-2b (plan section 6.2 lists all four PDF/A and PDF/UA
+    /// profiles as available; PdfA2b is covered by <see cref="PdfA2bWithOutputIntent"/>).
+    /// </summary>
+    public static DocumentSpec PdfA2uWithOutputIntent()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
+
+        return new DocumentSpec
+        {
+            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A3),
+            DefaultTextStyle = style,
+            EmbeddedFonts = [LiberationSansBytes()],
+            Conformance = DocumentConformance.PdfA2u,
+            Tagged = true,
+            Language = "en",
+            Content =
+            [
+                new HeadingSpec { Text = "PDF/A-2u sample", Level = 1, Style = style, Language = "en" },
+                ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
+            ],
+            OutputIntent = new PdfAOutputIntentSpec
+            {
+                IccProfile = SrgbIccProfileBytes(),
+                ComponentCount = 3,
+                OutputConditionIdentifier = "sRGB IEC61966-2.1",
+            },
+        };
+    }
+
+    /// <summary>
+    /// A string containing every character <see cref="Generation.SpecCodeEmitter"/>
+    /// must escape beyond the four named escapes it already handled (quote,
+    /// backslash, LF, CR, TAB): the whole C0 control range, plus NEL, LINE
+    /// SEPARATOR and PARAGRAPH SEPARATOR, together with a literal quote,
+    /// backslash and brace pair, so the round-trip test both compiles and
+    /// executes the emitted string literal. See S4-H2.
+    /// </summary>
+    public static DocumentSpec ControlCharactersAndLineSeparators()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
+        var weird = "quote\" backslash\\ brace{}" +
+            new string([.. Enumerable.Range(0, 0x20).Select(codePoint => (char)codePoint)]) +
+            "\u0085\u2028\u2029end";
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(400, 400),
+            DefaultTextStyle = style,
+            Metadata = new DocumentMetadataSpec { Title = weird },
+            Content = [ParagraphSpec.FromText(weird, style)],
         };
     }
 }

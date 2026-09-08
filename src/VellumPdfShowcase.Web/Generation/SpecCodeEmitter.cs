@@ -26,6 +26,20 @@ namespace VellumPdfShowcase.Web.Generation;
 /// </remarks>
 public static class SpecCodeEmitter
 {
+    private static readonly (string Name, double Width, double Height)[] NamedPageSizes =
+    [
+        ("A0", 2383.94, 3370.39),
+        ("A1", 1683.78, 2383.94),
+        ("A2", 1190.55, 1683.78),
+        ("A3", 841.89, 1190.55),
+        ("A4", 595.28, 841.89),
+        ("A5", 419.53, 595.28),
+        ("A6", 297.64, 419.53),
+        ("Letter", 612, 792),
+        ("Legal", 612, 1008),
+        ("Ledger", 1224, 792),
+    ];
+
     /// <summary>Produces the C# snippet that builds the document described by <paramref name="spec"/>.</summary>
     /// <remarks>
     /// The classic <c>using (...) { }</c> statement is used in place of the
@@ -34,101 +48,869 @@ public static class SpecCodeEmitter
     /// the round-trip test compiles this snippet with; a script's top level is
     /// not a method body, and the compiler rejects a using declaration there.
     /// </remarks>
+    /// <remarks>
+    /// SECURITY: the returned text carries visitor-supplied content (headings,
+    /// paragraph runs, metadata, passwords, and so on) verbatim, with only the
+    /// C# string-literal escaping <see cref="Literal"/> applies. It must never
+    /// be handed to a syntax highlighter, or anything else, through
+    /// <c>MarkupString</c>, <c>innerHTML</c>, or any other unencoded HTML sink.
+    /// No such sink exists in this application today; none may be added
+    /// without first HTML-encoding this text, or choosing a highlighter that
+    /// encodes its own input.
+    /// </remarks>
     public static string Emit(DocumentSpec spec)
     {
-        var writer = new CodeWriter();
-
-        EmitUsings(spec, writer);
-        writer.Line();
-
-        writer.Line("using (var document = new Document");
-        writer.Line("{");
-        using (writer.Indent())
+        if (spec.Content.Count == 0)
         {
-            foreach (var initializer in BuildDocumentInitializers(spec))
-            {
-                writer.Line(initializer);
-            }
+            throw new InvalidOperationException(
+                "DocumentSpec.Content is empty. A document must have at least one item of content before code can be emitted for it.");
         }
 
-        writer.Line("})");
-        writer.Line("{");
-        using (writer.Indent())
+        var writer = new CodeWriter();
+        new Emitter(spec, writer).EmitDocument();
+        return writer.ToString();
+    }
+
+    /// <summary>
+    /// Holds the state one call to <see cref="Emit"/> threads through every
+    /// helper below: the output buffer, the running index used to name each
+    /// loaded image, and the <see cref="TextStyleSpec"/> instances used more
+    /// than once across <paramref name="documentSpec"/>, each hoisted into its
+    /// own local variable up front rather than written out again, in full, at
+    /// every use site.
+    /// </summary>
+    private sealed class Emitter(DocumentSpec documentSpec, CodeWriter writer)
+    {
+        private readonly Dictionary<TextStyleSpec, string> _hoistedStyles = BuildHoistedStyleNames(documentSpec);
+        private int _imageIndex;
+
+        public void EmitDocument()
         {
-            EmitEmbeddedFonts(spec, writer);
-            writer.Line($"document.SetDefaultFont({EmitTextStyleExpression(spec.DefaultTextStyle)});");
+            EmitUsings();
             writer.Line();
-            EmitMetadata(spec, writer);
+            EmitAssetCollectionComment();
 
-            var imageIndex = 0;
-            foreach (var item in spec.Content)
+            var initializers = BuildDocumentInitializers(documentSpec);
+            if (initializers.Count > 0)
             {
-                EmitContentItem(item, writer, ref imageIndex);
-                writer.Line();
+                writer.Line("using (var document = new Document");
+                writer.Line("{");
+                using (writer.Indent())
+                {
+                    foreach (var initializer in initializers)
+                    {
+                        writer.Line(initializer);
+                    }
+                }
+
+                writer.Line("})");
+            }
+            else
+            {
+                writer.Line("using (var document = new Document())");
             }
 
-            if (spec.Header is { } header)
-            {
-                EmitRunningBand("Header", header, writer);
-            }
-
-            if (spec.Footer is { } footer)
-            {
-                EmitRunningBand("Footer", footer, writer);
-            }
-
-            EmitOutputIntent(spec, writer);
-            EmitEncryption(spec, writer);
-
-            writer.Line();
-            writer.Line("using (var output = new MemoryStream())");
             writer.Line("{");
             using (writer.Indent())
             {
-                writer.Line("document.Save(output);");
-                writer.Line("return output.ToArray();");
+                EmitEmbeddedFonts();
+                EmitHoistedStyles();
+                writer.Line($"document.SetDefaultFont({StyleExpression(documentSpec.DefaultTextStyle)});");
+                writer.Line();
+                EmitMetadata();
+
+                foreach (var item in documentSpec.Content)
+                {
+                    writer.Line("{");
+                    using (writer.Indent())
+                    {
+                        EmitContentItem(item);
+                    }
+
+                    writer.Line("}");
+                    writer.Line();
+                }
+
+                if (documentSpec.Header is { } header)
+                {
+                    EmitRunningBand("Header", header);
+                }
+
+                if (documentSpec.Footer is { } footer)
+                {
+                    EmitRunningBand("Footer", footer);
+                }
+
+                EmitOutputIntent();
+                EmitEncryption();
+
+                writer.EnsureBlankLine();
+                writer.Line("using (var output = new MemoryStream())");
+                writer.Line("{");
+                using (writer.Indent())
+                {
+                    writer.Line("document.Save(output);");
+                    writer.Line("return output.ToArray();");
+                }
+
+                writer.Line("}");
             }
 
             writer.Line("}");
         }
 
-        writer.Line("}");
+        private void EmitUsings()
+        {
+            writer.Line("using System;");
+            writer.Line("using System.IO;");
+            writer.Line("using VellumPdf.Fonts;");
+            writer.Line("using VellumPdf.Layout;");
+            writer.Line("using VellumPdf.Layout.Core;");
+            writer.Line("using VellumPdf.Layout.Elements;");
+            writer.Line("using VellumPdf.Layout.Elements.Table;");
 
-        return writer.ToString();
+            if (documentSpec.Content.OfType<ImageSpec>().Any())
+            {
+                writer.Line("using VellumPdf.Images;");
+            }
+
+            if (documentSpec.Conformance != DocumentConformance.None)
+            {
+                writer.Line("using DocumentConformance = VellumPdf.Document.PdfConformance;");
+            }
+
+            if (documentSpec.Encryption is not null)
+            {
+                writer.Line("using VellumPdf.Encryption;");
+            }
+        }
+
+        /// <summary>
+        /// Names, in the register of plan section 13.3, whichever of the three
+        /// asset collections <see cref="SpecAssets"/> declares this particular
+        /// snippet actually reads as bare identifiers, so a reader is not left
+        /// to guess where <c>EmbeddedFonts</c>, <c>Images</c> or <c>IccProfile</c>
+        /// come from. Writes nothing when the snippet uses none of them.
+        /// </summary>
+        private void EmitAssetCollectionComment()
+        {
+            var names = new List<string>();
+
+            if (documentSpec.EmbeddedFonts.Count > 0)
+            {
+                names.Add("EmbeddedFonts");
+            }
+
+            if (documentSpec.Content.OfType<ImageSpec>().Any())
+            {
+                names.Add("Images");
+            }
+
+            if (documentSpec.OutputIntent is PdfAOutputIntentSpec)
+            {
+                names.Add("IccProfile");
+            }
+
+            if (names.Count == 0)
+            {
+                return;
+            }
+
+            var subject = names.Count switch
+            {
+                1 => names[0],
+                2 => $"{names[0]} and {names[1]}",
+                _ => $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}",
+            };
+            var verb = names.Count == 1 ? "is" : "are";
+            var collectionNoun = names.Count == 1 ? "asset collection" : "asset collections";
+            writer.Line($"// {subject} below {verb} {collectionNoun} this snippet expects the caller to have");
+            writer.Line("// already fetched, each a byte[] exactly as HttpClient would return it.");
+            writer.Line();
+        }
+
+        private void EmitEmbeddedFonts()
+        {
+            for (var i = 0; i < documentSpec.EmbeddedFonts.Count; i++)
+            {
+                writer.Line($"var embeddedFont{i} = document.UseTrueTypeFont(EmbeddedFonts[{i}]);");
+            }
+
+            if (documentSpec.EmbeddedFonts.Count > 0)
+            {
+                writer.Line();
+            }
+        }
+
+        private void EmitHoistedStyles()
+        {
+            if (_hoistedStyles.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (style, name) in _hoistedStyles.OrderBy(pair => pair.Value, StringComparer.Ordinal))
+            {
+                writer.Line($"var {name} = {BuildTextStyleExpression(style)};");
+            }
+
+            writer.Line();
+        }
+
+        private void EmitMetadata()
+        {
+            if (documentSpec.Metadata is not { } metadata)
+            {
+                return;
+            }
+
+            if (metadata.Title is not null)
+            {
+                writer.Line($"document.Info.Title = {Literal(metadata.Title)};");
+            }
+
+            if (metadata.Author is not null)
+            {
+                writer.Line($"document.Info.Author = {Literal(metadata.Author)};");
+            }
+
+            if (metadata.Subject is not null)
+            {
+                writer.Line($"document.Info.Subject = {Literal(metadata.Subject)};");
+            }
+
+            if (metadata.Keywords is not null)
+            {
+                writer.Line($"document.Info.Keywords = {Literal(metadata.Keywords)};");
+            }
+
+            if (metadata.Creator is not null)
+            {
+                writer.Line($"document.Info.Creator = {Literal(metadata.Creator)};");
+            }
+
+            if (metadata.Producer is not null)
+            {
+                writer.Line($"document.Info.Producer = {Literal(metadata.Producer)};");
+            }
+
+            writer.Line();
+        }
+
+        private void EmitContentItem(ContentItemSpec item)
+        {
+            switch (item)
+            {
+                case HeadingSpec heading:
+                    EmitHeading(heading);
+                    break;
+                case ParagraphSpec paragraph:
+                    EmitParagraph(paragraph);
+                    break;
+                case ListSpec list:
+                    EmitList(list);
+                    break;
+                case TableSpec table:
+                    EmitTable(table);
+                    break;
+                case ImageSpec image:
+                    EmitImage(image);
+                    break;
+                case PieChartSpec pieChart:
+                    EmitPieChart(pieChart);
+                    break;
+                case LineSeparatorSpec lineSeparator:
+                    EmitLineSeparator(lineSeparator);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(item), item, "Unrecognised content item type.");
+            }
+        }
+
+        private void EmitHeading(HeadingSpec headingSpec)
+        {
+            var initializers = new List<string> { $"Level = {headingSpec.Level}" };
+
+            if (headingSpec.Alignment != HorizontalAlignment.Left)
+            {
+                initializers.Add($"Alignment = HorizontalAlignment.{headingSpec.Alignment}");
+            }
+
+            if (headingSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            if (headingSpec.BookmarkTitle is not null)
+            {
+                initializers.Add($"BookmarkTitle = {Literal(headingSpec.BookmarkTitle)}");
+            }
+
+            if (headingSpec.Language is not null)
+            {
+                initializers.Add($"Language = {Literal(headingSpec.Language)}");
+            }
+
+            // Heading's style parameter defaults to null (automatic per-level
+            // styling), so an unset style is a trailing argument omitted
+            // outright rather than spelled out as an explicit null.
+            var ctorExpr = headingSpec.Style is { } style
+                ? $"new Heading({Literal(headingSpec.Text)}, {StyleExpression(style)})"
+                : $"new Heading({Literal(headingSpec.Text)})";
+
+            EmitAdd(ctorExpr, initializers);
+        }
+
+        private void EmitParagraph(ParagraphSpec paragraphSpec)
+        {
+            var initializers = new List<string>();
+
+            if (paragraphSpec.Alignment != HorizontalAlignment.Left)
+            {
+                initializers.Add($"Alignment = HorizontalAlignment.{paragraphSpec.Alignment}");
+            }
+
+            if (paragraphSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            if (paragraphSpec.Language is not null)
+            {
+                initializers.Add($"Language = {Literal(paragraphSpec.Language)}");
+            }
+
+            if (paragraphSpec.Runs.Count == 1)
+            {
+                var run = paragraphSpec.Runs[0];
+                EmitAdd($"new Paragraph({Literal(run.Text)}, {StyleExpression(run.Style)})", initializers);
+                return;
+            }
+
+            writer.Line("var runs = new TextRun[]");
+            writer.Line("{");
+            using (writer.Indent())
+            {
+                foreach (var run in paragraphSpec.Runs)
+                {
+                    writer.Line($"new TextRun({Literal(run.Text)}, {StyleExpression(run.Style)}),");
+                }
+            }
+
+            writer.Line("};");
+            EmitAdd("new Paragraph(runs)", initializers);
+        }
+
+        // ListElement, ListItem, TableElement and Cell all expose their settable
+        // members as `init`, which the language only allows to be assigned inside
+        // the object-initializer expression that constructs the instance. The
+        // emitted code below therefore never assigns into one of these after
+        // declaring it; every optional property is folded into the same
+        // declaration through EmitDeclaration. Each content item is wrapped in
+        // its own `{ }` block (see EmitDocument), so the fixed local names
+        // below (list, listItemN, table, rowN, ...) never collide with a
+        // second list, table or paragraph elsewhere in the same document.
+        private void EmitList(ListSpec listSpec)
+        {
+            var initializers = new List<string>();
+
+            if (listSpec.Indent is { } indent)
+            {
+                initializers.Add($"Indent = {Num(indent)}");
+            }
+
+            if (listSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            if (listSpec.DefaultStyle is not null)
+            {
+                initializers.Add($"DefaultStyle = {StyleExpression(listSpec.DefaultStyle)}");
+            }
+
+            EmitDeclaration("list", $"new ListElement(ListStyle.{listSpec.Style})", initializers);
+
+            for (var i = 0; i < listSpec.Items.Count; i++)
+            {
+                var itemVariable = EmitListItem(listSpec.Items[i], $"listItem{i}");
+                writer.Line($"list.Add({itemVariable});");
+            }
+
+            writer.Line("document.Add(list);");
+        }
+
+        private string EmitListItem(ListItemSpec itemSpec, string variableName)
+        {
+            var initializers = new List<string>();
+
+            if (itemSpec.Language is not null)
+            {
+                initializers.Add($"Language = {Literal(itemSpec.Language)}");
+            }
+
+            var ctorExpr = itemSpec.Style is { } style
+                ? $"new ListItem({Literal(itemSpec.Text)}, {StyleExpression(style)})"
+                : $"new ListItem({Literal(itemSpec.Text)})";
+
+            EmitDeclaration(variableName, ctorExpr, initializers);
+
+            for (var i = 0; i < itemSpec.Children.Count; i++)
+            {
+                var childVariable = EmitListItem(itemSpec.Children[i], $"{variableName}Child{i}");
+                writer.Line($"{variableName}.AddChild({childVariable});");
+            }
+
+            return variableName;
+        }
+
+        private void EmitTable(TableSpec tableSpec)
+        {
+            var initializers = new List<string>();
+
+            if (tableSpec.DefaultCellStyle is not null)
+            {
+                initializers.Add($"DefaultCellStyle = {StyleExpression(tableSpec.DefaultCellStyle)}");
+            }
+
+            if (tableSpec.BorderWidth is { } borderWidth)
+            {
+                initializers.Add($"BorderWidth = {Num(borderWidth)}");
+            }
+
+            if (tableSpec.BorderColor is { } borderColor)
+            {
+                initializers.Add($"BorderColor = {EmitColor(borderColor)}");
+            }
+
+            if (tableSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            EmitDeclaration("table", "new TableElement()", initializers);
+
+            if (tableSpec.ColumnWidths is { Count: > 0 } widths)
+            {
+                writer.Line($"table.SetColumnWidths([{string.Join(", ", widths.Select(Num))}]);");
+            }
+
+            for (var rowIndex = 0; rowIndex < tableSpec.Rows.Count; rowIndex++)
+            {
+                var row = tableSpec.Rows[rowIndex];
+                var rowVariable = $"row{rowIndex}";
+                writer.Line($"var {rowVariable} = table.AddRow({(row.IsHeader ? "true" : "false")});");
+
+                for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+                {
+                    EmitCell(row.Cells[cellIndex], rowVariable, $"{rowVariable}Cell{cellIndex}");
+                }
+            }
+
+            writer.Line("document.Add(table);");
+        }
+
+        private void EmitCell(TableCellSpec cellSpec, string rowVariable, string cellVariable)
+        {
+            var initializers = new List<string>();
+
+            if (cellSpec.ColSpan != 1)
+            {
+                initializers.Add($"ColSpan = {cellSpec.ColSpan}");
+            }
+
+            if (cellSpec.RowSpan != 1)
+            {
+                initializers.Add($"RowSpan = {cellSpec.RowSpan}");
+            }
+
+            if (cellSpec.Style is not null)
+            {
+                initializers.Add($"Style = {StyleExpression(cellSpec.Style)}");
+            }
+
+            if (cellSpec.Padding is { } padding)
+            {
+                initializers.Add($"Padding = {EmitEdgeInsets(padding)}");
+            }
+
+            if (cellSpec.Background is { } background)
+            {
+                initializers.Add($"Background = {EmitColor(background)}");
+            }
+
+            if (cellSpec.Alignment != HorizontalAlignment.Left)
+            {
+                initializers.Add($"Alignment = HorizontalAlignment.{cellSpec.Alignment}");
+            }
+
+            if (cellSpec.Language is not null)
+            {
+                initializers.Add($"Language = {Literal(cellSpec.Language)}");
+            }
+
+            EmitDeclaration(cellVariable, $"new Cell({Literal(cellSpec.Content)})", initializers);
+            writer.Line($"{rowVariable}.AddCell({cellVariable});");
+        }
+
+        private void EmitImage(ImageSpec imageSpec)
+        {
+            var loaderName = imageSpec.Format switch
+            {
+                ImageFormat.Png => "PngImageLoader",
+                ImageFormat.Jpeg => "JpegImageLoader",
+                ImageFormat.Bmp => "BmpImageLoader",
+                ImageFormat.Gif => "GifImageLoader",
+                ImageFormat.Tiff => "TiffImageLoader",
+                _ => throw new ArgumentOutOfRangeException(nameof(imageSpec), imageSpec.Format, "Unrecognised image format."),
+            };
+
+            var imageVariable = $"image{_imageIndex}";
+            writer.Line($"var {imageVariable} = {loaderName}.Load(Images[{_imageIndex}]);");
+            _imageIndex++;
+
+            var initializers = new List<string>();
+
+            if (imageSpec.Width is { } width)
+            {
+                initializers.Add($"Width = {Num(width)}");
+            }
+
+            if (imageSpec.Height is { } height)
+            {
+                initializers.Add($"Height = {Num(height)}");
+            }
+
+            if (imageSpec.Alignment != HorizontalAlignment.Left)
+            {
+                initializers.Add($"Alignment = HorizontalAlignment.{imageSpec.Alignment}");
+            }
+
+            if (imageSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            if (imageSpec.AltText is not null)
+            {
+                initializers.Add($"AltText = {Literal(imageSpec.AltText)}");
+            }
+
+            EmitAdd($"new LayoutImage({imageVariable})", initializers);
+        }
+
+        private void EmitPieChart(PieChartSpec pieChartSpec)
+        {
+            var initializers = new List<string>
+            {
+                $"Slices = [{string.Join(", ", pieChartSpec.Slices.Select(EmitPieSlice))}]",
+                $"Diameter = {Num(pieChartSpec.Diameter)}",
+            };
+
+            if (pieChartSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            if (pieChartSpec.StrokeColor is { } strokeColor)
+            {
+                initializers.Add($"StrokeColor = {EmitColor(strokeColor)}");
+            }
+
+            if (pieChartSpec.StrokeWidth != 0.5)
+            {
+                initializers.Add($"StrokeWidth = {Num(pieChartSpec.StrokeWidth)}");
+            }
+
+            if (pieChartSpec.Alignment != HorizontalAlignment.Center)
+            {
+                initializers.Add($"Alignment = HorizontalAlignment.{pieChartSpec.Alignment}");
+            }
+
+            if (pieChartSpec.StartAngle != double.Pi / 2)
+            {
+                initializers.Add($"StartAngle = {Num(pieChartSpec.StartAngle)}");
+            }
+
+            if (!pieChartSpec.Clockwise)
+            {
+                initializers.Add("Clockwise = false");
+            }
+
+            if (pieChartSpec.AltText is not null)
+            {
+                initializers.Add($"AltText = {Literal(pieChartSpec.AltText)}");
+            }
+
+            if (pieChartSpec.Decorative)
+            {
+                initializers.Add("Decorative = true");
+            }
+
+            EmitAdd("new PieChart()", initializers);
+        }
+
+        private void EmitLineSeparator(LineSeparatorSpec lineSeparatorSpec)
+        {
+            var initializers = new List<string>();
+
+            if (lineSeparatorSpec.LineWidth != 1)
+            {
+                initializers.Add($"LineWidth = {Num(lineSeparatorSpec.LineWidth)}");
+            }
+
+            if (!lineSeparatorSpec.Color.Equals(ColorRgb.Black))
+            {
+                initializers.Add($"Color = {EmitColor(lineSeparatorSpec.Color)}");
+            }
+
+            if (lineSeparatorSpec.Margins is { } margins)
+            {
+                initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
+            }
+
+            EmitAdd("new LineSeparator()", initializers);
+        }
+
+        private void EmitRunningBand(string kind, RunningBandSpec bandSpec)
+        {
+            // Both Style and Alignment are optional constructor parameters
+            // (Alignment defaults to Center), so a document-default alignment
+            // is a trailing argument omitted outright, the same way EmitHeading
+            // omits an unset style rather than passing it explicitly.
+            var ctorExpr = bandSpec.Alignment == HorizontalAlignment.Center
+                ? $"new RunningBand({Literal(bandSpec.Template)}, {StyleExpression(bandSpec.Style)})"
+                : $"new RunningBand({Literal(bandSpec.Template)}, {StyleExpression(bandSpec.Style)}, HorizontalAlignment.{bandSpec.Alignment})";
+
+            var initializers = bandSpec.Height is { } height ? new List<string> { $"Height = {Num(height)}" } : [];
+            EmitAssignment($"document.{kind}", ctorExpr, initializers);
+        }
+
+        private void EmitOutputIntent()
+        {
+            switch (documentSpec.OutputIntent)
+            {
+                case PdfAOutputIntentSpec pdfA:
+                    // info is an optional trailing parameter (defaults to null),
+                    // so an unset Info is omitted rather than passed explicitly.
+                    var infoArg = pdfA.Info is null ? "" : $", {Literal(pdfA.Info)}";
+                    writer.Line($"document.SetPdfAOutputIntent(IccProfile, {pdfA.ComponentCount}, {Literal(pdfA.OutputConditionIdentifier)}{infoArg});");
+                    break;
+                case CmykOutputIntentSpec cmyk:
+                    writer.Line($"document.UseCmykOutputIntent({Literal(cmyk.OutputConditionIdentifier)});");
+                    break;
+            }
+        }
+
+        private void EmitEncryption()
+        {
+            if (documentSpec.Encryption is not { } encryption)
+            {
+                return;
+            }
+
+            writer.Line("document.Encrypt(new PdfEncryptionSettings");
+            writer.Line("{");
+            using (writer.Indent())
+            {
+                if (encryption.UserPassword is not null)
+                {
+                    writer.Line($"UserPassword = {Literal(encryption.UserPassword)},");
+                }
+
+                if (encryption.OwnerPassword is not null)
+                {
+                    writer.Line($"OwnerPassword = {Literal(encryption.OwnerPassword)},");
+                }
+
+                writer.Line($"Permissions = {EmitPermissions(encryption.Permissions)},");
+
+                if (!encryption.EncryptMetadata)
+                {
+                    writer.Line("EncryptMetadata = false,");
+                }
+            }
+
+            writer.Line("});");
+        }
+
+        /// <summary>
+        /// Returns the expression for <paramref name="styleSpec"/>: the shared
+        /// local variable name when it was hoisted (used two or more times
+        /// across the document), or the full <c>new TextStyle { ... }</c>
+        /// expression otherwise.
+        /// </summary>
+        private string StyleExpression(TextStyleSpec styleSpec) =>
+            _hoistedStyles.TryGetValue(styleSpec, out var name) ? name : BuildTextStyleExpression(styleSpec);
+
+        private void EmitAdd(string ctorExpr, IReadOnlyList<string> initializers) =>
+            EmitWrapped("document.Add(", ")", ctorExpr, initializers);
+
+        /// <summary>Emits <c>var {variableName} = {ctorExpr}{ initializers };</c>, folding every optional property into the one declaration an init-only type requires.</summary>
+        private void EmitDeclaration(string variableName, string ctorExpr, IReadOnlyList<string> initializers) =>
+            EmitWrapped($"var {variableName} = ", "", ctorExpr, initializers);
+
+        /// <summary>Emits <c>{target} = {ctorExpr}{ initializers };</c>, for a mutable property (such as <c>Document.Header</c>) assigned an init-only-typed value.</summary>
+        private void EmitAssignment(string target, string ctorExpr, IReadOnlyList<string> initializers) =>
+            EmitWrapped($"{target} = ", "", ctorExpr, initializers);
+
+        private void EmitWrapped(string prefix, string suffix, string ctorExpr, IReadOnlyList<string> initializers)
+        {
+            if (initializers.Count == 0)
+            {
+                writer.Line($"{prefix}{ctorExpr}{suffix};");
+                return;
+            }
+
+            writer.Line($"{prefix}{ctorExpr}");
+            writer.Line("{");
+            using (writer.Indent())
+            {
+                foreach (var initializer in initializers)
+                {
+                    writer.Line($"{initializer},");
+                }
+            }
+
+            writer.Line($"}}{suffix};");
+        }
     }
 
-    private static void EmitUsings(DocumentSpec spec, CodeWriter writer)
+    /// <summary>
+    /// Walks every corner of <paramref name="spec"/> a <see cref="TextStyleSpec"/>
+    /// can appear in, and assigns a shared local variable name to each instance
+    /// referenced two or more times, in first-encountered order. A style used
+    /// only once is left to be inlined at its one use site.
+    /// </summary>
+    private static Dictionary<TextStyleSpec, string> BuildHoistedStyleNames(DocumentSpec spec)
     {
-        writer.Line("using System;");
-        writer.Line("using System.IO;");
-        writer.Line("using VellumPdf.Fonts;");
-        writer.Line("using VellumPdf.Layout;");
-        writer.Line("using VellumPdf.Layout.Core;");
-        writer.Line("using VellumPdf.Layout.Elements;");
-        writer.Line("using VellumPdf.Layout.Elements.Table;");
+        var counts = new Dictionary<TextStyleSpec, int>(ReferenceEqualityComparer.Instance);
+        var firstSeenOrder = new List<TextStyleSpec>();
 
-        if (spec.Content.OfType<ImageSpec>().Any())
+        foreach (var style in CollectTextStyles(spec))
         {
-            writer.Line("using VellumPdf.Images;");
+            if (counts.TryGetValue(style, out var count))
+            {
+                counts[style] = count + 1;
+            }
+            else
+            {
+                counts.Add(style, 1);
+                firstSeenOrder.Add(style);
+            }
         }
 
-        if (spec.Conformance != DocumentConformance.None)
+        var names = new Dictionary<TextStyleSpec, string>(ReferenceEqualityComparer.Instance);
+        var index = 0;
+
+        foreach (var style in firstSeenOrder)
         {
-            writer.Line("using DocumentConformance = VellumPdf.Document.PdfConformance;");
+            if (counts[style] > 1)
+            {
+                names.Add(style, $"style{index++}");
+            }
         }
 
-        if (spec.Encryption is not null)
+        return names;
+    }
+
+    private static IEnumerable<TextStyleSpec> CollectTextStyles(DocumentSpec spec)
+    {
+        yield return spec.DefaultTextStyle;
+
+        if (spec.Header is { } header)
         {
-            writer.Line("using VellumPdf.Encryption;");
+            yield return header.Style;
+        }
+
+        if (spec.Footer is { } footer)
+        {
+            yield return footer.Style;
+        }
+
+        foreach (var item in spec.Content)
+        {
+            foreach (var style in CollectTextStyles(item))
+            {
+                yield return style;
+            }
+        }
+    }
+
+    private static IEnumerable<TextStyleSpec> CollectTextStyles(ContentItemSpec item)
+    {
+        switch (item)
+        {
+            case HeadingSpec { Style: { } style }:
+                yield return style;
+                break;
+            case ParagraphSpec paragraph:
+                foreach (var run in paragraph.Runs)
+                {
+                    yield return run.Style;
+                }
+
+                break;
+            case ListSpec list:
+                if (list.DefaultStyle is { } listDefaultStyle)
+                {
+                    yield return listDefaultStyle;
+                }
+
+                foreach (var listItem in list.Items)
+                {
+                    foreach (var style in CollectTextStyles(listItem))
+                    {
+                        yield return style;
+                    }
+                }
+
+                break;
+            case TableSpec table:
+                if (table.DefaultCellStyle is { } tableDefaultStyle)
+                {
+                    yield return tableDefaultStyle;
+                }
+
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        if (cell.Style is { } cellStyle)
+                        {
+                            yield return cellStyle;
+                        }
+                    }
+                }
+
+                break;
+        }
+    }
+
+    private static IEnumerable<TextStyleSpec> CollectTextStyles(ListItemSpec item)
+    {
+        if (item.Style is { } style)
+        {
+            yield return style;
+        }
+
+        foreach (var child in item.Children)
+        {
+            foreach (var childStyle in CollectTextStyles(child))
+            {
+                yield return childStyle;
+            }
         }
     }
 
     private static List<string> BuildDocumentInitializers(DocumentSpec spec)
     {
-        var initializers = new List<string>
+        var initializers = new List<string>();
+
+        if (EmitPageSizeInitializer(spec.Page) is { } pageSizeInitializer)
         {
-            $"PageSize = new VellumPdf.Document.PdfRectangle(0, 0, {Num(spec.Page.WidthPoints)}, {Num(spec.Page.HeightPoints)}),",
-        };
+            initializers.Add(pageSizeInitializer);
+        }
 
         if (!spec.Margins.Equals(new EdgeInsets(72)))
         {
@@ -153,477 +935,30 @@ public static class SpecCodeEmitter
         return initializers;
     }
 
-    private static void EmitEmbeddedFonts(DocumentSpec spec, CodeWriter writer)
+    /// <summary>
+    /// Matches <paramref name="page"/> against the ten named page sizes
+    /// <c>VellumPdf.Document.PageSize</c> declares, so the emitted code can
+    /// read <c>PageSize.Letter</c> rather than the four raw points that
+    /// constant expands to, and omits the initializer entirely when it
+    /// matches A4, <c>Document</c>'s own default page size.
+    /// </summary>
+    private static string? EmitPageSizeInitializer(PageSizeSpec page)
     {
-        for (var i = 0; i < spec.EmbeddedFonts.Count; i++)
+        var preset = NamedPageSizes
+            .Where(named => named.Width.Equals(page.WidthPoints) && named.Height.Equals(page.HeightPoints))
+            .Select(named => named.Name)
+            .FirstOrDefault();
+
+        if (preset == "A4")
         {
-            writer.Line($"var embeddedFont{i} = document.UseTrueTypeFont(EmbeddedFonts[{i}]);");
+            return null;
         }
 
-        if (spec.EmbeddedFonts.Count > 0)
-        {
-            writer.Line();
-        }
-    }
-
-    private static void EmitMetadata(DocumentSpec spec, CodeWriter writer)
-    {
-        if (spec.Metadata is not { } metadata)
-        {
-            return;
-        }
-
-        if (metadata.Title is not null)
-        {
-            writer.Line($"document.Info.Title = {Literal(metadata.Title)};");
-        }
-
-        if (metadata.Author is not null)
-        {
-            writer.Line($"document.Info.Author = {Literal(metadata.Author)};");
-        }
-
-        if (metadata.Subject is not null)
-        {
-            writer.Line($"document.Info.Subject = {Literal(metadata.Subject)};");
-        }
-
-        if (metadata.Keywords is not null)
-        {
-            writer.Line($"document.Info.Keywords = {Literal(metadata.Keywords)};");
-        }
-
-        if (metadata.Creator is not null)
-        {
-            writer.Line($"document.Info.Creator = {Literal(metadata.Creator)};");
-        }
-
-        if (metadata.Producer is not null)
-        {
-            writer.Line($"document.Info.Producer = {Literal(metadata.Producer)};");
-        }
-
-        writer.Line();
-    }
-
-    private static void EmitContentItem(ContentItemSpec item, CodeWriter writer, ref int imageIndex)
-    {
-        switch (item)
-        {
-            case HeadingSpec heading:
-                EmitHeading(heading, writer);
-                break;
-            case ParagraphSpec paragraph:
-                EmitParagraph(paragraph, writer);
-                break;
-            case ListSpec list:
-                EmitList(list, writer);
-                break;
-            case TableSpec table:
-                EmitTable(table, writer);
-                break;
-            case ImageSpec image:
-                EmitImage(image, writer, imageIndex);
-                imageIndex++;
-                break;
-            case PieChartSpec pieChart:
-                EmitPieChart(pieChart, writer);
-                break;
-            case LineSeparatorSpec lineSeparator:
-                EmitLineSeparator(lineSeparator, writer);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(item), item, "Unrecognised content item type.");
-        }
-    }
-
-    private static void EmitHeading(HeadingSpec spec, CodeWriter writer)
-    {
-        var styleExpr = spec.Style is null ? "null" : EmitTextStyleExpression(spec.Style);
-        var initializers = new List<string> { $"Level = {spec.Level}" };
-
-        if (spec.Alignment != HorizontalAlignment.Left)
-        {
-            initializers.Add($"Alignment = HorizontalAlignment.{spec.Alignment}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        if (spec.BookmarkTitle is not null)
-        {
-            initializers.Add($"BookmarkTitle = {Literal(spec.BookmarkTitle)}");
-        }
-
-        if (spec.Language is not null)
-        {
-            initializers.Add($"Language = {Literal(spec.Language)}");
-        }
-
-        EmitAdd($"new Heading({Literal(spec.Text)}, {styleExpr})", initializers, writer);
-    }
-
-    private static void EmitParagraph(ParagraphSpec spec, CodeWriter writer)
-    {
-        var initializers = new List<string>();
-
-        if (spec.Alignment != HorizontalAlignment.Left)
-        {
-            initializers.Add($"Alignment = HorizontalAlignment.{spec.Alignment}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        if (spec.Language is not null)
-        {
-            initializers.Add($"Language = {Literal(spec.Language)}");
-        }
-
-        if (spec.Runs.Count == 1)
-        {
-            var run = spec.Runs[0];
-            EmitAdd($"new Paragraph({Literal(run.Text)}, {EmitTextStyleExpression(run.Style)})", initializers, writer);
-            return;
-        }
-
-        writer.Line("var runs = new TextRun[]");
-        writer.Line("{");
-        using (writer.Indent())
-        {
-            foreach (var run in spec.Runs)
-            {
-                writer.Line($"new TextRun({Literal(run.Text)}, {EmitTextStyleExpression(run.Style)}),");
-            }
-        }
-
-        writer.Line("};");
-        EmitAdd("new Paragraph(runs)", initializers, writer);
-    }
-
-    // ListElement, ListItem, TableElement and Cell all expose their settable
-    // members as `init`, which the language only allows to be assigned inside
-    // the object-initializer expression that constructs the instance. The
-    // emitted code below therefore never assigns into one of these after
-    // declaring it; every optional property is folded into the same
-    // declaration through EmitDeclaration.
-    private static void EmitList(ListSpec spec, CodeWriter writer)
-    {
-        var initializers = new List<string>();
-
-        if (spec.Indent is { } indent)
-        {
-            initializers.Add($"Indent = {Num(indent)}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        if (spec.DefaultStyle is not null)
-        {
-            initializers.Add($"DefaultStyle = {EmitTextStyleExpression(spec.DefaultStyle)}");
-        }
-
-        EmitDeclaration("list", $"new ListElement(ListStyle.{spec.Style})", initializers, writer);
-
-        for (var i = 0; i < spec.Items.Count; i++)
-        {
-            var itemVariable = EmitListItem(spec.Items[i], $"listItem{i}", writer);
-            writer.Line($"list.Add({itemVariable});");
-        }
-
-        writer.Line("document.Add(list);");
-    }
-
-    private static string EmitListItem(ListItemSpec spec, string variableName, CodeWriter writer)
-    {
-        var styleExpr = spec.Style is null ? "null" : EmitTextStyleExpression(spec.Style);
-        var initializers = new List<string>();
-
-        if (spec.Language is not null)
-        {
-            initializers.Add($"Language = {Literal(spec.Language)}");
-        }
-
-        EmitDeclaration(variableName, $"new ListItem({Literal(spec.Text)}, {styleExpr})", initializers, writer);
-
-        for (var i = 0; i < spec.Children.Count; i++)
-        {
-            var childVariable = EmitListItem(spec.Children[i], $"{variableName}Child{i}", writer);
-            writer.Line($"{variableName}.AddChild({childVariable});");
-        }
-
-        return variableName;
-    }
-
-    private static void EmitTable(TableSpec spec, CodeWriter writer)
-    {
-        var initializers = new List<string>();
-
-        if (spec.DefaultCellStyle is not null)
-        {
-            initializers.Add($"DefaultCellStyle = {EmitTextStyleExpression(spec.DefaultCellStyle)}");
-        }
-
-        if (spec.BorderWidth is { } borderWidth)
-        {
-            initializers.Add($"BorderWidth = {Num(borderWidth)}");
-        }
-
-        if (spec.BorderColor is { } borderColor)
-        {
-            initializers.Add($"BorderColor = {EmitColor(borderColor)}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        EmitDeclaration("table", "new TableElement()", initializers, writer);
-
-        if (spec.ColumnWidths is { Count: > 0 } widths)
-        {
-            writer.Line($"table.SetColumnWidths([{string.Join(", ", widths.Select(Num))}]);");
-        }
-
-        for (var rowIndex = 0; rowIndex < spec.Rows.Count; rowIndex++)
-        {
-            var row = spec.Rows[rowIndex];
-            var rowVariable = $"row{rowIndex}";
-            writer.Line($"var {rowVariable} = table.AddRow({(row.IsHeader ? "true" : "false")});");
-
-            for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
-            {
-                EmitCell(row.Cells[cellIndex], rowVariable, $"{rowVariable}Cell{cellIndex}", writer);
-            }
-        }
-
-        writer.Line("document.Add(table);");
-    }
-
-    private static void EmitCell(TableCellSpec spec, string rowVariable, string cellVariable, CodeWriter writer)
-    {
-        var initializers = new List<string>();
-
-        if (spec.ColSpan != 1)
-        {
-            initializers.Add($"ColSpan = {spec.ColSpan}");
-        }
-
-        if (spec.RowSpan != 1)
-        {
-            initializers.Add($"RowSpan = {spec.RowSpan}");
-        }
-
-        if (spec.Style is not null)
-        {
-            initializers.Add($"Style = {EmitTextStyleExpression(spec.Style)}");
-        }
-
-        if (spec.Padding is { } padding)
-        {
-            initializers.Add($"Padding = {EmitEdgeInsets(padding)}");
-        }
-
-        if (spec.Background is { } background)
-        {
-            initializers.Add($"Background = {EmitColor(background)}");
-        }
-
-        if (spec.Alignment != HorizontalAlignment.Left)
-        {
-            initializers.Add($"Alignment = HorizontalAlignment.{spec.Alignment}");
-        }
-
-        if (spec.Language is not null)
-        {
-            initializers.Add($"Language = {Literal(spec.Language)}");
-        }
-
-        EmitDeclaration(cellVariable, $"new Cell({Literal(spec.Content)})", initializers, writer);
-        writer.Line($"{rowVariable}.AddCell({cellVariable});");
-    }
-
-    private static void EmitImage(ImageSpec spec, CodeWriter writer, int imageIndex)
-    {
-        var loaderName = spec.Format switch
-        {
-            ImageFormat.Png => "PngImageLoader",
-            ImageFormat.Jpeg => "JpegImageLoader",
-            ImageFormat.Bmp => "BmpImageLoader",
-            ImageFormat.Gif => "GifImageLoader",
-            ImageFormat.Tiff => "TiffImageLoader",
-            _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Format, "Unrecognised image format."),
-        };
-
-        var imageVariable = $"image{imageIndex}";
-        writer.Line($"var {imageVariable} = {loaderName}.Load(Images[{imageIndex}]);");
-
-        var initializers = new List<string>();
-
-        if (spec.Width is { } width)
-        {
-            initializers.Add($"Width = {Num(width)}");
-        }
-
-        if (spec.Height is { } height)
-        {
-            initializers.Add($"Height = {Num(height)}");
-        }
-
-        if (spec.Alignment != HorizontalAlignment.Left)
-        {
-            initializers.Add($"Alignment = HorizontalAlignment.{spec.Alignment}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        if (spec.AltText is not null)
-        {
-            initializers.Add($"AltText = {Literal(spec.AltText)}");
-        }
-
-        EmitAdd($"new LayoutImage({imageVariable})", initializers, writer);
-    }
-
-    private static void EmitPieChart(PieChartSpec spec, CodeWriter writer)
-    {
-        var initializers = new List<string>
-        {
-            $"Slices = [{string.Join(", ", spec.Slices.Select(EmitPieSlice))}]",
-            $"Diameter = {Num(spec.Diameter)}",
-        };
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        if (spec.StrokeColor is { } strokeColor)
-        {
-            initializers.Add($"StrokeColor = {EmitColor(strokeColor)}");
-        }
-
-        if (spec.StrokeWidth != 0.5)
-        {
-            initializers.Add($"StrokeWidth = {Num(spec.StrokeWidth)}");
-        }
-
-        if (spec.Alignment != HorizontalAlignment.Center)
-        {
-            initializers.Add($"Alignment = HorizontalAlignment.{spec.Alignment}");
-        }
-
-        if (spec.StartAngle != double.Pi / 2)
-        {
-            initializers.Add($"StartAngle = {Num(spec.StartAngle)}");
-        }
-
-        if (!spec.Clockwise)
-        {
-            initializers.Add("Clockwise = false");
-        }
-
-        if (spec.AltText is not null)
-        {
-            initializers.Add($"AltText = {Literal(spec.AltText)}");
-        }
-
-        if (spec.Decorative)
-        {
-            initializers.Add("Decorative = true");
-        }
-
-        EmitAdd("new PieChart()", initializers, writer);
-    }
-
-    private static string EmitPieSlice(PieSlice slice) =>
-        string.IsNullOrEmpty(slice.Label)
-            ? $"new PieSlice({Num(slice.Value)}, {EmitColor(slice.Color)})"
-            : $"new PieSlice({Num(slice.Value)}, {EmitColor(slice.Color)}, {Literal(slice.Label)})";
-
-    private static void EmitLineSeparator(LineSeparatorSpec spec, CodeWriter writer)
-    {
-        var initializers = new List<string>();
-
-        if (spec.LineWidth != 1)
-        {
-            initializers.Add($"LineWidth = {Num(spec.LineWidth)}");
-        }
-
-        if (!spec.Color.Equals(ColorRgb.Black))
-        {
-            initializers.Add($"Color = {EmitColor(spec.Color)}");
-        }
-
-        if (spec.Margins is { } margins)
-        {
-            initializers.Add($"Margins = {EmitEdgeInsets(margins)}");
-        }
-
-        EmitAdd("new LineSeparator()", initializers, writer);
-    }
-
-    private static void EmitRunningBand(string kind, RunningBandSpec spec, CodeWriter writer)
-    {
-        var ctorExpr = $"new RunningBand({Literal(spec.Template)}, {EmitTextStyleExpression(spec.Style)}, HorizontalAlignment.{spec.Alignment})";
-        var initializers = spec.Height is { } height ? new List<string> { $"Height = {Num(height)}" } : [];
-        EmitAssignment($"document.{kind}", ctorExpr, initializers, writer);
-    }
-
-    private static void EmitOutputIntent(DocumentSpec spec, CodeWriter writer)
-    {
-        switch (spec.OutputIntent)
-        {
-            case PdfAOutputIntentSpec pdfA:
-                writer.Line($"document.SetPdfAOutputIntent(IccProfile!, {pdfA.ComponentCount}, {Literal(pdfA.OutputConditionIdentifier)}, {(pdfA.Info is null ? "null" : Literal(pdfA.Info))});");
-                break;
-            case CmykOutputIntentSpec cmyk:
-                writer.Line($"document.UseCmykOutputIntent({Literal(cmyk.OutputConditionIdentifier)});");
-                break;
-        }
-    }
-
-    private static void EmitEncryption(DocumentSpec spec, CodeWriter writer)
-    {
-        if (spec.Encryption is not { } encryption)
-        {
-            return;
-        }
-
-        writer.Line("document.Encrypt(new PdfEncryptionSettings");
-        writer.Line("{");
-        using (writer.Indent())
-        {
-            if (encryption.UserPassword is not null)
-            {
-                writer.Line($"UserPassword = {Literal(encryption.UserPassword)},");
-            }
-
-            if (encryption.OwnerPassword is not null)
-            {
-                writer.Line($"OwnerPassword = {Literal(encryption.OwnerPassword)},");
-            }
-
-            writer.Line($"Permissions = {EmitPermissions(encryption.Permissions)},");
-
-            if (!encryption.EncryptMetadata)
-            {
-                writer.Line("EncryptMetadata = false,");
-            }
-        }
-
-        writer.Line("});");
+        var pageSizeExpr = preset is not null
+            ? $"VellumPdf.Document.PageSize.{preset}"
+            : $"new VellumPdf.Document.PdfRectangle(0, 0, {Num(page.WidthPoints)}, {Num(page.HeightPoints)})";
+
+        return $"PageSize = {pageSizeExpr},";
     }
 
     private static string EmitPermissions(PdfPermissions permissions)
@@ -645,12 +980,20 @@ public static class SpecCodeEmitter
         return string.Join(" | ", flags);
     }
 
-    private static string EmitTextStyleExpression(TextStyleSpec spec)
+    private static string EmitPieSlice(PieSlice slice) =>
+        string.IsNullOrEmpty(slice.Label)
+            ? $"new PieSlice({Num(slice.Value)}, {EmitColor(slice.Color)})"
+            : $"new PieSlice({Num(slice.Value)}, {EmitColor(slice.Color)}, {Literal(slice.Label)})";
+
+    private static string BuildTextStyleExpression(TextStyleSpec spec)
     {
+        // FontReference has an implicit conversion from both Standard14 and
+        // EmbeddedFontHandle, so FontRef can be assigned the face or handle
+        // directly, without the otherwise-redundant `new FontReference(...)`.
         var fontRefExpr = spec.Font.Kind switch
         {
-            FontKind.Standard14 => $"new FontReference(Standard14.{spec.Font.Standard14Face})",
-            FontKind.Embedded => $"new FontReference(embeddedFont{spec.Font.EmbeddedFontIndex})",
+            FontKind.Standard14 => $"Standard14.{spec.Font.Standard14Face}",
+            FontKind.Embedded => $"embeddedFont{spec.Font.EmbeddedFontIndex}",
             _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Font.Kind, "Unrecognised font kind."),
         };
 
@@ -682,40 +1025,20 @@ public static class SpecCodeEmitter
     private static string EmitColor(ColorRgb color) =>
         $"new ColorRgb({Num(color.R)}, {Num(color.G)}, {Num(color.B)})";
 
-    private static void EmitAdd(string ctorExpr, IReadOnlyList<string> initializers, CodeWriter writer) =>
-        EmitWrapped("document.Add(", ")", ctorExpr, initializers, writer);
-
-    /// <summary>Emits <c>var {variableName} = {ctorExpr}{ initializers };</c>, folding every optional property into the one declaration an init-only type requires.</summary>
-    private static void EmitDeclaration(string variableName, string ctorExpr, IReadOnlyList<string> initializers, CodeWriter writer) =>
-        EmitWrapped($"var {variableName} = ", "", ctorExpr, initializers, writer);
-
-    /// <summary>Emits <c>{target} = {ctorExpr}{ initializers };</c>, for a mutable property (such as <c>Document.Header</c>) assigned an init-only-typed value.</summary>
-    private static void EmitAssignment(string target, string ctorExpr, IReadOnlyList<string> initializers, CodeWriter writer) =>
-        EmitWrapped($"{target} = ", "", ctorExpr, initializers, writer);
-
-    private static void EmitWrapped(string prefix, string suffix, string ctorExpr, IReadOnlyList<string> initializers, CodeWriter writer)
-    {
-        if (initializers.Count == 0)
-        {
-            writer.Line($"{prefix}{ctorExpr}{suffix};");
-            return;
-        }
-
-        writer.Line($"{prefix}{ctorExpr}");
-        writer.Line("{");
-        using (writer.Indent())
-        {
-            foreach (var initializer in initializers)
-            {
-                writer.Line($"{initializer},");
-            }
-        }
-
-        writer.Line($"}}{suffix};");
-    }
-
     private static string Num(double value) => value.ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// Renders <paramref name="value"/> as a C# string literal. Beyond the
+    /// quote, backslash and the three named escapes, every character in the
+    /// C0 control range (U+0000-U+001F) and the three additional characters
+    /// the C# lexer itself treats as a line terminator inside a string but
+    /// that no named escape covers (U+0085 NEL, U+2028 LINE SEPARATOR, U+2029
+    /// PARAGRAPH SEPARATOR) is escaped as <c>\uXXXX</c>. Left raw, any one of
+    /// those three terminates the literal mid-string, producing a cascade of
+    /// unrelated-looking compiler errors; U+2028 and U+2029 in particular
+    /// survive an ordinary copy-paste from a word processor or a PDF with no
+    /// malicious intent required.
+    /// </summary>
     private static string Literal(string value)
     {
         var builder = new StringBuilder(value.Length + 2).Append('"');
@@ -729,6 +1052,7 @@ public static class SpecCodeEmitter
                 '\n' => "\\n",
                 '\r' => "\\r",
                 '\t' => "\\t",
+                _ when RequiresUnicodeEscape(ch) => $"\\u{(int)ch:x4}",
                 _ => ch.ToString(),
             });
         }
@@ -736,21 +1060,40 @@ public static class SpecCodeEmitter
         return builder.Append('"').ToString();
     }
 
+    private static bool RequiresUnicodeEscape(char ch) =>
+        ch <= '\u001f' || ch is '\u0085' or '\u2028' or '\u2029';
+
     /// <summary>A minimal indenting text builder, private to this emitter.</summary>
     private sealed class CodeWriter
     {
         private readonly StringBuilder _builder = new();
         private int _indentLevel;
+        private bool _lastLineWasBlank;
 
         public void Line(string text = "")
         {
             if (text.Length == 0)
             {
                 _builder.Append('\n');
+                _lastLineWasBlank = true;
                 return;
             }
 
             _builder.Append(' ', _indentLevel * 4).Append(text).Append('\n');
+            _lastLineWasBlank = false;
+        }
+
+        /// <summary>
+        /// Writes a blank line unless the previous one already was one, so two
+        /// optional sections next to each other (or one next to the content
+        /// loop's own trailing blank) never leave a doubled blank line behind.
+        /// </summary>
+        public void EnsureBlankLine()
+        {
+            if (!_lastLineWasBlank)
+            {
+                Line();
+            }
         }
 
         public IndentScope Indent() => new(this);

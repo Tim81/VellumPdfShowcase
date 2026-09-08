@@ -19,8 +19,18 @@ namespace VellumPdfShowcase.Web.Model;
 /// recorded as available in the library's 2.3.0 capability table. Nothing that
 /// table lists as absent (explicit page breaks, nested tables, inline runs in
 /// headings or list items, multi-string headers and footers, shapes beyond a
-/// line separator, and so on) has a representation, so an invalid combination
-/// simply cannot be constructed.
+/// line separator, and so on) has a representation.
+/// </remarks>
+/// <remarks>
+/// A collection the library requires to be non-empty rejects an empty value at
+/// construction, with a message naming the actual problem, rather than letting
+/// the caller build the spec and hear about it later from deep inside the
+/// library: see <see cref="PieChartSpec.Slices"/>, <see cref="TableSpec.Rows"/>
+/// and <see cref="TableRowSpec.Cells"/>. <see cref="Content"/> is the one
+/// exception: it defaults to empty, so an empty document is a valid, if
+/// useless, value of this record. <see cref="Generation.SpecRenderer"/> and
+/// <see cref="Generation.SpecCodeEmitter"/> both reject it explicitly, with
+/// their own legible message, before calling into the library.
 /// </remarks>
 public sealed record DocumentSpec
 {
@@ -115,10 +125,32 @@ public sealed record FontSpec
 public sealed record TextStyleSpec
 {
     public required FontSpec Font { get; init; }
-    public double FontSize { get; init; } = 11;
+
+    /// <summary>Defaults to 12, matching <c>TextStyle</c>'s own default exactly, for the same reason given on <see cref="PieChartSpec.StartAngle"/>.</summary>
+    public double FontSize { get; init; } = 12;
+
     public double? Leading { get; init; }
     public ColorRgb Color { get; init; } = ColorRgb.Black;
-    public string? LinkUri { get; init; }
+
+    /// <summary>
+    /// A URI a run of this style links to, or <see langword="null"/> for none.
+    /// Restricted to the <c>http</c> and <c>https</c> schemes: this value ends
+    /// up in a downloadable PDF's <c>/URI</c> action, and a <c>javascript:</c>
+    /// or <c>data:</c> scheme is not a hyperlink there.
+    /// </summary>
+    public string? LinkUri
+    {
+        get;
+        init => field = value is null || HasAllowedScheme(value)
+            ? value
+            : throw new ArgumentException(
+                $"LinkUri must use the http or https scheme; got {value}.",
+                nameof(LinkUri));
+    }
+
+    private static bool HasAllowedScheme(string uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
+        (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps);
 }
 
 /// <summary>One inline run of a <see cref="ParagraphSpec"/>, matching the library's <c>TextRun</c>.</summary>
@@ -177,7 +209,14 @@ public sealed record ListItemSpec
 /// <summary>A <c>TableElement</c>.</summary>
 public sealed record TableSpec : ContentItemSpec
 {
-    public required IReadOnlyList<TableRowSpec> Rows { get; init; }
+    public required IReadOnlyList<TableRowSpec> Rows
+    {
+        get;
+        init => field = value.Count > 0
+            ? value
+            : throw new ArgumentException("A table must have at least one row.", nameof(Rows));
+    }
+
     public IReadOnlyList<double>? ColumnWidths { get; init; }
     public TextStyleSpec? DefaultCellStyle { get; init; }
     public double? BorderWidth { get; init; }
@@ -187,19 +226,28 @@ public sealed record TableSpec : ContentItemSpec
 
 /// <summary>
 /// One <c>Row</c> of a <see cref="TableSpec"/>. The library declares
-/// <c>Row.Background</c>, but it is unreachable from the published API: a
-/// <c>Row</c> is obtained only from <c>TableElement.AddRow</c> or
-/// <c>AddHeaderRow</c>, both of which return an already-constructed instance,
-/// and <c>Background</c> is an <see langword="init"/> property, which the
-/// language only allows to be set inside the object-initializer expression
-/// that constructs the instance. There is no overload that accepts a
-/// caller-built <c>Row</c>, so no external caller can ever set it. Per-row
-/// background is therefore not modelled here; per-cell background, set on a
-/// <see cref="TableCellSpec"/> the caller constructs directly, is unaffected.
+/// <c>Row.Background</c> as an ordinary settable property with a public
+/// parameterless constructor, so <c>new Row { Background = ..., IsHeader = true }</c>
+/// compiles on its own. The obstacle is containment, not initialisation:
+/// a <c>Row</c> reaches a <c>TableElement</c> only through
+/// <c>TableElement.AddRow</c> or <c>AddHeaderRow</c>, both of which construct
+/// and return their own instance, and <c>TableElement.Rows</c> is a get-only
+/// list with no <c>AddRow(Row)</c> overload to attach a caller-built one. No
+/// external caller can therefore get a <c>Row</c> it built itself into a
+/// table. Per-row background is thus not modelled here; per-cell background,
+/// set on a <see cref="TableCellSpec"/> the caller constructs directly, is
+/// unaffected.
 /// </summary>
 public sealed record TableRowSpec
 {
-    public required IReadOnlyList<TableCellSpec> Cells { get; init; }
+    public required IReadOnlyList<TableCellSpec> Cells
+    {
+        get;
+        init => field = value.Count > 0
+            ? value
+            : throw new ArgumentException("A table row must have at least one cell.", nameof(Cells));
+    }
+
     public bool IsHeader { get; init; }
 }
 
@@ -241,7 +289,14 @@ public sealed record ImageSpec : ContentItemSpec
 /// <summary>A <c>PieChart</c>, using the library's own <c>PieSlice</c> value for each slice.</summary>
 public sealed record PieChartSpec : ContentItemSpec
 {
-    public required IReadOnlyList<PieSlice> Slices { get; init; }
+    public required IReadOnlyList<PieSlice> Slices
+    {
+        get;
+        init => field = value.Count > 0
+            ? value
+            : throw new ArgumentException("A pie chart must have at least one slice.", nameof(Slices));
+    }
+
     public required double Diameter { get; init; }
     public EdgeInsets? Margins { get; init; }
     public ColorRgb? StrokeColor { get; init; }
