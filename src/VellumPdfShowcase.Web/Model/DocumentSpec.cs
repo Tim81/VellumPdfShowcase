@@ -1328,6 +1328,19 @@ public sealed record PieChartSpec : ContentItemSpec
 }
 
 /// <summary>A <c>LineSeparator</c>, the library's only vector primitive in the Layout API.</summary>
+/// <remarks>
+/// NOTE: measured directly against the library, <see cref="Margins"/>'s
+/// <c>Left</c> and <c>Right</c> components have no effect on the rendered or
+/// saved bytes: the drawn line always spans the full content width regardless
+/// of either value, in every combination tried (sole content item, followed
+/// by further content, larger or smaller than the vertical components). Only
+/// <c>Top</c> is always observable, and <c>Bottom</c> only when a following
+/// content item exists to be pushed down by it. This is a genuine library
+/// behaviour, not a gap in this model or in <see cref="Generation.SpecRenderer"/>
+/// or <see cref="Generation.SpecCodeEmitter"/>: a round-trip sample cannot make
+/// the horizontal components observable by construction, since nothing in the
+/// output depends on them, and the showcase samples are written accordingly.
+/// </remarks>
 public sealed record LineSeparatorSpec : ContentItemSpec
 {
     public double LineWidth
