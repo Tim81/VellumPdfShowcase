@@ -5,6 +5,8 @@ using Microsoft.CodeAnalysis.Scripting;
 using VellumPdf.Reader;
 using VellumPdfShowcase.Web.Generation;
 using VellumPdfShowcase.Web.Model;
+using DocumentConformance = VellumPdf.Document.PdfConformance;
+using PreflightConformance = VellumPdf.Conformance.PdfConformance;
 
 namespace VellumPdfShowcase.Tests;
 
@@ -47,6 +49,63 @@ public class SpecRoundTripTests
     [Fact]
     public async Task RoundTrip_PdfA2uWithOutputIntent_IsReportedCompliantByPreflight() =>
         await AssertPreflightCompliantAsync(DocumentSpecSamples.PdfA2uWithOutputIntent());
+
+    /// <summary>
+    /// The structural guard: every <see cref="DocumentSpecSamples"/> member
+    /// that returns a <see cref="DocumentSpec"/> claiming a conformance
+    /// profile is preflighted, found by reflection rather than by a list of
+    /// call sites someone has to remember to extend. Before this test
+    /// existed, five samples claimed a profile
+    /// (<see cref="DocumentSpecSamples.PdfA2bWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfA2uWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfA2aWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/> and
+    /// <see cref="DocumentSpecSamples.CmykOutputIntent"/>) but only the
+    /// first three were ever preflighted, at three separate named
+    /// <c>[Fact]</c> call sites; the last two claimed a profile and were
+    /// never checked at all. A future sample that claims a profile is
+    /// automatically included here the moment it is added to
+    /// <see cref="DocumentSpecSamples"/>, with no second call site to
+    /// remember.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SampleNamesClaimingConformance))]
+    public async Task Sample_ClaimingConformance_IsPreflightCompliant(string sampleName) =>
+        await AssertPreflightCompliantAsync(InvokeSample(sampleName));
+
+    /// <summary>
+    /// Every public, parameterless, <see cref="DocumentSpec"/>-returning
+    /// method on <see cref="DocumentSpecSamples"/> whose result claims a
+    /// conformance profile other than <see cref="DocumentConformance.None"/>.
+    /// Returns names rather than constructed specs: xUnit theory data must be
+    /// serialisable across discovery and execution, which a plain
+    /// <see cref="DocumentSpec"/> is not.
+    /// </summary>
+    public static TheoryData<string> SampleNamesClaimingConformance()
+    {
+        TheoryData<string> names = [];
+
+        foreach (var name in SampleFactoryMethods()
+            .Where(method => ((DocumentSpec)method.Invoke(null, null)!).Conformance != DocumentConformance.None)
+            .Select(method => method.Name))
+        {
+            names.Add(name);
+        }
+
+        return names;
+    }
+
+    private static IEnumerable<MethodInfo> SampleFactoryMethods() =>
+        typeof(DocumentSpecSamples)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.GetParameters().Length == 0 && method.ReturnType == typeof(DocumentSpec));
+
+    private static DocumentSpec InvokeSample(string sampleName)
+    {
+        var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException($"DocumentSpecSamples has no public static parameterless member named {sampleName}.");
+        return (DocumentSpec)method.Invoke(null, null)!;
+    }
 
     /// <summary>
     /// Two lists (in fact all four list styles), two tables and two
@@ -225,16 +284,32 @@ public class SpecRoundTripTests
         Assert.Equal(PdfNormalization.Normalize(rendered), PdfNormalization.Normalize(scripted));
     }
 
+    /// <summary>
+    /// Preflights BOTH the rendered bytes and the scripted (emitted-and-executed)
+    /// bytes for <paramref name="spec"/>, against the profile
+    /// <see cref="DocumentSpec.Conformance"/> claims. The site's whole claim is
+    /// that the displayed code produces the document shown beside it, so both
+    /// must be conformant, not only the one the preview shows: a divergence
+    /// between the two would previously surface only as a byte-comparison
+    /// failure in <see cref="AssertRoundTripAsync"/>, which says nothing about
+    /// whether either side is actually valid PDF/A or PDF/UA.
+    /// </summary>
     private static async Task AssertPreflightCompliantAsync(DocumentSpec spec)
     {
-        var bytes = SpecRenderer.Render(spec);
-
         var profile = ConformanceMapping.ToPreflightProfile(spec.Conformance);
         Assert.NotNull(profile);
 
-        var result = VellumPdf.Conformance.PdfPreflight.Validate(bytes, profile.Value);
+        var rendered = SpecRenderer.Render(spec);
+        AssertPreflightCompliant(rendered, profile.Value, "Rendered");
 
-        Assert.True(result.IsCompliant, string.Join('\n', result.Assertions.Select(a => a.ToString())));
+        var scripted = await RunEmittedCodeAsync(spec);
+        AssertPreflightCompliant(scripted, profile.Value, "Scripted");
+    }
+
+    private static void AssertPreflightCompliant(byte[] bytes, PreflightConformance profile, string label)
+    {
+        var result = VellumPdf.Conformance.PdfPreflight.Validate(bytes, profile);
+        Assert.True(result.IsCompliant, $"{label} bytes were not preflight compliant:\n" + string.Join('\n', result.Assertions.Select(a => a.ToString())));
     }
 
     /// <summary>

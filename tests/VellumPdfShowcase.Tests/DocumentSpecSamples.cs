@@ -592,6 +592,22 @@ internal static class DocumentSpecSamples
     /// Also sets <see cref="PdfAOutputIntentSpec.Info"/> explicitly, the one
     /// output intent member no other sample in this file sets.
     /// </summary>
+    /// <remarks>
+    /// Two members are load-bearing for actual PDF/UA-1 preflight compliance,
+    /// found only once every conformant sample was preflighted structurally
+    /// rather than at three hand-picked call sites (see
+    /// <see cref="SpecRoundTripTests.SampleNamesClaimingConformance"/>).
+    /// <see cref="Metadata"/>'s <see cref="DocumentMetadataSpec.Title"/> is
+    /// required by ISO 14289-1:2014 clause 7.1 (a non-empty XMP
+    /// <c>dc:title</c>). <see cref="HeadingSpec.Level"/> is zero-based per the
+    /// library's own documentation ("0 = top-level, 1 = sub-heading, etc."),
+    /// so the document's opening, and only, heading must be
+    /// <see langword="0"/>; <see langword="1"/> tags it H2 with no preceding
+    /// H1, which ISO 14289-1:2014 clause 7.4.2 rejects as a skipped level.
+    /// PDF/A preflight does not check heading hierarchy at all, which is why
+    /// every other sample in this file uses <see langword="1"/> for its sole
+    /// heading without being caught.
+    /// </remarks>
     public static DocumentSpec PdfUA1WithOutputIntent()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
@@ -604,9 +620,10 @@ internal static class DocumentSpecSamples
             Conformance = DocumentConformance.PdfUA1,
             Tagged = true,
             Language = "en",
+            Metadata = new DocumentMetadataSpec { Title = "PDF/UA-1 sample" },
             Content =
             [
-                new HeadingSpec { Text = "PDF/UA-1 sample", Level = 1, Style = style, Language = "en" },
+                new HeadingSpec { Text = "PDF/UA-1 sample", Level = 0, Style = style, Language = "en" },
                 ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
             ],
             OutputIntent = new PdfAOutputIntentSpec
@@ -719,17 +736,29 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// A device CMYK output intent, matching <c>Document.UseCmykOutputIntent</c>.
-    /// Declares a PDF/A-2b claim: measured directly against the library, the
-    /// call writes nothing into the saved bytes unless the document declares
-    /// a conformance profile, so a sample without one would not exercise this
-    /// branch at all, the same way the previous <c>DefaultTextStyle</c>
-    /// sample looked like coverage without being load-bearing. Plan section
-    /// 6.2's CMYK note records that mixing DeviceRGB content, which is all
-    /// this model can paint, with a pure CMYK output intent may be flagged by
-    /// strict validators, so this sample carries no preflight-compliance
-    /// assertion; it exists only to hold the renderer and emitter to the
-    /// same bytes.
+    /// Measured directly against the library, the call writes nothing into
+    /// the saved bytes unless the document declares a conformance profile, so
+    /// a sample without one would not exercise this branch at all, the same
+    /// way the previous <c>DefaultTextStyle</c> sample looked like coverage
+    /// without being load-bearing.
     /// </summary>
+    /// <remarks>
+    /// Claims PDF/UA-1, not PDF/A-2b. Measured directly, once every
+    /// conformant sample was preflighted structurally rather than at three
+    /// hand-picked call sites (see
+    /// <see cref="SpecRoundTripTests.SampleNamesClaimingConformance"/>): a
+    /// PDF/A-2b claim here fails ISO 19005-2:2011 clause 6.2.4.3, because
+    /// this model can only ever paint content in DeviceRGB (plan section
+    /// 6.2's CMYK note) and this sample's only output intent is a CMYK one,
+    /// with no RGB <c>DestOutputProfile</c> to justify the DeviceRGB fills.
+    /// That is an ISO 19005-2 content rule specifically; PDF/UA-1's rule
+    /// catalogue (ISO 14289-1) has no equivalent, so the identical bytes,
+    /// under the identical CMYK output intent, are genuinely compliant
+    /// against PDF/UA-1 once the two PDF/UA-1 requirements every conformant
+    /// sample must meet are also met: a document title (clause 7.1, via
+    /// <see cref="Metadata"/>) and correct heading nesting (clause 7.4.2,
+    /// moot here since this sample has no heading).
+    /// </remarks>
     public static DocumentSpec CmykOutputIntent()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };
@@ -739,9 +768,10 @@ internal static class DocumentSpecSamples
             Page = new PageSizeSpec(400, 300),
             DefaultTextStyle = style,
             EmbeddedFonts = [LiberationSansBytes()],
-            Conformance = DocumentConformance.PdfA2b,
+            Conformance = DocumentConformance.PdfUA1,
             Tagged = true,
             Language = "en",
+            Metadata = new DocumentMetadataSpec { Title = "CMYK output intent sample" },
             Content = [ParagraphSpec.FromText("Declares a device CMYK output intent.", style)],
             OutputIntent = new CmykOutputIntentSpec { OutputConditionIdentifier = "U.S. Web Coated (SWOP) v2" },
         };
