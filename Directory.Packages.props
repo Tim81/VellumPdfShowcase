@@ -18,6 +18,14 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
+
+    <!--
+      Roslyn scripting for the round-trip test only (tests/VellumPdfShowcase.Tests).
+      Compiles the C# that SpecCodeEmitter produces and executes it, so that the
+      test can assert its output against SpecRenderer's. Never referenced by
+      src/VellumPdfShowcase.Web, so it never reaches the published Blazor bundle.
+    -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.9.0" />
   </ItemGroup>
 
 </Project>

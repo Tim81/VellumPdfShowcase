@@ -12,6 +12,18 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Roslyn scripting, for the round-trip test only. See the note in Directory.Packages.props. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\VellumPdfShowcase.Web\VellumPdfShowcase.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Real assets used by the round-trip test, linked from the app's own wwwroot rather than duplicated. -->
+    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\fonts\LiberationSans-Regular.ttf" Link="TestAssets\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\icc\sRGB2014.icc" Link="TestAssets\sRGB2014.icc" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
