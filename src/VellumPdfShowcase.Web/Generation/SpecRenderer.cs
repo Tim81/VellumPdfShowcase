@@ -434,6 +434,12 @@ public static class SpecRenderer
             _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Font.Kind, "Unrecognised font kind."),
         };
 
+        // NOTE: an unset spec.Leading becomes a literal 0 here, matching
+        // TextStyle's own default and what SpecCodeEmitter emits when it omits
+        // the Leading property entirely, so the two sides agree. See the
+        // remark on SpecLimits.MaxLeadingPoints: the library treats 0 as a
+        // request to compute its own line height from the font, which is NOT
+        // bounded by SpecLimits.MaxLeadingPoints and can exceed it.
         var style = new TextStyle
         {
             FontRef = fontRef,

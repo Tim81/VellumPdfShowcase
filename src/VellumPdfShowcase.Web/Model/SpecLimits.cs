@@ -57,6 +57,18 @@ public static class SpecLimits
     /// is what bounds how many such strings one specification can multiply
     /// together through shared structure.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this remains a distinct, load-bearing cap even now that
+    /// <see cref="MaxTotalTextLength"/> is far smaller than this value.
+    /// <see cref="MaxTotalTextLength"/> only bounds the strings the
+    /// <see cref="Model.DocumentSpec.Content"/> walk visits; a running header or
+    /// footer <see cref="Model.RunningBandSpec.Template"/>, every
+    /// <see cref="Model.DocumentMetadataSpec"/> field, an output intent's
+    /// identifier and info string, an encryption password, and a
+    /// <see cref="VellumPdf.Layout.Core.PieSlice"/> label are all outside that
+    /// walk and carry no other length bound. This cap is the only ceiling on
+    /// each of them.
+    /// </remarks>
     public const int MaxTextLength = 100_000;
 
     /// <summary>
@@ -168,17 +180,39 @@ public static class SpecLimits
     /// specification that forces enough pages overflows the CLR stack, which
     /// cannot be caught. <see cref="MinPageDimensionPoints"/>, <see cref="MaxFontSize"/>
     /// and <see cref="MaxLeadingPoints"/> bound how few characters one page can
-    /// hold; this bounds how many characters there are to place. The worst
-    /// specification every cap in this file together still permits (the
-    /// smallest permitted page, the largest permitted font and leading, and
-    /// exactly this many characters in one run) was measured to render
-    /// successfully, with page counts staying a small fraction of the roughly
-    /// 3,659-frame depth at which this machine's desktop x64 CLR overflowed the
-    /// stack on an unbounded specification; WebAssembly's stack is smaller
-    /// still, which is why the margin is wide rather than exact.
+    /// hold; this bounds how many characters there are to place.
+    /// </para>
+    /// <para>
+    /// The worst specification every cap in this file together still permits
+    /// is the smallest permitted page, the largest permitted font, and exactly
+    /// this many characters in one run &#8212; with <see cref="Model.TextStyleSpec.Leading"/>
+    /// left UNSET, not set to <see cref="MaxLeadingPoints"/>. This is
+    /// counter-intuitive and was found only by measuring, not by reasoning
+    /// about the cap: <see cref="Generation.SpecRenderer"/> passes an unset
+    /// <see cref="Model.TextStyleSpec.Leading"/> to the library as a literal
+    /// <c>0</c> (see the remark on <see cref="MaxLeadingPoints"/>), and the
+    /// library treats a <c>0</c> leading as a request to compute its own line
+    /// height from the font instead of as a literal zero. At 72-point font, that
+    /// computed leading is LARGER than every leading a caller can set
+    /// explicitly through this file, including <see cref="MaxLeadingPoints"/>
+    /// itself, which makes leaving <see cref="Model.TextStyleSpec.Leading"/>
+    /// unset the more dangerous configuration, not the safer one a reader would
+    /// assume.
+    /// </para>
+    /// <para>
+    /// Measured directly at that exact geometry (200 &#215; 200 points, zero
+    /// margins, 72-point font, <see cref="Model.TextStyleSpec.Leading"/> unset,
+    /// one run): rendering succeeded up to 34,700 characters and overflowed the
+    /// CLR stack at 34,800 characters, at roughly 4,350
+    /// <c>DocumentRenderer.PlaceRenderer</c> frames, consistent with the
+    /// roughly 3,659 to 4,354-frame depth measured elsewhere at this geometry
+    /// on this machine. 5,000 was chosen from that measurement with close to a
+    /// sevenfold margin below the lowest failing count found; WebAssembly's
+    /// stack is smaller still, which is why the margin is wide rather than
+    /// exact.
     /// </para>
     /// </remarks>
-    public const int MaxTotalTextLength = 100_000;
+    public const int MaxTotalTextLength = 5_000;
 
     /// <summary>
     /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
@@ -194,6 +228,11 @@ public static class SpecLimits
     /// figure was chosen together with. 200 is also small enough that no
     /// existing specification in this repository, several of which use a
     /// 200 x 200 page for a minimal test document, needed to change.
+    /// NOTE: when <see cref="MaxFontSize"/> was later raised, this figure was
+    /// not re-derived on its own; it was re-verified as part of the same
+    /// combined measurement described on <see cref="MaxTotalTextLength"/>,
+    /// which found a new, lower danger boundary at 200 x 200 and chose
+    /// <see cref="MaxTotalTextLength"/> to stay well clear of it.
     /// </summary>
     public const double MinPageDimensionPoints = 200;
 
@@ -207,17 +246,25 @@ public static class SpecLimits
     public const double MaxPageDimensionPoints = 20_000;
 
     /// <summary>
-    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. Measured directly: a
-    /// large font size shrinks how much text fits on one page as sharply as a
-    /// small page does, and the two compound. At <see cref="MinPageDimensionPoints"/>
-    /// with <see cref="MaxTotalTextLength"/> characters, this machine's desktop
-    /// x64 CLR still overflowed the stack at some font sizes clearly larger
-    /// than this figure; 20 points was chosen with a wide margin below every
-    /// font size measurement found dangerous at that page size, while
-    /// remaining larger than any font size a shipped sample in this repository
+    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. 72 points is a
+    /// conventional display size (one inch, at the PDF point's traditional
+    /// definition of 72 to the inch), chosen so the site can demonstrate
+    /// typography at a genuine display scale, per plan section 6.2. It leaves
+    /// wide headroom above every font size a shipped sample in this repository
     /// uses today (18 points, the largest).
     /// </summary>
-    public const double MaxFontSize = 20;
+    /// <remarks>
+    /// A large font size shrinks how much text fits on one page as sharply as
+    /// a small page does, and the two compound; this is why this value is not
+    /// chosen freely. Rather than finding a font-size ceiling that is itself
+    /// safe at a fixed text volume, the ceiling was fixed here at 72 for
+    /// typographic purpose and <see cref="MaxTotalTextLength"/> was lowered
+    /// instead to compensate. See <see cref="MaxTotalTextLength"/> for the
+    /// measurement performed at this exact font size, which is what makes 72
+    /// safe together with <see cref="MinPageDimensionPoints"/> and
+    /// <see cref="MaxLeadingPoints"/>.
+    /// </remarks>
+    public const double MaxFontSize = 72;
 
     /// <summary>
     /// Caps <see cref="Model.TextStyleSpec.Leading"/> when set. Leading
@@ -226,6 +273,22 @@ public static class SpecLimits
     /// <see cref="MaxFontSize"/>; 50 points left a wide margin below the point
     /// measurement found dangerous there.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this cap does not bound the most dangerous leading a
+    /// specification can carry. <see cref="Generation.SpecRenderer"/> passes an
+    /// UNSET <see cref="Model.TextStyleSpec.Leading"/> to the library as a
+    /// literal <c>0</c>, and <see cref="Generation.SpecCodeEmitter"/> emits no
+    /// <c>Leading</c> property at all in that case, which leaves the library's
+    /// own <c>TextStyle.Leading</c> at its own default of <c>0</c>; both paths
+    /// agree, so the round trip does not diverge. The library treats a <c>0</c>
+    /// leading as a request to compute its own line height from the font
+    /// rather than as a literal zero, and at <see cref="MaxFontSize"/> that
+    /// computed value is LARGER than this cap. An unset
+    /// <see cref="Model.TextStyleSpec.Leading"/> is therefore more dangerous
+    /// than one explicitly set to this maximum, not less; see the remark on
+    /// <see cref="MaxTotalTextLength"/> for the measurement that accounts for
+    /// this.
+    /// </remarks>
     public const double MaxLeadingPoints = 50;
 
     /// <summary>

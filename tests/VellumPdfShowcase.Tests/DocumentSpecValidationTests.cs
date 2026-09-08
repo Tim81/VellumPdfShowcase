@@ -721,15 +721,21 @@ public class WalkedNodeLimitTests
     [Fact]
     public void SharedDeeplyNestedSubtree_ReferencedFromManySiblings_ThrowsAtConstruction()
     {
-        ListItemSpec chain = new() { Text = "leaf" };
+        // NOTE: every ListItemSpec.Text below is empty, deliberately. This
+        // walk sums characters against SpecLimits.MaxTotalTextLength exactly
+        // as it counts nodes against SpecLimits.MaxWalkedNodes, so any
+        // non-trivial text on the thousands of node visits this shared chain
+        // produces would trip the CHARACTER limit before the NODE limit this
+        // test exists to isolate, and assert the wrong message.
+        ListItemSpec chain = new() { Text = "" };
         for (var depth = 1; depth < SpecLimits.MaxListNestingDepth - 1; depth++)
         {
-            chain = new ListItemSpec { Text = $"level{depth}", Children = [chain] };
+            chain = new ListItemSpec { Text = "", Children = [chain] };
         }
 
         var sharedChain = chain;
         List<ListItemSpec> siblings = [.. Enumerable.Repeat(sharedChain, SpecLimits.MaxListItemChildren)];
-        var topItem = new ListItemSpec { Text = "top", Children = siblings };
+        var topItem = new ListItemSpec { Text = "", Children = siblings };
 
         var exception = Assert.Throws<ArgumentException>(() =>
             new DocumentSpec
@@ -798,10 +804,10 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(100, SpecLimits.MaxListItemChildren);
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
-        Assert.Equal(100_000, SpecLimits.MaxTotalTextLength);
+        Assert.Equal(5_000, SpecLimits.MaxTotalTextLength);
         Assert.Equal(200, SpecLimits.MinPageDimensionPoints);
         Assert.Equal(20_000, SpecLimits.MaxPageDimensionPoints);
-        Assert.Equal(20, SpecLimits.MaxFontSize);
+        Assert.Equal(72, SpecLimits.MaxFontSize);
         Assert.Equal(50, SpecLimits.MaxLeadingPoints);
         Assert.Equal(0, SpecLimits.MinHeadingLevel);
         Assert.Equal(5, SpecLimits.MaxHeadingLevel);

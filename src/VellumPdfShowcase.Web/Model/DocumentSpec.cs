@@ -722,7 +722,13 @@ public sealed record TextStyleSpec
         init => field = SpecLimits.ValidateFontSize(value, nameof(FontSize));
     } = 12;
 
-    /// <summary>Capped at <see cref="SpecLimits.MaxLeadingPoints"/> when set, for the same reason as <see cref="FontSize"/>: a large leading enlarges every line exactly as a large font size does.</summary>
+    /// <summary>
+    /// Capped at <see cref="SpecLimits.MaxLeadingPoints"/> when set, for the
+    /// same reason as <see cref="FontSize"/>: a large leading enlarges every
+    /// line exactly as a large font size does. NOTE: leaving this unset is not
+    /// the safe end of the range; see the remark on
+    /// <see cref="SpecLimits.MaxLeadingPoints"/>.
+    /// </summary>
     public double? Leading
     {
         get;

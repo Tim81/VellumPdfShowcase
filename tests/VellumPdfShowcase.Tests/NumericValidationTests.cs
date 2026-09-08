@@ -64,15 +64,25 @@ public class PageSizeValidationTests
 
 /// <summary>
 /// The worst specification every cap in this file together still permits:
-/// the smallest allowed page, zero margins, the largest allowed font size and
-/// leading, and exactly <see cref="SpecLimits.MaxTotalTextLength"/> characters
-/// in one run. Measured directly against the shipped library: this renders
-/// successfully, comfortably below the roughly 3,659-frame depth at which an
-/// unbounded specification overflowed the stack on this machine. This is the
+/// the smallest allowed page, zero margins, the largest allowed font size,
+/// and exactly <see cref="SpecLimits.MaxTotalTextLength"/> characters in one
+/// run. Measured directly against the shipped library: this renders
+/// successfully, comfortably below the roughly 4,350-frame depth at which
+/// this exact geometry overflowed the stack on this machine. This is the
 /// regression guard plan section 3.4.0.2 calls a vacuous test if it is
 /// missing: without it, the caps above could be verified only by construction
 /// succeeding, never by the worst case they still allow actually rendering.
 /// </summary>
+/// <remarks>
+/// <see cref="TextStyleSpec.Leading"/> is deliberately left UNSET below, not
+/// set to <see cref="SpecLimits.MaxLeadingPoints"/>. That is the actual worst
+/// case, not the intuitive one: see the remark on
+/// <see cref="SpecLimits.MaxLeadingPoints"/> and on
+/// <see cref="SpecLimits.MaxTotalTextLength"/>. Reintroducing an explicit
+/// <c>Leading = SpecLimits.MaxLeadingPoints</c> here would make this test
+/// construct a SAFER specification than the actual worst case the caps
+/// permit, silently losing the coverage this guard exists for.
+/// </remarks>
 public class WorstPermittedSpecificationTests
 {
     [Fact]
@@ -82,7 +92,6 @@ public class WorstPermittedSpecificationTests
         {
             Font = FontSpec.FromStandard14(Standard14.Helvetica),
             FontSize = SpecLimits.MaxFontSize,
-            Leading = SpecLimits.MaxLeadingPoints,
         };
 
         var spec = new DocumentSpec
