@@ -1,25 +1,27 @@
 <Project>
 
   <!--
-    Both projects enable the trim analyzer, which makes the SDK reference
-    Microsoft.NET.ILLink.Tasks at the version bundled with the SDK in use. SDK
-    10.0.401 bundles 10.0.12, and no 10.0.12 package is published on nuget.org;
-    the newest available is 10.0.11. Restore therefore failed with NU1103 on a
-    tree that had built four days earlier, without any change to this repository.
+    Both projects enable the trim analyser, which makes the SDK reference
+    Microsoft.NET.ILLink.Tasks at the version bundled with the SDK in use. A
+    servicing release reaches the SDK before its packs reach nuget.org, so the
+    reference can name a version that cannot yet be restored. SDK 10.0.401
+    bundled 10.0.12 while 10.0.11 was still the newest published pack, and
+    restore failed with NU1103 on a tree that had built four days earlier and had
+    not changed. The 10.0.12 packs published later the same day.
 
     The version arrives as metadata on a KnownILLinkPack item that the SDK
     defines in Microsoft.NETCoreSdk.BundledVersions.props, so it cannot be set
     from Directory.Build.props, which is imported earlier. This file is imported
     after the SDK, which is why the override lives here.
 
-    NOTE: the same release mismatch is pinned for the WebAssembly runtime pack in
+    NOTE: the same release is pinned for the WebAssembly runtime pack in
     src/VellumPdfShowcase.Web/VellumPdfShowcase.Web.csproj. Raise the two
     together with the versions in Directory.Packages.props, and only to a version
     published on nuget.org.
   -->
   <ItemGroup>
     <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks">
-      <ILLinkPackVersion Condition="'%(TargetFramework)' == 'net10.0'">10.0.11</ILLinkPackVersion>
+      <ILLinkPackVersion Condition="'%(TargetFramework)' == 'net10.0'">10.0.12</ILLinkPackVersion>
     </KnownILLinkPack>
   </ItemGroup>
 
