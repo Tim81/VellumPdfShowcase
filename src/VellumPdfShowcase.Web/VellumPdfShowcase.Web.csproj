@@ -2,6 +2,21 @@
 
   <PropertyGroup>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!--
+      The WebAssembly runtime pack is not a central package reference. The SDK
+      selects it from the runtime it bundles, so an SDK update moves it without
+      any change to this repository. SDK 10.0.401 bundles 10.0.12, and the
+      10.0.12 packs are not published on nuget.org: the newest available are
+      10.0.11, which is also what Directory.Packages.props pins for
+      Microsoft.AspNetCore.Components.WebAssembly. Restore therefore failed with
+      NU1102 and NU1103 on a tree that had built four days earlier.
+
+      Pinning the version here holds the runtime pack to the same release as the
+      framework packages and makes the build reproducible across SDK bands.
+      NOTE: raise this together with the versions in Directory.Packages.props,
+      never on its own, and only to a version published on nuget.org.
+    -->
+    <RuntimeFrameworkVersion>10.0.11</RuntimeFrameworkVersion>
     <TrimMode>full</TrimMode>
     <CompressionEnabled>false</CompressionEnabled>
     <!--
