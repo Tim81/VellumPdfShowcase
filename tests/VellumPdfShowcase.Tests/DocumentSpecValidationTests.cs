@@ -786,6 +786,136 @@ public class WalkedNodeLimitTests
 }
 
 /// <summary>
+/// Cycle 7 review: the content walk counted a <see cref="PieChartSpec"/>'s
+/// slices as NODES, against <see cref="SpecLimits.MaxWalkedNodes"/>, but
+/// never counted a slice's own <see cref="PieSlice.Label"/>, or an image's or
+/// chart's own <see cref="ImageSpec.AltText"/> / <see cref="PieChartSpec.AltText"/>,
+/// against <see cref="SpecLimits.MaxTotalTextLength"/>. Measured directly
+/// before this fix: 49 charts of 100 slices each with 100,000-character
+/// labels emitted 490,220,429 characters, and 2,000 charts with
+/// 100,000-character <see cref="PieChartSpec.AltText"/> rendered a
+/// 400,384,294-byte PDF, both entirely inside a total this walk was already
+/// supposed to bound.
+/// </summary>
+public class UncountedTextBearingMemberTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    private static byte[] MinimalPng() =>
+    [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    ];
+
+    [Fact]
+    public void PieSliceLabels_AloneExceedMaxTotalTextLength_ThrowsAtConstruction()
+    {
+        // One slice's label at MaxTextLength already exceeds
+        // MaxTotalTextLength (100,000 > 20,000) on its own; no other content
+        // is needed to prove the label itself is counted.
+        var label = new string('x', SpecLimits.MaxTextLength);
+        var slices = new List<PieSlice> { new(1, ColorRgb.Black, label) };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(500, 500),
+                DefaultTextStyle = Style(),
+                Content = [new PieChartSpec { Diameter = 100, Slices = slices }],
+            });
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PieChartAltText_AloneExceedsMaxTotalTextLength_ThrowsAtConstruction()
+    {
+        var altText = new string('x', SpecLimits.MaxTextLength);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(500, 500),
+                DefaultTextStyle = Style(),
+                Content =
+                [
+                    new PieChartSpec
+                    {
+                        Diameter = 100,
+                        Slices = [new PieSlice(1, ColorRgb.Black)],
+                        AltText = altText,
+                    },
+                ],
+            });
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ImageAltText_AloneExceedsMaxTotalTextLength_ThrowsAtConstruction()
+    {
+        var altText = new string('x', SpecLimits.MaxTextLength);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(500, 500),
+                DefaultTextStyle = Style(),
+                Content =
+                [
+                    new ImageSpec
+                    {
+                        Format = ImageFormat.Png,
+                        Bytes = MinimalPng(),
+                        AltText = altText,
+                    },
+                ],
+            });
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HeadingBookmarkTitle_AloneExceedsMaxTotalTextLength_ThrowsAtConstruction()
+    {
+        var bookmarkTitle = new string('x', SpecLimits.MaxTextLength);
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(500, 500),
+                DefaultTextStyle = Style(),
+                Content = [new HeadingSpec { Text = "Heading", Level = 0, BookmarkTitle = bookmarkTitle }],
+            });
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The counterpart to the four cases above: modest slice labels and
+    /// alt text, far under every cap, must not be rejected.
+    /// </summary>
+    [Fact]
+    public void ModestPieChartAndImageText_Constructs()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(500, 500),
+            DefaultTextStyle = Style(),
+            Content =
+            [
+                new PieChartSpec
+                {
+                    Diameter = 100,
+                    Slices = [new PieSlice(1, ColorRgb.Black, "A slice")],
+                    AltText = "A pie chart",
+                },
+                new ImageSpec { Format = ImageFormat.Png, Bytes = MinimalPng(), AltText = "An image" },
+            ],
+        };
+
+        Assert.NotNull(spec);
+    }
+}
+
+/// <summary>
 /// Every one of these values was previously unverified, because
 /// every test that exercised a cap derived its own input from the constant
 /// under test, so a test could pin the PRESENCE of a check without ever

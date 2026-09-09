@@ -114,6 +114,30 @@ public sealed record DocumentSpec
     /// which is what stops <see cref="SpecLimits.MaxWalkedNodes"/> and
     /// <see cref="SpecLimits.MaxTextLength"/> from being multiplied together
     /// into an unreasonably large total.
+    /// <para>
+    /// Cycle 7 audit of every string this record can hold, against what the
+    /// walk actually counts: <see cref="HeadingSpec.Text"/>,
+    /// <see cref="HeadingSpec.BookmarkTitle"/>, <see cref="PlainTextSpec.Text"/>,
+    /// each <see cref="TextRunSpec.Text"/>, each <see cref="ListItemSpec.Text"/>
+    /// (at every depth), each <see cref="TableCellSpec.Content"/>,
+    /// <see cref="ImageSpec.AltText"/>, <see cref="PieChartSpec.AltText"/> and
+    /// every <see cref="PieSlice.Label"/> are all reachable through THIS list
+    /// and are all counted (the last two were NOT, before cycle 7: a
+    /// specification of charts with maximal-length slice labels reached
+    /// 490,220,429 characters through that gap, 24.5 times
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>, entirely inside a total
+    /// this walk was already supposed to bound). <see cref="RunningBandSpec.Template"/>
+    /// on <see cref="Header"/> and <see cref="Footer"/>, every
+    /// <see cref="DocumentMetadataSpec"/> field, an output intent's own
+    /// identifier and info string, and an <see cref="EncryptionSpec"/>
+    /// password are DELIBERATELY outside this walk: each is a single
+    /// top-level property of this record (or of a record one of those
+    /// properties holds), appearing at most once per specification, so none
+    /// of them can be multiplied by shared structure the way a list, table or
+    /// chart entry can; <see cref="SpecLimits.MaxTextLength"/> alone already
+    /// bounds each of them individually, and that bound cannot be
+    /// out-multiplied by anything reachable from a single occurrence.
+    /// </para>
     /// </remarks>
     /// <remarks>
     /// Every <see cref="TextStyleSpec"/> reachable from this list, from
@@ -311,7 +335,14 @@ public sealed record DocumentSpec
     {
         private int NodeCount { get; set; }
 
-        private long CharacterCount { get; set; }
+        /// <summary>
+        /// The running character total, exposed (not just the exceeded flag)
+        /// so <see cref="ValidateContentFitsPageArea"/> can re-run this same
+        /// walk to learn the specification's own total text volume, already
+        /// known to be at or under <see cref="SpecLimits.MaxTotalTextLength"/>
+        /// once <see cref="ValidateContent"/> has accepted it.
+        /// </summary>
+        public long CharacterCount { get; private set; }
 
         public bool NodeLimitExceeded { get; private set; }
 
@@ -330,7 +361,15 @@ public sealed record DocumentSpec
                     return TryAddCharacters(plainText.Text.Length);
 
                 case HeadingSpec heading:
-                    return TryAddCharacters(heading.Text.Length);
+                    // BookmarkTitle is a second text-bearing member of this
+                    // same node, not a separate position in the tree, so its
+                    // length is added without a further TryVisit(); see the
+                    // remark on this class for why every text-bearing member
+                    // reachable from Content, not merely the two the cycle 7
+                    // review named (PieSlice.Label and AltText), must be
+                    // counted here.
+                    return TryAddCharacters(heading.Text.Length) &&
+                        TryAddCharacters(heading.BookmarkTitle?.Length ?? 0);
 
                 case ParagraphSpec paragraph:
                     foreach (var run in paragraph.Runs)
@@ -374,9 +413,23 @@ public sealed record DocumentSpec
                     return true;
 
                 case PieChartSpec pieChart:
-                    foreach (var unused in pieChart.Slices)
+                    // AltText is this node's own text-bearing member, counted
+                    // without a further TryVisit() for the same reason as
+                    // HeadingSpec.BookmarkTitle above. Each slice IS already
+                    // visited as its own node below; slice.Label is that
+                    // node's own text and must be counted the same way every
+                    // other node's text is, which the walk did not do before
+                    // cycle 7: a document of charts with maximal-length slice
+                    // labels reached 490,220,429 characters, 24.5 times
+                    // MaxTotalTextLength, through this exact gap.
+                    if (!TryAddCharacters(pieChart.AltText?.Length ?? 0))
                     {
-                        if (!TryVisit())
+                        return false;
+                    }
+
+                    foreach (var slice in pieChart.Slices)
+                    {
+                        if (!TryVisit() || !TryAddCharacters(slice.Label?.Length ?? 0))
                         {
                             return false;
                         }
@@ -384,7 +437,11 @@ public sealed record DocumentSpec
 
                     return true;
 
+                case ImageSpec image:
+                    return TryAddCharacters(image.AltText?.Length ?? 0);
+
                 default:
+                    // LineSeparatorSpec: no text-bearing member.
                     return true;
             }
         }
@@ -573,6 +630,110 @@ public sealed record DocumentSpec
             ValidateFontReference(value.Style, embeddedFontCount, paramName);
         }
     }
+
+    /// <summary>
+    /// Confirms this specification's PAGE GEOMETRY, not merely its total text
+    /// volume, cannot force <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>,
+    /// which recurses once per page continuation, past
+    /// <see cref="SpecLimits.MaxSafePageContinuations"/> continuations; that
+    /// recursion overflows the CLR stack, which cannot be caught, so this must
+    /// run before either real consumer does any work. See the remark on
+    /// <see cref="SpecLimits.MaxSafePageContinuations"/> for the measurement:
+    /// <see cref="SpecLimits.MaxTotalTextLength"/> alone is safe only at a
+    /// content box at or above roughly the one its own worst-case measurement
+    /// used, and <see cref="Margins"/> or a tall <see cref="RunningBandSpec.Height"/>
+    /// are each, alone, enough to shrink a specification's actual content box
+    /// far below that.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="ValidateEmbeddedFontReferences"/>, this cannot be
+    /// enforced inside any one property's own <see langword="init"/>: it reads
+    /// <see cref="Page"/>, <see cref="Margins"/>, <see cref="Header"/>,
+    /// <see cref="Footer"/> and <see cref="Content"/>, five independent
+    /// top-level properties of this same record that a caller's object
+    /// initializer may set in any order, so no single one of their own
+    /// <see langword="init"/> accessors can see all five already at their
+    /// final values. <see cref="Generation.SpecRenderer.Render"/> and
+    /// <see cref="Generation.SpecCodeEmitter.Emit"/> both call this,
+    /// alongside <see cref="ValidateEmbeddedFontReferences"/>, before doing
+    /// anything else, for the identical reason.
+    /// <para>
+    /// The bound deliberately does not measure this specification's ACTUAL
+    /// glyphs or ACTUAL line height: doing so would require inspecting a
+    /// visitor-supplied embedded TrueType font's own metrics, which this
+    /// validation does not parse. Instead it assumes the widest glyph any
+    /// font <see cref="TextStyleSpec.Font"/> can select measures a full em
+    /// (<see cref="SpecLimits.MaxFontSize"/> itself), comfortably wider than
+    /// the widest Standard 14 glyph measured (Times-Bold's capital W, at
+    /// 0.989 em), and the tallest line measures <see cref="SpecLimits.MaxLeadingPoints"/>,
+    /// the same bound already established, on <see cref="SpecLimits.MaxLeadingPoints"/>'s
+    /// own remark, to safely cover both an explicit maximal
+    /// <see cref="TextStyleSpec.Leading"/> and the library's own auto-computed
+    /// line height at <see cref="SpecLimits.MaxFontSize"/>. Both assumptions
+    /// are deliberately generous in the SAFE direction: they can only make
+    /// this reject a specification that would actually have rendered, never
+    /// admit one that would not.
+    /// </para>
+    /// </remarks>
+    public void ValidateContentFitsPageArea()
+    {
+        var walk = new ContentWalkState();
+        foreach (var item in Content)
+        {
+            if (!walk.TryVisitNode(item))
+            {
+                // Content's own construction already rejects anything that
+                // reaches either limit; unreachable for a spec that exists.
+                break;
+            }
+        }
+
+        var totalTextLength = walk.CharacterCount;
+        if (totalTextLength <= 0)
+        {
+            return;
+        }
+
+        var contentWidth = Page.WidthPoints - Margins.Left - Margins.Right;
+        var contentHeight = Page.HeightPoints - Margins.Top - Margins.Bottom
+            - ReservedBandHeight(Header) - ReservedBandHeight(Footer);
+
+        var charsPerLine = (long)Math.Max(0, Math.Floor(contentWidth / SpecLimits.MaxFontSize));
+        var linesPerPage = (long)Math.Max(0, Math.Floor(contentHeight / SpecLimits.MaxLeadingPoints));
+        var charsPerPage = charsPerLine * linesPerPage;
+
+        var pagesNeeded = charsPerPage > 0
+            ? (totalTextLength + charsPerPage - 1) / charsPerPage
+            : long.MaxValue;
+
+        if (pagesNeeded > SpecLimits.MaxSafePageContinuations)
+        {
+            throw new ArgumentException(
+                $"This specification's page ({Page.WidthPoints:0.##} x {Page.HeightPoints:0.##} points) minus " +
+                "its margins and running-band heights leaves a content box too small to place its own text " +
+                $"within {SpecLimits.MaxSafePageContinuations} page continuations, at a worst-case " +
+                $"{SpecLimits.MaxFontSize}-point glyph width and {SpecLimits.MaxLeadingPoints}-point line " +
+                "height. DocumentRenderer.PlaceRenderer recurses once per page continuation and that recursion " +
+                "overflows the CLR stack, which cannot be caught. Enlarge the page, reduce the margins or " +
+                "running-band heights, or reduce the amount of text.",
+                nameof(Page));
+        }
+    }
+
+    /// <summary>
+    /// The content height a <see cref="RunningBandSpec"/> reserves for
+    /// <see cref="ValidateContentFitsPageArea"/>'s purposes: its own declared
+    /// <see cref="RunningBandSpec.Height"/> when set, or, left unset,
+    /// <see cref="SpecLimits.MaxLeadingPoints"/> as a safe upper bound on the
+    /// library's own auto-computed band height. Measured directly: an unset
+    /// header on an otherwise zero-margin 200 x 200 page pushed the crash
+    /// boundary from 90,000 characters down to between 65,000 and 68,000,
+    /// consistent with an auto-computed height of at most, not exactly,
+    /// 50 points; this assumption never UNDER-estimates the height actually
+    /// reserved, which is what keeps it safe.
+    /// </summary>
+    private static double ReservedBandHeight(RunningBandSpec? band) =>
+        band is null ? 0 : band.Height ?? SpecLimits.MaxLeadingPoints;
 
     private static EncryptionSpec? ValidateEncryption(EncryptionSpec? value)
     {

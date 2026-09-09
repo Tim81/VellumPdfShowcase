@@ -62,13 +62,22 @@ public static class SpecLimits
     /// <see cref="MaxTotalTextLength"/> (20,000, a fifth of this value) is
     /// substantially smaller than this value.
     /// <see cref="MaxTotalTextLength"/> only bounds the strings the
-    /// <see cref="Model.DocumentSpec.Content"/> walk visits; a running header or
-    /// footer <see cref="Model.RunningBandSpec.Template"/>, every
+    /// <see cref="Model.DocumentSpec.Content"/> walk visits, which, as of
+    /// cycle 7, is every text-bearing member reachable through that list:
+    /// heading text and bookmark title, plain text, paragraph run text, list
+    /// item text at every depth, table cell content, image and pie-chart
+    /// alternative text, AND a pie slice's own label (an earlier version of
+    /// this remark wrongly listed the label as outside the walk; it counted
+    /// the SLICE as a node but never its label's own length, which let
+    /// 490,220,429 characters through a total this walk exists to bound; see
+    /// the remark on <see cref="Model.DocumentSpec.Content"/>). A running
+    /// header or footer <see cref="Model.RunningBandSpec.Template"/>, every
     /// <see cref="Model.DocumentMetadataSpec"/> field, an output intent's
-    /// identifier and info string, an encryption password, and a
-    /// <see cref="VellumPdf.Layout.Core.PieSlice"/> label are all outside that
-    /// walk and carry no other length bound. This cap is the only ceiling on
-    /// each of them.
+    /// identifier and info string, and an encryption password remain outside
+    /// that walk and carry no other length bound than this cap, because each
+    /// is a single top-level property that can appear at most once per
+    /// specification and so cannot be multiplied by shared structure the way
+    /// a list, table or chart entry can.
     /// </remarks>
     public const int MaxTextLength = 100_000;
 
@@ -226,8 +235,88 @@ public static class SpecLimits
     /// margin below it; WebAssembly's stack is smaller still, which is why the
     /// margin is wide rather than exact.
     /// </para>
+    /// <para>
+    /// NOTE: the measurement above holds <see cref="Model.DocumentSpec.Margins"/>
+    /// at ZERO and uses a NARROW glyph, both of which minimise page count and
+    /// so understate the danger; this value alone does not bound the crash for
+    /// a specification whose margins or running-band heights shrink the
+    /// content box below what this measurement assumed. <see cref="MaxSafePageContinuations"/>
+    /// is the companion cap that bounds THAT case, measured with margins and
+    /// glyph width at their actual worst permitted values; see its own remark
+    /// for the geometry-dependent figures. This value remains the correct
+    /// bound for the geometry it was measured at; it was never a bound on
+    /// every geometry a specification may declare.
+    /// </para>
     /// </remarks>
     public const int MaxTotalTextLength = 20_000;
+
+    /// <summary>
+    /// The maximum number of page continuations
+    /// <see cref="Model.DocumentSpec.ValidateContentFitsPageArea"/> permits a
+    /// specification's own page geometry to require for its own total text
+    /// volume. <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
+    /// recurses once per page continuation and that recursion cannot be
+    /// caught, so this is a second, independent bound on the same hazard
+    /// <see cref="MaxTotalTextLength"/> bounds, needed because
+    /// <see cref="MaxTotalTextLength"/> alone assumes a content box large
+    /// enough to place many characters per page; a specification with large
+    /// <see cref="Model.DocumentSpec.Margins"/>, a tall <see cref="Model.RunningBandSpec"/>,
+    /// or both, can shrink that box far below what <see cref="MaxTotalTextLength"/>'s
+    /// own measurement assumed without violating any other cap in this file.
+    /// </summary>
+    /// <remarks>
+    /// Measured directly against the shipped library, holding <see cref="MaxFontSize"/>
+    /// fixed and varying the three levers the ORIGINAL <see cref="MaxTotalTextLength"/>
+    /// measurement held fixed at their least dangerous values: margins (0, not
+    /// the 72-point default), glyph width (the narrow character <c>'a'</c>,
+    /// not a wide one), and running-band height (no header or footer at all).
+    /// Re-measured with each lever moved toward its actual worst case:
+    /// <list type="bullet">
+    /// <item><description>
+    /// At a 200 x 200 page with ZERO margins, 36-point Helvetica, and the wide
+    /// character <c>'W'</c>: rendering succeeded up to 85,000 characters and
+    /// overflowed the stack at 90,000, roughly half of the 156,000/170,000
+    /// boundary <see cref="MaxTotalTextLength"/>'s own remark records for the
+    /// narrow character 'a' at the same geometry, confirming glyph width alone
+    /// roughly doubles the danger.
+    /// </description></item>
+    /// <item><description>
+    /// At the SAME page with its DEFAULT 72-point margins on every edge
+    /// (leaving a 56 x 56 content box) and the wide character, 20,000
+    /// characters, the exact figure <see cref="MaxTotalTextLength"/> permits,
+    /// overflowed the stack reliably (reproduced three times out of three,
+    /// exit code 127, "Stack overflow.", roughly 4,353
+    /// <c>DocumentRenderer.PlaceRenderer</c> frames), and the same failure
+    /// reproduced with margins of 60, 72 and 77 points, and separately with a
+    /// <see cref="Model.RunningBandSpec.Height"/> of 77 on an otherwise
+    /// zero-margin page. <see cref="MaxTotalTextLength"/>'s own 20,000-character
+    /// figure is therefore NOT safe in general: it is safe only at content
+    /// boxes at or above roughly the one this cap's own worst-permitted
+    /// regression test uses (200 x 200, zero margins), which a caller-supplied
+    /// <see cref="Model.DocumentSpec.Margins"/> or <see cref="Model.RunningBandSpec.Height"/>
+    /// is free to shrink far below.
+    /// </description></item>
+    /// <item><description>
+    /// Across every geometry tried, the page count at which the stack
+    /// overflowed stayed within a narrow band (roughly 4,250 to 4,500 pages),
+    /// consistent with the stack overflowing at a roughly fixed RECURSION
+    /// DEPTH regardless of how that depth was reached; this is what makes a
+    /// single page-count ceiling, rather than a character-count ceiling,
+    /// the correct bound to add.
+    /// </description></item>
+    /// </list>
+    /// 2,000 is chosen with headroom below that measured 4,250-to-4,500-page
+    /// boundary: it comfortably passes the existing worst-permitted-specification
+    /// regression tests (a 200 x 200, zero-margin page at <see cref="MaxFontSize"/>
+    /// and exactly <see cref="MaxTotalTextLength"/> characters computes to
+    /// roughly 1,000 page continuations under this cap's own, deliberately
+    /// generous, glyph-width assumption), while rejecting every reproduction
+    /// above, each of which computes to several thousand. WebAssembly's
+    /// smaller stack is not assumed to raise this boundary; the margin is kept
+    /// wide rather than tuned tight for the same reason <see cref="MaxTotalTextLength"/>'s
+    /// own margin is.
+    /// </remarks>
+    public const int MaxSafePageContinuations = 2_000;
 
     /// <summary>
     /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and

@@ -136,6 +136,160 @@ public class WorstPermittedSpecificationTests
 }
 
 /// <summary>
+/// Cycle 7 review: <see cref="WorstPermittedSpecificationTests"/> pins a
+/// specification that is safe but, contrary to its own name, was never the
+/// worst one every cap in <see cref="SpecLimits"/> together still permits.
+/// It measures at ZERO <see cref="DocumentSpec.Margins"/>, which MAXIMISES
+/// content area and so MINIMISES page count; the worst case is the LARGEST
+/// margins the model still allows a caller to leave in place (its own
+/// DEFAULT, 72 points a side, requires no override at all), together with a
+/// wide glyph rather than a narrow one. These tests pin that actual worst
+/// case: it must still be rejected before either real consumer performs any
+/// work, and it must be rejected through <see cref="DocumentSpec.ValidateContentFitsPageArea"/>
+/// specifically, not through some other, unrelated cap.
+/// </summary>
+public class ContentAreaValidationTests
+{
+    private static TextStyleSpec WorstStyle() => new()
+    {
+        Font = FontSpec.FromStandard14(Standard14.Helvetica),
+        FontSize = SpecLimits.MaxFontSize,
+    };
+
+    /// <summary>
+    /// The exact scenario reproduced against the shipped library: a 200 x 200
+    /// page, DEFAULT margins (left unset, per <see cref="DocumentSpec.Margins"/>'s
+    /// own 72-point default), the maximum font size, and 20,000 characters of
+    /// the repeating text "WWW " (a wide glyph, not the narrow 'a' the
+    /// superseded measurement used) in one run. Measured directly: this dies
+    /// with exit code 127, "Stack overflow.", roughly 4,353
+    /// <c>DocumentRenderer.PlaceRenderer</c> frames, reproduced three times
+    /// out of three, before this fix. <see cref="DocumentSpec"/>'s own
+    /// construction succeeds (no single property's own validation can see
+    /// <see cref="DocumentSpec.Page"/>, <see cref="DocumentSpec.Margins"/> and
+    /// <see cref="DocumentSpec.Content"/> all at their final values; see the
+    /// remark on <see cref="DocumentSpec.ValidateContentFitsPageArea"/>), so
+    /// the regression guard is that BOTH real consumers reject it before
+    /// doing any work, not that the constructor call above throws.
+    /// </summary>
+    private static DocumentSpec Repro()
+    {
+        var style = WorstStyle();
+        var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
+        Assert.Equal(SpecLimits.MaxTotalTextLength, text.Length);
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText(text, style)],
+        };
+    }
+
+    [Fact]
+    public void DefaultMarginsWideGlyphRepro_ConstructsSuccessfully()
+    {
+        // DocumentSpec construction has no way to see Page, Margins and
+        // Content all at their final values at once; see the remark on
+        // ValidateContentFitsPageArea. This is the proof that the crash
+        // genuinely requires the deferred, explicit check below, not a
+        // per-property one.
+        var spec = Repro();
+        Assert.NotNull(spec);
+    }
+
+    [Fact]
+    public void DefaultMarginsWideGlyphRepro_ValidateContentFitsPageArea_Throws()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => Repro().ValidateContentFitsPageArea());
+        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DefaultMarginsWideGlyphRepro_Render_ThrowsInsteadOfCrashing()
+    {
+        Assert.Throws<ArgumentException>(() => SpecRenderer.Render(Repro()));
+    }
+
+    [Fact]
+    public void DefaultMarginsWideGlyphRepro_Emit_ThrowsInsteadOfCrashing()
+    {
+        Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(Repro()));
+    }
+
+    /// <summary>
+    /// Confirms the rejection is specifically about the content BOX, not the
+    /// text volume: the identical text at ZERO margins on the identical page
+    /// is exactly <see cref="WorstPermittedSpecificationTests"/>'s own
+    /// pinned-safe configuration.
+    /// </summary>
+    [Fact]
+    public void SameTextAtZeroMargins_DoesNotThrow()
+    {
+        var style = WorstStyle();
+        var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            Margins = new EdgeInsets(0),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText(text, style)],
+        };
+
+        spec.ValidateContentFitsPageArea();
+    }
+
+    /// <summary>
+    /// A running header COMBINED with a moderate margin reproduces the same
+    /// crash even though neither alone, at these particular values, would:
+    /// measured directly, a 200 x 200 page with 40-point margins on every
+    /// edge and a 60-point header dies with "Stack overflow." at
+    /// <c>DocumentRenderer.CountPlaceRenderer</c>. A <see cref="RunningBandSpec.Height"/>
+    /// is therefore not a hazard this check may ignore just because it is not
+    /// itself a margin.
+    /// </summary>
+    [Fact]
+    public void MarginsAndRunningBandCombined_ValidateContentFitsPageArea_Throws()
+    {
+        var style = WorstStyle();
+        var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            Margins = new EdgeInsets(40),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText(text, style)],
+            Header = new RunningBandSpec { Template = "{page}", Style = style, Height = 60 },
+        };
+
+        Assert.Throws<ArgumentException>(() => spec.ValidateContentFitsPageArea());
+    }
+
+    /// <summary>
+    /// A small amount of text on the same shrunken content box must not be
+    /// rejected: the hazard scales with how much text there is to place, not
+    /// merely with the geometry, so this proves the check is not simply
+    /// rejecting every small content box outright.
+    /// </summary>
+    [Fact]
+    public void SmallAmountOfTextAtDefaultMargins_DoesNotThrow()
+    {
+        var style = WorstStyle();
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("WWW", style)],
+        };
+
+        spec.ValidateContentFitsPageArea();
+    }
+}
+
+/// <summary>
 /// <see cref="SpecLimits.MaxTotalTextLength"/> bounds the TOTAL characters a
 /// specification carries, which no per-string or per-collection cap can do on
 /// its own: two runs of 60,000 characters each sit under

@@ -65,6 +65,7 @@ public static class SpecRenderer
     public static byte[] Render(DocumentSpec spec)
     {
         spec.ValidateEmbeddedFontReferences();
+        spec.ValidateContentFitsPageArea();
 
         using var document = new Document
         {
