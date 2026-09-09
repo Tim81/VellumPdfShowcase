@@ -115,11 +115,108 @@
     SpecCodeEmitter.ImageLoaderName, via exactly this attribute) were
     rewritten to have no unreachable branch to exclude in the first place.
     Every line this gate sees is unconditionally live. If a future change
-    reintroduces a genuinely unreachable defensive arm that cannot be
+    reintroduces a genuinely unreachable defensive arm that IS protected by
+    the symmetry guard (VellumPdfShowcase.Tests.SymmetryTests) and cannot be
     designed away the same way, [ExcludeFromCodeCoverage] on the smallest
     possible extracted member remains the correct tool, per the failure
-    message below; it is documented here as the fallback, not because one
-    is in use today.
+    message below. Do NOT treat "eliminate the branch" as the only
+    acceptable remedy for a genuinely unreachable defensive arm: round nine
+    found that incentive itself caused two live divergences between
+    SpecRenderer and SpecCodeEmitter, because eliminating an arm from one
+    side is not the same act as eliminating it from both, and this gate
+    could not see the difference; see ROUND NINE FIX below.
+
+.ROUND NINE FIX: THE INCENTIVE THIS GATE CREATES
+    Cycle 7's redesign correctly closed the specific branches it found, but
+    left a standing incentive: "no unreached branch" reads, to a future
+    change, as "delete whichever arm is unreached", and a defensive arm can
+    become unreached on ONE side of the SpecRenderer / SpecCodeEmitter pair
+    without the same change touching the other side at all. That is exactly
+    what produced round nine's HIGH 1 and HIGH 2: SpecRenderer's own
+    defensive arms for an unrecognised ContentItemSpec and an out-of-range
+    FontKind were removed (or never added) while SpecCodeEmitter's
+    equivalents survived, because some test happened to reach
+    SpecCodeEmitter's arm but nothing symmetric existed for SpecRenderer's.
+    This gate stayed at 100% throughout, on both sides, because each side's
+    OWN branches were each reached by something; nothing here compares the
+    two sides to each other at all, and nothing here ever will, because
+    that is not a property of one method's own branches.
+
+    The fix has two parts. First, this file's REMEDY GUIDANCE, printed on
+    failure, no longer names "redesign the branch away" as the first or only
+    acceptable remedy for a defensive arm; it names the symmetry guard as
+    the tool that actually protects a defensive arm's CORRECTNESS (whether
+    both sides agree about the input that reaches it), which branch coverage
+    was never positioned to check regardless of how it is met. Second,
+    VellumPdfShowcase.Tests.SymmetryTests.RenderAndEmitAgreeOnArgumentRejection
+    is now the PRIMARY guard for the round-trip invariant, run over every
+    DocumentSpecSamples entry plus a corpus of adversarial specifications;
+    this gate remains a secondary, complementary check (see PROPERTY
+    ENFORCED) that a line is reachable at all, never a check that the two
+    consumers agree about what running it produces.
+
+.KNOWN LIMITATION: COMPILER-GENERATED CLOSURES ARE INVISIBLE HERE
+    Coverlet's Cobertura report OMITS compiler-generated CLOSURE classes
+    (<>c and <>c__DisplayClassN_M, generated for a lambda that captures no
+    or some outer state) entirely; a branch inside a lambda body is
+    therefore invisible to this gate regardless of whether any test reaches
+    it. Demonstrated on SHIPPED code, twice. First, empirically: inspecting
+    a Cobertura report instrumented over this exact namespace lists ten
+    classes, three of them compiler-generated ITERATOR state machines
+    (SpecCodeEmitter/<CollectTextStyles>d__5 and its two overloads) and ZERO
+    compiler-generated CLOSURE classes, despite the emitter shipping
+    branch-bearing lambdas at the time (EmitPermissions' Where predicate at
+    what was then SpecCodeEmitter.cs line 1121, EmitPageSizeInitializer's
+    Where predicate, EmitUsings' Content.OfType<ImageSpec>().Any() and
+    EmitRequiredAssetsComment's identical check). Iterator state machines
+    ARE caught by this gate; closures are NOT, for reasons internal to how
+    coverlet resolves a sequence point's declaring type, not anything this
+    script controls. Second, directly: appending a never-false conjunct to
+    EmitPermissions' own predicate left this gate at exit 0 reporting 100%
+    on a version of the emitter whose outcome that conjunct never actually
+    took. No coverlet option to instrument closures was found (its GitHub
+    issue tracker and documentation were searched; none is documented as of
+    this writing). The mitigation actually in place here is NOT a gate
+    setting: keep a lambda body itself free of branches wherever the
+    ImageLoaders/ToTextStyle/ImageLoaderName pattern applies (a lookup table
+    or a two-way comparison has no branch for either coverlet or this gate
+    to miss), and rely on VellumPdfShowcase.Tests.SymmetryTests and
+    SpecRoundTripTests, not this gate, for a lambda body's correctness. This
+    is a genuine, unclosed gap in what this gate can promise; it is recorded
+    here, rather than left for a reader to discover by surprise, because a
+    gate that silently cannot see an entire category of branch is worse than
+    one that says so.
+
+.KNOWN LIMITATION: SCOPE DOES NOT YET COVER MODEL OR COMPONENTS.PAGES
+    This gate instruments VellumPdfShowcase.Web.Generation only.
+    VellumPdfShowcase.Web.Model carries ValidateContentFitsPageArea and the
+    whole content walk both real consumers call before doing anything else,
+    and VellumPdfShowcase.Web.Components.Pages will carry whatever UI steps
+    6 and 8 of the plan add; neither is instrumented today, so a branch
+    added to either is as invisible to this gate as one in a closure is.
+    Widening --coverlet-include to VellumPdfShowcase.Web.Model.* was tried
+    directly while fixing this: measured, the suite as it stands reaches
+    98.58% line and 93.45% branch coverage there, roughly forty untested
+    branches spread across some fifteen types, the large majority a
+    `value ?? throw ArgumentNullException` or `value is null ? null :
+    Validate(...)` pattern on a required or optional member whose null (or
+    boundary) case has never been paired with a test, the same shape as the
+    Medium 1 fix elsewhere in this round. Turning that widened include on
+    without first closing those gaps would fail this gate outright; closing
+    forty scattered gaps was judged disproportionate to fold into this
+    round's fix, which already touches DocumentSpec.cs extensively for
+    unrelated reasons, so the include remains Generation-only and this
+    measurement is recorded here as the reason, not silently deferred.
+    Widening to Model is real, tractable follow-up work; widening to
+    Components.Pages first needs a UI test harness (bUnit or equivalent)
+    this project does not yet have, since VellumPdfShowcase.Web.Components.Pages.Smoke
+    is Blazor component code with JS interop, not pure logic.
+
+    What IS in place now: the SENTINEL check below, so that migrating a
+    round-trip-relevant type OUT of the instrumented namespace (rather than
+    merely failing to instrument a namespace that was never in scope) is
+    caught immediately rather than silently narrowing what this gate
+    protects.
 
 .PARAMETER Configuration
     Build configuration to run the test project under. Defaults to Debug,
@@ -220,6 +317,36 @@ if ($targetClasses.Count -eq 0) {
     exit 1
 }
 
+# Medium 2 (round nine): migration out of the instrumented namespace,
+# distinct from a namespace never being in scope, is otherwise silent. A
+# round-trip-relevant type moved out of VellumPdfShowcase.Web.Generation (to
+# a differently-named file, a nested namespace, or elsewhere entirely)
+# without updating $coverletInclude to match would simply stop appearing in
+# $targetClasses, and every check below would keep passing over whatever
+# remained, with nothing to say the omission happened at all. Every type
+# named here is expected, unconditionally, to appear among $targetClasses;
+# a reader adding a new round-trip-relevant type to this namespace should
+# add it here too, so ITS OWN future migration out of scope is caught the
+# same way.
+$expectedTypes = @(
+    'VellumPdfShowcase.Web.Generation.SpecRenderer',
+    'VellumPdfShowcase.Web.Generation.SpecCodeEmitter',
+    'VellumPdfShowcase.Web.Generation.ConformanceMapping',
+    'VellumPdfShowcase.Web.Generation.SpecAssets'
+)
+$seenTypeNames = $targetClasses | ForEach-Object { $_.name }
+$missingTypes = $expectedTypes | Where-Object { $seenTypeNames -notcontains $_ }
+if ($missingTypes.Count -gt 0) {
+    Write-Error (
+        "The coverage report is missing $($missingTypes.Count) type(s) this gate expects to find in " +
+        "${targetNamespaceLabel}: $($missingTypes -join ', '). Each was either renamed, moved to a namespace " +
+        "`$coverletInclude` ($coverletInclude) no longer matches, or genuinely deleted. If it moved " +
+        "deliberately, update `$coverletInclude` (and `$expectedTypes` in this script) to follow it; a type " +
+        "silently leaving this gate's scope is exactly the failure mode this check exists to catch."
+    )
+    exit 1
+}
+
 $findings = [System.Collections.Generic.List[string]]::new()
 
 foreach ($class in $targetClasses) {
@@ -253,14 +380,27 @@ if ($findings.Count -gt 0) {
 
     Write-Host ''
     Write-Host 'The expected remedy is a DocumentSpecSamples case that reaches the missing outcome; add one.'
+    Write-Host ''
+    Write-Host 'Round nine review: "eliminate the branch" is NOT the only acceptable remedy, and treating it as'
+    Write-Host 'the default one is what deleted a live defensive arm from SpecRenderer while SpecCodeEmitter kept'
+    Write-Host 'its own equivalent, with this gate green on both sides throughout (HIGH 1 and HIGH 2). A branch'
+    Write-Host 'that is a genuine, symmetric defensive arm on BOTH SpecRenderer and SpecCodeEmitter, and that is'
+    Write-Host 'covered by VellumPdfShowcase.Tests.SymmetryTests asserting the two agree about the input that'
+    Write-Host 'reaches it, is an ACCEPTABLE outcome for this gate to flag, not a defect to design away; add the'
+    Write-Host 'missing DocumentSpecSamples case (or, if the branch is provably unreachable from the public API,'
+    Write-Host 'a targeted symmetry-guard case proving both sides would agree if it were ever reached) rather'
+    Write-Host 'than deleting the arm to satisfy this gate alone.'
+    Write-Host ''
     Write-Host 'If the branch belongs to a switch default arm that the compiler requires but the public API'
-    Write-Host 'makes unreachable, first consider redesigning it away entirely, the way SpecRenderer.ImageLoaders'
-    Write-Host 'and SpecRenderer.ToTextStyle do: a lookup table or a two-way comparison has no unreachable branch'
-    Write-Host 'to exclude, unlike an extracted-and-excluded throw, whose ENCLOSING switch still shows the'
-    Write-Host 'default arm as untaken regardless of where the throw itself lives. Only if the branch is'
-    Write-Host 'PROVABLY unreachable AND cannot be designed away is [ExcludeFromCodeCoverage] the right tool,'
-    Write-Host 'and even then only on the smallest possible extracted member, with a comment stating why:'
-    Write-Host 'exclusion is the last resort here, not the default remedy for a coverage gap.'
+    Write-Host 'makes genuinely, provably unreachable (a closed set enforced at construction, the way'
+    Write-Host 'DocumentSpec.Content and FontSpec.Kind now are), consider redesigning it away entirely, the way'
+    Write-Host 'SpecRenderer.ImageLoaders and SpecRenderer.ToTextStyle do: a lookup table or a two-way comparison'
+    Write-Host 'has no unreachable branch to exclude, unlike an extracted-and-excluded throw, whose ENCLOSING'
+    Write-Host 'switch still shows the default arm as untaken regardless of where the throw itself lives. Only'
+    Write-Host 'when eliminating the branch would also remove a defensive arm the symmetry guard still needs is'
+    Write-Host '[ExcludeFromCodeCoverage] the right tool instead, on the smallest possible extracted member, with'
+    Write-Host 'a comment stating why: exclusion is the last resort here, not the default remedy for a coverage'
+    Write-Host 'gap, and neither is deletion.'
     exit 1
 }
 
