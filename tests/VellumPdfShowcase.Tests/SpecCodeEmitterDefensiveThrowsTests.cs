@@ -4,20 +4,24 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// The two <c>default</c> arms of <see cref="SpecCodeEmitter"/> that ARE
-/// reachable from a fully validated <see cref="DocumentSpec"/>, unlike the
-/// image-format arm documented on the private
-/// <c>SpecCodeEmitter.ImageLoaderName</c>. Neither <see cref="ContentItemSpec"/>
-/// nor <see cref="FontKind"/> is checked for exhaustiveness anywhere in the
-/// model: <see cref="ContentItemSpec"/> is a public, non-sealed hierarchy any
-/// assembly may extend, and <see cref="FontSpec.Kind"/> carries no range
-/// check the way <see cref="ImageSpec.Format"/> does through
-/// <see cref="ImageSignature"/>.
+/// The symmetry gap round nine found HIGH: <see cref="ContentItemSpec"/> is a
+/// public, non-sealed hierarchy any assembly may extend, and <see cref="FontSpec.Kind"/>
+/// carried no range check, so both an unrecognised content item and an
+/// out-of-range <see cref="FontKind"/> could reach a fully constructed
+/// <see cref="DocumentSpec"/>. <see cref="Generation.SpecRenderer"/>'s own
+/// switches carried no <see langword="default"/> arm at all (silently
+/// rendering as though the item were absent, or Helvetica for the font case),
+/// while <see cref="Generation.SpecCodeEmitter"/>'s DID, and threw: the two
+/// consumers disagreed about the identical <see cref="DocumentSpec"/>, which
+/// is exactly the divergence CLAUDE.md's round-trip invariant forbids.
 /// <para>
-/// A round-trip byte comparison cannot exercise either arm, since both throw
-/// before a single byte is produced, so these tests assert the throw and its
-/// message directly, following the pattern already established by
-/// <see cref="ConformanceMappingTests.ToPreflightProfile_UnrecognisedMember_Throws"/>.
+/// The fix moved both checks to construction, in <see cref="DocumentSpec.Content"/>
+/// and <see cref="FontSpec.Kind"/> respectively, rather than adding a matching
+/// defensive arm to <see cref="Generation.SpecRenderer"/>: a value that cannot
+/// reach either consumer's switch needs no arm, on either side, to reject it
+/// there. These tests now pin the REJECTION at construction, the narrowest
+/// point it can be pinned, rather than at <see cref="Generation.SpecCodeEmitter.Emit"/>,
+/// which the offending value can no longer reach at all.
 /// </para>
 /// </summary>
 public class SpecCodeEmitterDefensiveThrowsTests
@@ -26,47 +30,71 @@ public class SpecCodeEmitterDefensiveThrowsTests
         new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
 
     /// <summary>
-    /// A <see cref="ContentItemSpec"/> outside the eight types
-    /// <see cref="SpecCodeEmitter"/> recognises. <see cref="DocumentSpec.Content"/>'s
-    /// own walk (<c>ContentWalkState.TryVisitNode</c>) falls through an
-    /// unrecognised type without rejecting it, so this passes construction
-    /// cleanly and reaches <c>SpecCodeEmitter.EmitContentItem</c> unchanged.
+    /// A <see cref="ContentItemSpec"/> outside the eight types both consumers
+    /// recognise. Before the fix, <see cref="DocumentSpec.Content"/>'s own
+    /// walk (<c>ContentWalkState.TryVisitNode</c>) fell through it without
+    /// rejecting it, so it passed construction cleanly; measured directly, a
+    /// document containing one alongside an ordinary <see cref="PlainTextSpec"/>
+    /// rendered byte-identical output to one without it, while
+    /// <see cref="Generation.SpecCodeEmitter.Emit"/> threw for the same
+    /// specification.
     /// </summary>
     private sealed record UnrecognisedContentItemSpec : ContentItemSpec;
 
     [Fact]
-    public void Emit_UnrecognisedContentItemType_ThrowsArgumentOutOfRangeException()
+    public void DocumentSpec_UnrecognisedContentItemType_ThrowsAtConstruction()
     {
-        var spec = new DocumentSpec
-        {
-            Page = new PageSizeSpec(200, 200),
-            DefaultTextStyle = Style(),
-            Content = [new UnrecognisedContentItemSpec()],
-        };
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [new UnrecognisedContentItemSpec()],
+            });
 
-        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => SpecCodeEmitter.Emit(spec));
-        Assert.Contains("Unrecognised content item type", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("neither SpecRenderer nor SpecCodeEmitter recognises", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// <see cref="FontSpec.Kind"/> is checked only for equality against
-    /// <see cref="FontKind.Embedded"/> (to bound-check <see cref="FontSpec.EmbeddedFontIndex"/>),
-    /// never for membership in <see cref="FontKind"/>'s two named values, so a
-    /// value outside them passes every validation up to
-    /// <c>SpecCodeEmitter.BuildTextStyleExpression</c>'s own switch.
+    /// A <see langword="null"/> item in <see cref="DocumentSpec.Content"/>.
+    /// Before the fix, the same silent fall-through as
+    /// <see cref="UnrecognisedContentItemSpec"/> above swallowed it: a
+    /// switch on a <see langword="null"/> value matches no
+    /// <c>case ContentItemSpec-subtype</c> pattern and falls to whatever the
+    /// switch does for an unmatched value, so it passed construction, was
+    /// skipped by <see cref="Generation.SpecRenderer.Render"/>, and surfaced
+    /// only later and unhelpfully, as "The document has no pages" once every
+    /// other item had ALSO been skipped, rather than as a message naming the
+    /// actual problem.
     /// </summary>
     [Fact]
-    public void Emit_UnrecognisedFontKind_ThrowsArgumentOutOfRangeException()
+    public void DocumentSpec_NullContentItem_ThrowsAtConstruction()
     {
-        var invalidStyle = new TextStyleSpec { Font = new FontSpec { Kind = (FontKind)99 } };
-        var spec = new DocumentSpec
-        {
-            Page = new PageSizeSpec(200, 200),
-            DefaultTextStyle = Style(),
-            Content = [new PlainTextSpec { Text = "x", Style = invalidStyle }],
-        };
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [null!],
+            });
 
-        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => SpecCodeEmitter.Emit(spec));
-        Assert.Contains("Unrecognised font kind", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Content", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <see cref="FontSpec.Kind"/> is a public, <see langword="required"/>
+    /// <see langword="init"/> member of a public enumeration with two named
+    /// values and, before the fix, no range check at all: reachable directly
+    /// through <c>new FontSpec { Kind = (FontKind)99 }</c>, not only through
+    /// the two factory methods. Measured directly: a style built this way
+    /// rendered byte-identical to Helvetica through <see cref="Generation.SpecRenderer"/>,
+    /// while <see cref="Generation.SpecCodeEmitter.Emit"/> threw for the
+    /// identical specification.
+    /// </summary>
+    [Fact]
+    public void FontSpec_UnrecognisedKind_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => new FontSpec { Kind = (FontKind)99 });
+        Assert.Contains("Kind", exception.Message, StringComparison.Ordinal);
     }
 }

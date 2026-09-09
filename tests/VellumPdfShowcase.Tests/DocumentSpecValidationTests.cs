@@ -261,6 +261,25 @@ public class DocumentSpecValidationTests
             return false;
         }
 
+        if (underlyingType.IsInterface)
+        {
+            // Round nine, HIGH 4: an interface-typed member (IReadOnlyList<T>
+            // is the shape plan section 3.4.0.1 names by example, a dash
+            // pattern) has no instance FIELDS of its own for the recursion
+            // below to find, so the original check fell through to
+            // `fields.All(...)` over an EMPTY array, which is vacuously true.
+            // Measured directly: HasValueEquality(typeof(IReadOnlyList<int>))
+            // returned true before this fix. An interface is also not
+            // IsClass, so the behavioural blank-instance check above never
+            // ran for it either. Nothing about the STATIC field type tells
+            // this method what concrete type will actually be stored there
+            // at runtime (List<T>, T[], and ImmutableArray<T> all satisfy
+            // IReadOnlyList<T> and differ in whether they implement value
+            // equality), so there is no safe way to recurse further: treated
+            // as unsafe, the same as an array.
+            return false;
+        }
+
         visiting ??= [];
         if (!visiting.Add(underlyingType))
         {
@@ -300,12 +319,13 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
-    /// Proves <see cref="HasValueEquality"/> itself rejects each of the three
-    /// shapes the cycle 7 review named, none of which the ORIGINAL guard
-    /// (wave through every value type; accept any override at all) caught.
-    /// Each nested type below exists only to be fed to <see cref="HasValueEquality"/>
-    /// directly; none is a member of <see cref="TextStyleSpec"/>, so this
-    /// does not depend on, or risk corrupting, the model itself.
+    /// Proves <see cref="HasValueEquality"/> itself rejects each of the four
+    /// shapes review has named (three from cycle 7, the interface-typed
+    /// member from round nine's own HIGH 4), none of which the shape's own
+    /// PREVIOUS guard caught. Each nested type below exists only to be fed to
+    /// <see cref="HasValueEquality"/> directly; none is a member of
+    /// <see cref="TextStyleSpec"/>, so this does not depend on, or risk
+    /// corrupting, the model itself.
     /// </summary>
     public class HasValueEqualityGuardTests
     {
@@ -364,6 +384,48 @@ public class DocumentSpecValidationTests
         [Fact]
         public void StructuralEqualityOverride_IsAccepted() =>
             Assert.True(HasValueEquality(typeof(StructuralEqualityOverride)));
+
+        /// <summary>
+        /// Plan section 3.4.0.1's own named example, verbatim: "a dash
+        /// pattern for instance". Before the interface fix above, this
+        /// vacuously passed: <c>IReadOnlyList&lt;double&gt;</c> is not a
+        /// class, not an array, and has no fields of its own for the
+        /// recursion to inspect, so <c>fields.All(...)</c> over an empty
+        /// array returned <see langword="true"/>. Measured directly against
+        /// the guard as it stood in round nine: <c>HasValueEquality(typeof(IReadOnlyList&lt;int&gt;))</c>
+        /// was <see langword="true"/>.
+        /// </summary>
+        private sealed record DashPatternHazard
+        {
+            public IReadOnlyList<double>? DashPattern { get; init; }
+        }
+
+        [Fact]
+        public void DashPatternInterfaceMember_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(IReadOnlyList<double>)));
+
+        /// <summary>
+        /// The concrete failure <see cref="DashPatternInterfaceMember_IsRejected"/>
+        /// exists to catch: two <see cref="DashPatternHazard"/> instances
+        /// holding separately-allocated but content-equal <see cref="List{T}"/>
+        /// instances are NOT <c>Equals</c>, because <see cref="List{T}"/> does
+        /// not override <see cref="object.Equals(object?)"/>, and neither does
+        /// the compiler-generated per-field comparison a C# <see langword="record"/>
+        /// performs for a member of an interface type it cannot see through.
+        /// This is precisely the divergence plan section 3.4.0.1 warns a
+        /// list- or array-typed <see cref="TextStyleSpec"/> member would
+        /// silently reintroduce: <see cref="Generation.SpecRenderer"/>'s style
+        /// cache and <see cref="Generation.SpecCodeEmitter"/>'s style hoisting
+        /// would stop agreeing about which styles are the same one.
+        /// </summary>
+        [Fact]
+        public void DashPatternHazard_TwoContentEqualInstances_AreNotEqual()
+        {
+            var first = new DashPatternHazard { DashPattern = new List<double> { 1, 2, 3 } };
+            var second = new DashPatternHazard { DashPattern = new List<double> { 1, 2, 3 } };
+
+            Assert.NotEqual(first, second);
+        }
     }
 }
 
@@ -552,6 +614,48 @@ public class TextRunSpecValidationTests
     {
         Assert.Throws<ArgumentNullException>(() =>
             new ParagraphSpec { Runs = [new TextRunSpec("x", null!)] });
+    }
+}
+
+/// <summary>
+/// Round nine review, Medium 1: the same shape of gap
+/// <see cref="TextRunSpecValidationTests"/> closed for <see cref="TextRunSpec.Style"/>
+/// survived in three further <see langword="required"/> members with no null
+/// check of their own: <see cref="RunningBandSpec.Style"/>,
+/// <see cref="DocumentSpec.DefaultTextStyle"/>, and <see cref="TextStyleSpec.Font"/>.
+/// Each reached <see cref="NullReferenceException"/> from a downstream
+/// dereference in <see cref="SpecRenderer"/> or <see cref="Generation.SpecCodeEmitter"/>,
+/// which made <see cref="SpecRenderer.Render"/>'s documented exception
+/// contract false the same way. These tests pin each fix at the narrowest
+/// point it can be pinned: the offending record's own construction.
+/// </summary>
+public class RequiredMemberNullValidationTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    [Fact]
+    public void RunningBandSpec_NullStyle_ThrowsAtConstruction()
+    {
+        Assert.Throws<ArgumentNullException>(() => new RunningBandSpec { Template = "{page}", Style = null! });
+    }
+
+    [Fact]
+    public void DocumentSpec_NullDefaultTextStyle_ThrowsAtConstruction()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = null!,
+                Content = [new PlainTextSpec { Text = "x" }],
+            });
+    }
+
+    [Fact]
+    public void TextStyleSpec_NullFont_ThrowsAtConstruction()
+    {
+        Assert.Throws<ArgumentNullException>(() => new TextStyleSpec { Font = null! });
     }
 }
 

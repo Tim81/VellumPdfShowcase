@@ -333,6 +333,220 @@ public class TotalTextLengthLimitTests
 
         Assert.NotNull(spec);
     }
+
+    /// <summary>
+    /// Round nine review, Medium 3: <see cref="TextStyleSpec.LinkUri"/> is
+    /// reachable through <see cref="DocumentSpec.Content"/> at every run of a
+    /// paragraph but was never counted toward <see cref="SpecLimits.MaxTotalTextLength"/>.
+    /// Ten runs, each carrying only a one-character <see cref="TextRunSpec.Text"/>
+    /// but a distinct, maximal-length (<see cref="SpecLimits.MaxUriLength"/>,
+    /// 2,048) <see cref="TextStyleSpec.LinkUri"/>, sum to 10 characters of
+    /// TEXT but 20,490 characters once the links are counted too, over the
+    /// limit; before this fix, only the 10 was counted and this constructed
+    /// successfully.
+    /// </summary>
+    [Fact]
+    public void ManyRunsWithMaximalLinkUri_ThrowsAtConstruction()
+    {
+        var uri = "https://example.com/" + new string('a', SpecLimits.MaxUriLength - "https://example.com/".Length);
+        Assert.Equal(SpecLimits.MaxUriLength, uri.Length);
+
+        List<TextRunSpec> runs = [.. Enumerable.Range(0, 10).Select(_ =>
+            new TextRunSpec("x", new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), LinkUri = uri }))];
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [new ParagraphSpec { Runs = runs }],
+            });
+
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Round nine review, Medium 3: <see cref="ListItemSpec.Language"/> is
+    /// reachable through <see cref="DocumentSpec.Content"/> at every depth a
+    /// list can nest to but was never counted toward
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>. 600 list items, each with
+    /// empty <see cref="ListItemSpec.Text"/> but a maximal-length
+    /// (<see cref="SpecLimits.MaxLanguageTagLength"/>, 35) <see cref="ListItemSpec.Language"/>,
+    /// sum to zero characters of TEXT but 21,000 once the language tags are
+    /// counted too, over the limit; before this fix, only the (zero) text
+    /// length was counted and this constructed successfully.
+    /// </summary>
+    [Fact]
+    public void ManyListItemsWithMaximalLanguage_ThrowsAtConstruction()
+    {
+        var language = new string('a', SpecLimits.MaxLanguageTagLength);
+        List<ListItemSpec> items = [.. Enumerable.Range(0, 600).Select(_ => new ListItemSpec { Text = "", Language = language })];
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [new ListSpec { Style = ListStyle.Unordered, Items = items }],
+            });
+
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// Round nine, HIGH 3: the page-area bound assumed characters pack densely
+/// onto a line, but rendered LINE COUNT is driven by NODE count, not
+/// character count. A list item, a table row, or any other block-level
+/// element starts a new rendered line regardless of how few characters it
+/// carries, so a specification with very little text but very many
+/// line-forcing nodes could pass a character-only estimate and still force
+/// far more page continuations than <see cref="SpecLimits.MaxSafePageContinuations"/>
+/// permits. <see cref="DocumentSpec.ValidateContentFitsPageArea"/> now takes,
+/// per element of <see cref="DocumentSpec.Content"/>, the greater of an
+/// estimated text-wrap line count and a node-forced line count (list items at
+/// every depth, table rows), and compares the WORST single element against
+/// the continuation limit, never a sum across every element (recursion
+/// unwinds between top-level elements; see that method's own remark).
+/// </summary>
+public class LineBasedPageAreaTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+
+    /// <summary>
+    /// The reproduction independently measured for this finding: a
+    /// 20,000 x 200 point page, 55-point margins, and one list of 1,650 items
+    /// each carrying two children (4,950 <see cref="ListItemSpec"/> instances
+    /// in total, matching the walk's own node count of 4,951 once the one
+    /// <see cref="ListSpec"/> itself is included), each holding the single
+    /// character <c>"W"</c>. Characters used: 4,950 of
+    /// <see cref="SpecLimits.MaxTotalTextLength"/> (20,000). Content items
+    /// used: 1 of <see cref="SpecLimits.MaxContentItems"/> (2,000). Before
+    /// this fix, a character-only estimate saw almost no text (roughly 9 page
+    /// continuations at this geometry) and passed both
+    /// <see cref="DocumentSpec.ValidateContentFitsPageArea"/> and, downstream,
+    /// <c>DocumentRenderer.PlaceRenderer</c>'s own recursion, which recurses
+    /// once per RENDERED LINE and so once per list item here: 4,950 of them,
+    /// far more than <see cref="SpecLimits.MaxSafePageContinuations"/> permits
+    /// at this geometry's roughly one line per page.
+    /// </summary>
+    private static DocumentSpec ManyShortListItemsRepro()
+    {
+        List<ListItemSpec> topLevelItems = [];
+        for (var i = 0; i < 1_650; i++)
+        {
+            topLevelItems.Add(new ListItemSpec
+            {
+                Text = "W",
+                Children = [new ListItemSpec { Text = "W" }, new ListItemSpec { Text = "W" }],
+            });
+        }
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(20_000, 200),
+            Margins = new EdgeInsets(55),
+            DefaultTextStyle = Style(),
+            Content = [new ListSpec { Style = ListStyle.Unordered, Items = topLevelItems }],
+        };
+    }
+
+    [Fact]
+    public void ManyShortListItemsRepro_ConstructsSuccessfully()
+    {
+        // DocumentSpec construction bounds node COUNT (MaxWalkedNodes, 5,000)
+        // and total characters (MaxTotalTextLength, 20,000) independently of
+        // page geometry; 4,951 nodes and 4,950 characters sit comfortably
+        // under both, so construction alone cannot catch this specification.
+        // This is the proof that the crash genuinely requires the deferred,
+        // geometry-aware check below, not a per-property or per-collection one.
+        var spec = ManyShortListItemsRepro();
+        Assert.NotNull(spec);
+    }
+
+    [Fact]
+    public void ManyShortListItemsRepro_ValidateContentFitsPageArea_Throws()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => ManyShortListItemsRepro().ValidateContentFitsPageArea());
+        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ManyShortListItemsRepro_Render_ThrowsInsteadOfRiskingAnUncatchableOverflow() =>
+        Assert.Throws<ArgumentException>(() => SpecRenderer.Render(ManyShortListItemsRepro()));
+
+    [Fact]
+    public void ManyShortListItemsRepro_Emit_ThrowsInsteadOfRiskingAnUncatchableOverflow() =>
+        Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(ManyShortListItemsRepro()));
+
+    /// <summary>
+    /// The counterpart the OLD, sum-across-the-document design would have
+    /// gotten wrong in the other direction: many small, INDEPENDENT top-level
+    /// elements, each individually trivial, must not be rejected merely
+    /// because their line counts would exceed the continuation limit if
+    /// summed. Measured directly against the shipped library: twenty
+    /// thousand pages built from twenty thousand separate top-level elements
+    /// renders cleanly, because <c>DocumentRenderer</c>'s recursion unwinds
+    /// between top-level elements; only the worst SINGLE element's own line
+    /// count may be compared against <see cref="SpecLimits.MaxSafePageContinuations"/>.
+    /// This document has <see cref="SpecLimits.MaxContentItems"/> (2,000)
+    /// separate one-line paragraphs; a sum-based bound at this geometry would
+    /// reject it (2,000 lines summed against a one-line-per-page geometry is
+    /// exactly at the continuation ceiling, and any larger document would
+    /// exceed it, despite MaxContentItems alone permitting many more separate,
+    /// individually trivial elements than that).
+    /// </summary>
+    [Fact]
+    public void ManySeparateTrivialElements_DoesNotThrow()
+    {
+        // Every item is a single character, so each contributes exactly one
+        // line at this geometry, regardless of index.
+        List<ContentItemSpec> content = [.. Enumerable.Range(0, SpecLimits.MaxContentItems).Select(_ => (ContentItemSpec)new PlainTextSpec { Text = "x" })];
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = content,
+        };
+
+        spec.ValidateContentFitsPageArea();
+    }
+
+    /// <summary>
+    /// A table whose rows carry negligible text but many of them, the same
+    /// hazard shape as <see cref="ManyShortListItemsRepro"/> but for
+    /// <see cref="TableRowSpec"/> rather than <see cref="ListItemSpec"/>: a
+    /// row starts a new rendered line regardless of how few characters its
+    /// cells carry. The page is narrow (200 points wide, 10-point side
+    /// margins, leaving a content box only 5 characters wide at
+    /// <see cref="SpecLimits.MaxFontSize"/>), so a 6-character cell already
+    /// needs two wrapped lines; <see cref="SpecLimits.MaxTableRows"/> rows
+    /// (2,000, the model's own ceiling) of that cell reach 4,000 total lines
+    /// while staying at 12,000 characters, comfortably under
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>. At one line per row alone,
+    /// 2,000 rows would land EXACTLY at the continuation limit rather than
+    /// past it, since the row cap and the continuation cap happen to share
+    /// the same value, which is why this uses two lines per row instead.
+    /// </summary>
+    [Fact]
+    public void ManyShortTableRows_ValidateContentFitsPageArea_Throws()
+    {
+        var cellContent = new string('x', 6);
+        List<TableRowSpec> rows = [.. Enumerable.Range(0, SpecLimits.MaxTableRows).Select(_ => new TableRowSpec { Cells = [new TableCellSpec { Content = cellContent }] })];
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            Margins = new EdgeInsets(60, 10, 60, 10),
+            DefaultTextStyle = Style(),
+            Content = [new TableSpec { Rows = rows }],
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => spec.ValidateContentFitsPageArea());
+        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>Measured directly: <c>HeadingRenderer.HeadingStructType</c> clamps every level outside this range to the same structure type an H6 heading gets, so the model rejects them instead of letting the library silently clamp.</summary>
