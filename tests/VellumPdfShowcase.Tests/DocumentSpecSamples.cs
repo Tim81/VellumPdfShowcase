@@ -755,14 +755,26 @@ internal static class DocumentSpecSamples
     /// <see cref="PdfPermissions.All"/> and <see cref="EncryptionSpec.EncryptMetadata"/>
     /// at its own default (<see langword="true"/>): a separate
     /// <c>EncryptedWithDefaults</c> sample once existed for that second
-    /// property alone, but removing it left every test and the branch-
-    /// coverage gate green, since <see cref="EncryptedNoPermissions"/> and
-    /// <see cref="EncryptedOwnerPasswordOnly"/> also leave
-    /// <see cref="EncryptionSpec.EncryptMetadata"/> unset (only
-    /// <see cref="Encrypted"/> sets it explicitly), so nothing
-    /// <c>EncryptedWithDefaults</c> claimed to cover was actually unique to
-    /// it.
+    /// property alone.
     /// </summary>
+    /// <remarks>
+    /// Round nine review (LOW): the justification originally recorded here
+    /// for removing <c>EncryptedWithDefaults</c> was that doing so "left
+    /// every test and the branch-coverage gate green", which is exactly the
+    /// REACHABILITY-only reasoning the gate's own documentation (see its
+    /// PROPERTY ENFORCED section) warns is not enough: a line staying
+    /// reached says nothing about whether removing a sample also removed an
+    /// OBSERVABLE assertion nothing else makes. The removal is sound for a
+    /// narrower, OBSERVABLE reason instead: <see cref="EncryptedNoPermissions"/>
+    /// and <see cref="EncryptedOwnerPasswordOnly"/> also leave
+    /// <see cref="EncryptionSpec.EncryptMetadata"/> unset, and both are
+    /// round-tripped through <c>SpecRoundTripTests.AssertEncryptedRoundTripAsync</c>,
+    /// which reads the saved <c>/Encrypt</c> dictionary's own <c>EncryptMetadata</c>
+    /// field directly (via <c>AssertEncryptionMatchesSpec</c>) rather than
+    /// merely executing the line that omits its initializer. That assertion
+    /// is what <c>EncryptedWithDefaults</c> would have added nothing to, not
+    /// the coverage gate staying green.
+    /// </remarks>
     public static DocumentSpec EncryptedNoOwnerPasswordUnrestricted()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };

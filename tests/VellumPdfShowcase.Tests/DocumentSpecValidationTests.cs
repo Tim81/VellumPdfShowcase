@@ -293,18 +293,54 @@ public class DocumentSpecValidationTests
 
         try
         {
-            if (underlyingType.IsClass)
-            {
-                var equalsMethod = underlyingType.GetMethod(nameof(Equals), BindingFlags.Public | BindingFlags.Instance, [typeof(object)]);
-                if (equalsMethod is null || equalsMethod.DeclaringType == typeof(object))
-                {
-                    return false;
-                }
+            var equalsMethod = underlyingType.GetMethod(nameof(Equals), BindingFlags.Public | BindingFlags.Instance, [typeof(object)]);
 
-                var blankA = RuntimeHelpers.GetUninitializedObject(underlyingType);
-                var blankB = RuntimeHelpers.GetUninitializedObject(underlyingType);
-                if (!blankA.Equals(blankB))
+            // A value type with no override at all falls back to
+            // ValueType.Equals, which performs a genuine field-by-field
+            // comparison (delegating to each field's own Equals, exactly
+            // what the recursion below independently verifies), so it is
+            // safe without a behavioural check. A REFERENCE type with no
+            // override falls back to object.Equals, reference equality,
+            // which is never safe.
+            var hasCustomOverride = equalsMethod is not null &&
+                equalsMethod.DeclaringType != typeof(object) &&
+                equalsMethod.DeclaringType != typeof(ValueType);
+
+            if (underlyingType.IsClass && !hasCustomOverride)
+            {
+                return false;
+            }
+
+            if (hasCustomOverride)
+            {
+                // Low (round nine): this behavioural check was previously
+                // inside an `if (underlyingType.IsClass)` block, so a VALUE
+                // TYPE (a struct, including a record struct) with its OWN
+                // broken custom Equals override skipped it entirely and fell
+                // straight through to the field recursion below, accepted
+                // regardless of what its override actually did. Running this
+                // check for any type with a custom override, class or
+                // struct, closes that.
+                try
                 {
+                    var blankA = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                    var blankB = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                    if (!Equals(blankA, blankB))
+                    {
+                        return false;
+                    }
+                }
+                catch
+                {
+                    // Low (round nine): an override that DEREFERENCES a
+                    // field (rather than merely comparing it) throws on
+                    // RuntimeHelpers.GetUninitializedObject's all-default
+                    // blank instances even though it might behave perfectly
+                    // well on real ones; this previously propagated as a
+                    // raw, opaque exception out of the guard itself, rather
+                    // than the guard's own clear "does not implement value
+                    // equality" failure message. Treated the same as a
+                    // demonstrated inequality: not proven safe, so unsafe.
                     return false;
                 }
             }
@@ -426,6 +462,59 @@ public class DocumentSpecValidationTests
 
             Assert.NotEqual(first, second);
         }
+
+        /// <summary>
+        /// A LOW round nine found: the behavioural blank-instance check
+        /// previously ran only inside an <c>IsClass</c> test, so a value
+        /// type (a struct) with its own broken custom <c>Equals</c> override
+        /// skipped it entirely and fell straight through to safe-looking
+        /// field recursion, regardless of what the override actually did.
+        /// This override always returns <see langword="false"/>, the
+        /// opposite defect from <see cref="ReferenceEqualityOverrideHazard"/>
+        /// but the identical hazard: an override the guard must not accept
+        /// merely because it exists.
+        /// </summary>
+        private readonly struct AlwaysUnequalStructHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) => false;
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void AlwaysUnequalStructHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(AlwaysUnequalStructHazard)));
+
+        /// <summary>
+        /// A LOW round nine found: an override that DEREFERENCES a field
+        /// (rather than merely comparing it) threw a raw, opaque
+        /// <see cref="NullReferenceException"/> out of the guard itself on
+        /// <see cref="RuntimeHelpers.GetUninitializedObject(Type)"/>'s
+        /// all-default blank instances, rather than the guard's own clear
+        /// "does not implement value equality" failure. <see cref="Inner"/>
+        /// is null on a blank instance, so <c>Equals</c> dereferencing
+        /// <c>Inner.Value</c> throws.
+        /// </summary>
+        private sealed class DereferencingEqualityOverrideHazard
+        {
+            public sealed class Nested
+            {
+                public double Value { get; init; }
+            }
+
+            public Nested Inner { get; init; } = new();
+
+            public override bool Equals(object? obj) =>
+                obj is DereferencingEqualityOverrideHazard other && Inner.Value.Equals(other.Inner.Value);
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void DereferencingEqualityOverrideHazard_IsRejectedRatherThanThrowing() =>
+            Assert.False(HasValueEquality(typeof(DereferencingEqualityOverrideHazard)));
     }
 }
 
@@ -1281,12 +1370,30 @@ public class UncountedTextBearingMemberTests
     }
 
     /// <summary>
-    /// The counterpart to the four cases above: modest slice labels and
-    /// alt text, far under every cap, must not be rejected.
+    /// The counterpart to the four cases above: modest slice labels and alt
+    /// text, far under every cap, must not be rejected.
     /// </summary>
+    /// <remarks>
+    /// Round nine review (LOW): the original version of this test used
+    /// three-to-four-word strings totalling roughly 30 characters, which
+    /// survived <see cref="SpecLimits.MaxTotalTextLength"/> being cut from
+    /// 20,000 down to 200 without failing, and so demonstrated nothing about
+    /// where the boundary between "modest" and "over the cap" actually is: a
+    /// negative control that passes regardless of whether the cap it exists
+    /// beside is even being enforced is not much of a control. Each field
+    /// here now carries 150 characters (450 total), comfortably under
+    /// <see cref="SpecLimits.MaxTotalTextLength"/> but large enough that the
+    /// SAME reduced-cap experiment (200) would now correctly turn this test
+    /// red, which is what makes it worth having beside the four rejection
+    /// cases above.
+    /// </remarks>
     [Fact]
     public void ModestPieChartAndImageText_Constructs()
     {
+        var sliceLabel = new string('a', 150);
+        var chartAltText = new string('b', 150);
+        var imageAltText = new string('c', 150);
+
         var spec = new DocumentSpec
         {
             Page = new PageSizeSpec(500, 500),
@@ -1296,10 +1403,10 @@ public class UncountedTextBearingMemberTests
                 new PieChartSpec
                 {
                     Diameter = 100,
-                    Slices = [new PieSlice(1, ColorRgb.Black, "A slice")],
-                    AltText = "A pie chart",
+                    Slices = [new PieSlice(1, ColorRgb.Black, sliceLabel)],
+                    AltText = chartAltText,
                 },
-                new ImageSpec { Format = ImageFormat.Png, Bytes = MinimalPng(), AltText = "An image" },
+                new ImageSpec { Format = ImageFormat.Png, Bytes = MinimalPng(), AltText = imageAltText },
             ],
         };
 
