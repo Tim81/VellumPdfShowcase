@@ -910,19 +910,41 @@ public sealed record TextStyleSpec
     /// up in a downloadable PDF's <c>/URI</c> action, and a <c>javascript:</c>
     /// or <c>data:</c> scheme is not a hyperlink there.
     /// </summary>
+    /// <remarks>
+    /// Cycle 6 left open, and cycle 7 closes: a C0 control character (0x00
+    /// through 0x1F) or DEL (0x7F) embedded in an otherwise well-formed
+    /// <c>http</c>/<c>https</c> URI. Measured directly: <see cref="Uri.TryCreate(string?, UriKind, out Uri?)"/>
+    /// accepts every one tried (a NUL byte, a tab, an escape character, a
+    /// bare CR and a bare LF among them) and reports <see cref="Uri.Scheme"/>
+    /// unchanged, so the scheme check above does not see them; the STORED
+    /// value is <paramref name="value"/> itself, not <see cref="Uri.AbsoluteUri"/>,
+    /// so whatever percent-encoding <see cref="Uri"/> would apply on ITS OWN
+    /// normalised form never actually reaches this property. No valid
+    /// <c>http</c> or <c>https</c> URI, per RFC 3986, contains a literal
+    /// control character at all: one is only ever expressed there
+    /// percent-encoded. This rejects the raw byte outright, rather than
+    /// silently percent-encoding it in place, consistently with every other
+    /// validator in this file rejecting an out-of-bounds value instead of
+    /// silently repairing it.
+    /// </remarks>
     public string? LinkUri
     {
         get;
-        init => field = value is null || HasAllowedScheme(value)
+        init => field = value is null || (HasAllowedScheme(value) && HasNoControlCharacters(value))
             ? SpecLimits.ValidateOptionalString(value, SpecLimits.MaxUriLength, nameof(LinkUri))
             : throw new ArgumentException(
-                $"LinkUri must use the http or https scheme; got {value}.",
+                HasAllowedScheme(value)
+                    ? $"LinkUri must not contain a raw control character; got one in {value}."
+                    : $"LinkUri must use the http or https scheme; got {value}.",
                 nameof(LinkUri));
     }
 
     private static bool HasAllowedScheme(string uri) =>
         Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
         (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps);
+
+    private static bool HasNoControlCharacters(string uri) =>
+        !uri.Any(static c => c <= '\u001F' || c == '\u007F');
 }
 
 /// <summary>One inline run of a <see cref="ParagraphSpec"/>, matching the library's <c>TextRun</c>.</summary>

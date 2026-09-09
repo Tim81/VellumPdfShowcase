@@ -69,6 +69,44 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
+    /// Cycle 6 left open, cycle 7 closes: <c>Uri.TryCreate</c> accepts a C0
+    /// control character or DEL embedded in an otherwise well-formed
+    /// <c>http</c>/<c>https</c> URI (measured directly against every value
+    /// below) and reports the scheme unchanged, so the scheme check alone
+    /// does not reject any of them; the stored value is the caller's own
+    /// string, not <c>Uri.AbsoluteUri</c>, so <see cref="Uri"/>'s own
+    /// percent-encoding of these bytes in ITS normalised form never reaches
+    /// <see cref="TextStyleSpec.LinkUri"/> either.
+    /// </summary>
+    [Theory]
+    [InlineData("https://example.com/\u0000nul")]
+    [InlineData("https://example.com/\u0001x")]
+    [InlineData("https://example.com/\tx")]
+    [InlineData("https://example.com/\rx")]
+    [InlineData("https://example.com/\nx")]
+    [InlineData("https://example.com/\u001Bescape")]
+    [InlineData("https://example.com/\u007Fdel")]
+    public void TextStyleSpec_LinkUriWithControlCharacter_ThrowsAtConstruction(string uri)
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new TextStyleSpec { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica), LinkUri = uri });
+        Assert.Contains("control character", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The counterpart to the control-character rejection above: an
+    /// ordinary printable, non-ASCII character (nothing in 0x00-0x1F or
+    /// 0x7F) must not be rejected merely for being unusual.
+    /// </summary>
+    [Fact]
+    public void TextStyleSpec_LinkUriWithNonAsciiPrintableCharacter_Constructs()
+    {
+        var uri = "https://example.com/café";
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica), LinkUri = uri };
+        Assert.Equal(uri, style.LinkUri);
+    }
+
+    /// <summary>
     /// Plan section 3.4.0.1: every member of <see cref="TextStyleSpec"/> must
     /// implement value equality, because <see cref="Generation.SpecRenderer"/>'s
     /// style cache and <see cref="Generation.SpecCodeEmitter"/>'s style
