@@ -1099,31 +1099,50 @@ public static class SpecCodeEmitter
         return string.Join(" | ", flags);
     }
 
-    /// <summary>The Kernel loader type name for <paramref name="format"/>.</summary>
+    /// <summary>
+    /// The Kernel loader type name for each <see cref="ImageFormat"/> this
+    /// model recognises.
+    /// </summary>
     /// <remarks>
-    /// SECURITY / COVERAGE: the <c>default</c> arm is excluded from the
-    /// branch-coverage gate (<c>eng/check-emitter-branch-coverage.ps1</c>)
-    /// rather than removed. It is unreachable from the public API:
-    /// <see cref="DocumentSpec.Content"/> rejects any <see cref="ImageSpec"/>
-    /// whose declared <see cref="ImageSpec.Format"/> does not match its own
-    /// byte signature, and <see cref="ImageSignature.Matches"/>, which performs
-    /// that check, itself throws on any <see cref="ImageFormat"/> value
-    /// outside the five named members before a <see cref="DocumentSpec"/>
-    /// carrying one can ever be constructed. The arm cannot be deleted in its
-    /// place: <see cref="ImageFormat"/> is a public enumeration C# cannot
-    /// prove exhaustive from its five named members alone, so removing it
-    /// turns CS8509 into a build failure under <c>TreatWarningsAsErrors</c>.
+    /// COVERAGE: cycle 6 wrote <see cref="ImageLoaderName"/> as a
+    /// <c>switch</c> expression with a <c>default</c> arm throwing
+    /// <see cref="ArgumentOutOfRangeException"/>, unreachable from the public
+    /// API (see below) but required by the compiler because
+    /// <see cref="ImageFormat"/> is a public enumeration C# cannot prove
+    /// exhaustive from its five named members alone. A branch-coverage gate
+    /// cannot see that arm taken, and cycle 6 marked the WHOLE METHOD
+    /// <c>[ExcludeFromCodeCoverage]</c> to accommodate it, which also hid the
+    /// five REACHABLE arms from the gate; a cycle 7 attempt to extract just
+    /// the throw into its own excluded method did not help, because the
+    /// switch's own branch outcome ("which arm matched") is attributed to
+    /// the enclosing, non-excluded method regardless of where the THROWN
+    /// exception is constructed. A lookup table has no such branch at all:
+    /// every entry below executes unconditionally, once, when this table is
+    /// initialised, so the branch-coverage gate has nothing to find
+    /// unreached here, and no <c>[ExcludeFromCodeCoverage]</c> is needed on
+    /// this member or on <see cref="ImageLoaderName"/> itself.
+    /// <see cref="ImageLoaderNames"/> not containing <paramref name="format"/>
+    /// remains unreachable from the public API for the reason cycle 6's
+    /// throw arm was: <see cref="DocumentSpec.Content"/> rejects any
+    /// <see cref="ImageSpec"/> whose declared <see cref="ImageSpec.Format"/>
+    /// does not match its own byte signature, and <see cref="ImageSignature.Matches"/>,
+    /// which performs that check, itself throws on any <see cref="ImageFormat"/>
+    /// value outside the five named members before a <see cref="DocumentSpec"/>
+    /// carrying one can ever be constructed; the indexer below throwing the
+    /// BCL's own <see cref="KeyNotFoundException"/> rather than
+    /// <see cref="ArgumentOutOfRangeException"/> in that unreachable case is
+    /// an acceptable difference for something nothing can ever actually hit.
     /// </remarks>
-    [ExcludeFromCodeCoverage]
-    private static string ImageLoaderName(ImageFormat format) => format switch
+    private static readonly IReadOnlyDictionary<ImageFormat, string> ImageLoaderNames = new Dictionary<ImageFormat, string>
     {
-        ImageFormat.Png => "PngImageLoader",
-        ImageFormat.Jpeg => "JpegImageLoader",
-        ImageFormat.Bmp => "BmpImageLoader",
-        ImageFormat.Gif => "GifImageLoader",
-        ImageFormat.Tiff => "TiffImageLoader",
-        _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unrecognised image format."),
+        [ImageFormat.Png] = "PngImageLoader",
+        [ImageFormat.Jpeg] = "JpegImageLoader",
+        [ImageFormat.Bmp] = "BmpImageLoader",
+        [ImageFormat.Gif] = "GifImageLoader",
+        [ImageFormat.Tiff] = "TiffImageLoader",
     };
+
+    private static string ImageLoaderName(ImageFormat format) => ImageLoaderNames[format];
 
     private static string EmitPieSlice(PieSlice slice) =>
         string.IsNullOrEmpty(slice.Label)

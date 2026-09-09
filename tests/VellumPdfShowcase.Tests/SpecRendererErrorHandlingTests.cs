@@ -1,3 +1,4 @@
+using VellumPdf.Encryption;
 using VellumPdfShowcase.Web.Generation;
 using VellumPdfShowcase.Web.Model;
 
@@ -47,5 +48,41 @@ public class SpecRendererErrorHandlingTests
 
         var exception = Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
         Assert.Contains("font", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Cycle 7 review: <see cref="DocumentSpec.Encryption"/>'s own
+    /// construction-time check only compares <see cref="EncryptionSpec.OwnerPassword"/>
+    /// against <see cref="EncryptionSpec.UserPassword"/> when
+    /// <see cref="EncryptionSpec.Permissions"/> restricts anything; it returns
+    /// early, without looking at either password at all, when
+    /// <see cref="EncryptionSpec.Permissions"/> is <see cref="PdfPermissions.All"/>.
+    /// The shipped library's own <c>Document.Encrypt</c> enforces a stricter,
+    /// unconditional rule regardless of <see cref="EncryptionSpec.Permissions"/>:
+    /// measured directly, an EMPTY (not null) <see cref="EncryptionSpec.OwnerPassword"/>
+    /// beside a non-empty <see cref="EncryptionSpec.UserPassword"/> throws
+    /// <see cref="ArgumentException"/> from <c>Document.Encrypt</c> itself,
+    /// which is exactly the try/catch <see cref="SpecRenderer.Render"/> wraps
+    /// that call in. This is therefore a genuinely reachable path through
+    /// this model's own public API, not a defensive arm nothing can hit.
+    /// </summary>
+    [Fact]
+    public void Render_EmptyOwnerPasswordBesideNonEmptyUserPassword_ThrowsLegibleInvalidOperationException()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new PlainTextSpec { Text = "x", Style = Style() }],
+            Encryption = new EncryptionSpec
+            {
+                UserPassword = "user-secret",
+                OwnerPassword = "",
+                Permissions = PdfPermissions.All,
+            },
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("encrypt", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }
