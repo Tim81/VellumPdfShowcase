@@ -399,12 +399,12 @@ public static class SpecCodeEmitter
                     EmitLineSeparator(lineSeparator);
                     break;
 
-                // No default arm: DocumentSpec.Content's own construction-time
-                // validation (IsRecognisedContentItemType) already rejects any
-                // ContentItemSpec subtype other than the eight named above, so
-                // this switch STATEMENT (unlike a switch expression) compiles
-                // without one and has no unreachable branch for the coverage
-                // gate to find. See the remark on ContentItemSpec.
+                    // No default arm: DocumentSpec.Content's own construction-time
+                    // validation (IsRecognisedContentItemType) already rejects any
+                    // ContentItemSpec subtype other than the eight named above, so
+                    // this switch STATEMENT (unlike a switch expression) compiles
+                    // without one and has no unreachable branch for the coverage
+                    // gate to find. See the remark on ContentItemSpec.
             }
         }
 

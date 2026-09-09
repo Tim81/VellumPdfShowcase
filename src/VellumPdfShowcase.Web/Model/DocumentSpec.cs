@@ -918,43 +918,43 @@ public sealed record DocumentSpec
                 return LinesForCharacters(heading.Text.Length, charsPerLine);
 
             case ParagraphSpec paragraph:
-            {
-                long chars = 0;
-                foreach (var run in paragraph.Runs)
                 {
-                    chars = SaturatingAdd(chars, run.Text.Length);
-                }
-
-                return LinesForCharacters(chars, charsPerLine);
-            }
-
-            case ListSpec list:
-            {
-                long lines = 0;
-                foreach (var listItem in list.Items)
-                {
-                    lines = SaturatingAdd(lines, EstimateListItemLines(listItem, charsPerLine));
-                }
-
-                return lines;
-            }
-
-            case TableSpec table:
-            {
-                long lines = 0;
-                foreach (var row in table.Rows)
-                {
-                    long rowChars = 0;
-                    foreach (var cell in row.Cells)
+                    long chars = 0;
+                    foreach (var run in paragraph.Runs)
                     {
-                        rowChars = SaturatingAdd(rowChars, cell.Content.Length);
+                        chars = SaturatingAdd(chars, run.Text.Length);
                     }
 
-                    lines = SaturatingAdd(lines, LinesForCharacters(rowChars, charsPerLine));
+                    return LinesForCharacters(chars, charsPerLine);
                 }
 
-                return lines;
-            }
+            case ListSpec list:
+                {
+                    long lines = 0;
+                    foreach (var listItem in list.Items)
+                    {
+                        lines = SaturatingAdd(lines, EstimateListItemLines(listItem, charsPerLine));
+                    }
+
+                    return lines;
+                }
+
+            case TableSpec table:
+                {
+                    long lines = 0;
+                    foreach (var row in table.Rows)
+                    {
+                        long rowChars = 0;
+                        foreach (var cell in row.Cells)
+                        {
+                            rowChars = SaturatingAdd(rowChars, cell.Content.Length);
+                        }
+
+                        lines = SaturatingAdd(lines, LinesForCharacters(rowChars, charsPerLine));
+                    }
+
+                    return lines;
+                }
 
             default:
                 // ImageSpec, PieChartSpec, LineSeparatorSpec: none lays out
