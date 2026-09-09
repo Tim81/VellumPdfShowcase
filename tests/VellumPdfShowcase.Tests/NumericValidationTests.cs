@@ -694,6 +694,44 @@ public class EmbeddedFontIndexValidationTests
     }
 
     /// <summary>
+    /// Cycle 7 review: deleting <see cref="DocumentSpec.ValidateBandFontReference"/>'s
+    /// call for <see cref="DocumentSpec.Footer"/> left the suite green,
+    /// because nothing exercised it; only <see cref="DocumentSpec.Header"/>
+    /// and <see cref="DocumentSpec.DefaultTextStyle"/> had a regression guard
+    /// of their own. This closes that gap.
+    /// </summary>
+    [Fact]
+    public void OutOfRangeFooterReference_ThrowsOnRender()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) },
+            Content = [new PlainTextSpec { Text = "x" }],
+            Footer = new RunningBandSpec { Template = "f", Style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0) } },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("Footer", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>The <see cref="Generation.SpecCodeEmitter.Emit"/> counterpart to <see cref="OutOfRangeFooterReference_ThrowsOnRender"/>, for the same symmetry <see cref="OutOfRangeContentReference_ConstructsButEmitThrows"/> already covers.</summary>
+    [Fact]
+    public void OutOfRangeFooterReference_ThrowsOnEmit()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) },
+            Content = [new PlainTextSpec { Text = "x" }],
+            Footer = new RunningBandSpec { Template = "f", Style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0) } },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(spec));
+        Assert.Contains("Footer", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A style set BEFORE <see cref="DocumentSpec.EmbeddedFonts"/> in the
     /// object initializer must still be checked correctly once
     /// <see cref="DocumentSpec.EmbeddedFonts"/> is later removed or shrunk:

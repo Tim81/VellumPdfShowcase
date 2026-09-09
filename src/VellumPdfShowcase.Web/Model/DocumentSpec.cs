@@ -1650,7 +1650,11 @@ public sealed record PdfAOutputIntentSpec : OutputIntentSpec
         init => field = SpecLimits.ValidateAssetBytes(value, nameof(IccProfile));
     }
 
-    public required int ComponentCount { get; init; }
+    public required int ComponentCount
+    {
+        get;
+        init => field = SpecLimits.ValidateIccComponentCount(value, nameof(ComponentCount));
+    }
 
     public required string OutputConditionIdentifier
     {

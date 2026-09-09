@@ -464,6 +464,34 @@ public static class SpecLimits
     /// </summary>
     public const double MaxAngleMagnitudeRadians = 1_000;
 
+    /// <summary>
+    /// Caps <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/>. Cycle 7
+    /// review: this was the one numeric member in the model with no cap of
+    /// its own. <see cref="IccProfileHeader.Validate"/> only cross-checks it
+    /// against the profile's OWN declared colour space when that colour
+    /// space is one of the four <see cref="IccProfileHeader.Validate"/>
+    /// recognises (GRAY, RGB, Lab, CMYK); a profile declaring any other
+    /// colour space left <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/>
+    /// completely unchecked, so a negative or absurdly large value would
+    /// construct successfully. A generous sanity ceiling: ICC.1:2010's own
+    /// channel-count field is wide enough to carry values far larger than
+    /// this, but every colour space the standard names by acronym (up to
+    /// 9CLR) fits comfortably under 15, and every sample in this repository
+    /// uses 2, 3 or 4.
+    /// </summary>
+    public const int MaxIccComponentCount = 15;
+
+    /// <summary>The lower bound on <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/>: a colour space has at least one channel.</summary>
+    public const int MinIccComponentCount = 1;
+
+    /// <summary>Validates <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/> against <see cref="MinIccComponentCount"/> and <see cref="MaxIccComponentCount"/>.</summary>
+    public static int ValidateIccComponentCount(int value, string paramName) =>
+        value is >= MinIccComponentCount and <= MaxIccComponentCount
+            ? value
+            : throw new ArgumentException(
+                $"{paramName} must be between {MinIccComponentCount} and {MaxIccComponentCount}; got {value}.",
+                paramName);
+
     /// <summary>Throws when <paramref name="value"/> is not a finite number (rejects <see cref="double.NaN"/> and both infinities); returns it otherwise.</summary>
     public static double ValidateFinite(double value, string paramName) =>
         double.IsFinite(value)

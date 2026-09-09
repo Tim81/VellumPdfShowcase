@@ -660,6 +660,37 @@ public class SpecSizeLimitTests
             new PdfAOutputIntentSpec { IccProfile = tooLarge, ComponentCount = 3, OutputConditionIdentifier = "x" });
         Assert.Contains("IccProfile", exception.Message, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Cycle 7 review: <see cref="PdfAOutputIntentSpec.ComponentCount"/> was
+    /// the one numeric member in the model with no cap of its own.
+    /// <see cref="IccProfileHeaderTests"/> below covers the cross-check
+    /// against a profile's OWN declared colour space, which only fires for
+    /// the four colour spaces <see cref="IccProfileHeader.Validate"/>
+    /// recognises; a negative value is never one of those, and reached
+    /// construction untouched regardless of colour space before this fix.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(SpecLimits.MaxIccComponentCount + 1)]
+    public void PdfAOutputIntentSpec_ComponentCountOutOfRange_ThrowsAtConstruction(int componentCount)
+    {
+        var tinyProfile = new byte[128];
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new PdfAOutputIntentSpec { IccProfile = tinyProfile, ComponentCount = componentCount, OutputConditionIdentifier = "x" });
+        Assert.Contains("ComponentCount", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(SpecLimits.MinIccComponentCount)]
+    [InlineData(SpecLimits.MaxIccComponentCount)]
+    public void PdfAOutputIntentSpec_ComponentCountAtBoundary_Constructs(int componentCount)
+    {
+        var tinyProfile = new byte[128];
+        var spec = new PdfAOutputIntentSpec { IccProfile = tinyProfile, ComponentCount = componentCount, OutputConditionIdentifier = "x" };
+        Assert.Equal(componentCount, spec.ComponentCount);
+    }
 }
 
 /// <summary>
@@ -1175,6 +1206,9 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(10_000, SpecLimits.MaxIndentPoints);
         Assert.Equal(10_000, SpecLimits.MaxImageDimensionPoints);
         Assert.Equal(1_000, SpecLimits.MaxAngleMagnitudeRadians);
+        Assert.Equal(2_000, SpecLimits.MaxSafePageContinuations);
+        Assert.Equal(15, SpecLimits.MaxIccComponentCount);
+        Assert.Equal(1, SpecLimits.MinIccComponentCount);
     }
 }
 
