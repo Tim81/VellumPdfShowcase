@@ -688,44 +688,14 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// AES-256 encryption using <see cref="EncryptionSpec"/>'s own defaults:
-    /// full permissions and metadata encryption left on. With
-    /// <see cref="EncryptionSpec.Permissions"/> at <see cref="PdfPermissions.All"/>,
-    /// the same default <c>PdfEncryptionSettings</c> itself applies,
-    /// <c>SpecCodeEmitter.EmitEncryption</c> omits the <c>Permissions</c>
-    /// initializer outright, so this sample never calls
-    /// <c>SpecCodeEmitter.EmitPermissions</c> at all; <see cref="EncryptedNoPermissions"/>
-    /// is what exercises that method. This sample exists for the
-    /// omit-when-default <c>EncryptMetadata</c> branch, which
-    /// <see cref="Encrypted"/> does not reach, since that sample disables
-    /// metadata encryption explicitly.
-    /// </summary>
-    public static DocumentSpec EncryptedWithDefaults()
-    {
-        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 11 };
-
-        return new DocumentSpec
-        {
-            Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.Letter),
-            DefaultTextStyle = style,
-            Content = [ParagraphSpec.FromText("Encrypted with default permissions and metadata encryption, no conformance claim.", style)],
-            Encryption = new EncryptionSpec
-            {
-                UserPassword = "user-secret",
-                OwnerPassword = "owner-secret",
-            },
-        };
-    }
-
-    /// <summary>
     /// AES-256 encryption with every permission withheld
     /// (<see cref="PdfPermissions.None"/>). Exercises
     /// <c>SpecCodeEmitter.EmitPermissions</c>'s <c>PdfPermissions.None</c>
     /// fast path, which no other sample reaches: <see cref="Encrypted"/> and
     /// <see cref="EncryptedOwnerPasswordOnly"/> both restrict only some
     /// permissions, taking the flags-union arm instead, and
-    /// <see cref="EncryptedWithDefaults"/> leaves permissions at
-    /// <see cref="PdfPermissions.All"/>, which never reaches
+    /// <see cref="EncryptedNoOwnerPasswordUnrestricted"/> leaves permissions
+    /// at <see cref="PdfPermissions.All"/>, which never reaches
     /// <c>EmitPermissions</c> at all (see the remark there). Also uses
     /// <c>PageSize.A0</c>, one of the three named page sizes (with A1 and
     /// A2) no other sample reached.
@@ -780,7 +750,18 @@ internal static class DocumentSpecSamples
     /// password set, the password that actually authenticates full (owner)
     /// access is <see cref="EncryptionSpec.UserPassword"/> itself. Exercises
     /// <c>SpecCodeEmitter.EmitEncryption</c>'s omit-when-null branch for
-    /// <see cref="EncryptionSpec.OwnerPassword"/>.
+    /// <see cref="EncryptionSpec.OwnerPassword"/>. Also, incidentally, the
+    /// one sample that leaves <see cref="EncryptionSpec.Permissions"/> at
+    /// <see cref="PdfPermissions.All"/> and <see cref="EncryptionSpec.EncryptMetadata"/>
+    /// at its own default (<see langword="true"/>): a separate
+    /// <c>EncryptedWithDefaults</c> sample once existed for that second
+    /// property alone, but removing it left every test and the branch-
+    /// coverage gate green, since <see cref="EncryptedNoPermissions"/> and
+    /// <see cref="EncryptedOwnerPasswordOnly"/> also leave
+    /// <see cref="EncryptionSpec.EncryptMetadata"/> unset (only
+    /// <see cref="Encrypted"/> sets it explicitly), so nothing
+    /// <c>EncryptedWithDefaults</c> claimed to cover was actually unique to
+    /// it.
     /// </summary>
     public static DocumentSpec EncryptedNoOwnerPasswordUnrestricted()
     {

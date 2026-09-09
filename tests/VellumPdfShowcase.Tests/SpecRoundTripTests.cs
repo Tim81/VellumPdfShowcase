@@ -319,11 +319,6 @@ public class SpecRoundTripTests
     public async Task RoundTrip_Encrypted_DecryptsToMatchingContent() =>
         await AssertEncryptedRoundTripAsync(DocumentSpecSamples.Encrypted());
 
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.EncryptedWithDefaults"/>.</summary>
-    [Fact]
-    public async Task RoundTrip_EncryptedWithDefaults_DecryptsToMatchingContent() =>
-        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedWithDefaults());
-
     /// <summary>See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoPermissions"/>.</summary>
     [Fact]
     public async Task RoundTrip_EncryptedNoPermissions_DecryptsToMatchingContent() =>

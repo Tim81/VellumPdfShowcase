@@ -34,8 +34,9 @@ public static class SpecLimits
     /// Caps <see cref="Model.ImageSpec.Bytes"/>, each entry of
     /// <see cref="Model.DocumentSpec.EmbeddedFonts"/>, and
     /// <see cref="Model.PdfAOutputIntentSpec.IccProfile"/>. 20 MB comfortably
-    /// exceeds every asset this application ships (the largest bundled font is
-    /// under 2 MB) while keeping a single specification's byte-array footprint
+    /// exceeds every asset this application ships (the one bundled font,
+    /// Liberation Sans Regular, is 410,712 bytes, about 401 KiB) while
+    /// keeping a single specification's byte-array footprint
     /// bounded. This does NOT bound decode time: a well-formed file far
     /// smaller than this cap can still declare an enormous pixel grid.
     /// Decode time is bounded instead by the decoding library's own
@@ -155,12 +156,15 @@ public static class SpecLimits
     /// walk it: once per position in the tree, not once per distinct object.
     /// Every other cap in this file bounds how many distinct objects one
     /// collection may hold; none of them, alone or combined, stops the same
-    /// already-capped object graph from being referenced repeatedly. Five
-    /// hundred list-item slots that all point at the one shared, sixty-three
-    /// level list-item chain construct only a few hundred distinct objects,
-    /// well inside every per-collection cap, but a walk that visits a shared
-    /// reference once per slot performs the work of five hundred distinct
-    /// chains. This limit is what actually bounds that work: counting stops
+    /// already-capped object graph from being referenced repeatedly. One
+    /// hundred list-item slots (<see cref="MaxListItemChildren"/>)
+    /// that all point at the one shared, sixty-three-level list-item chain
+    /// construct only about SIXTY-FOUR distinct objects in total (the
+    /// chain's own 63 levels, plus the one top-level item holding all 100
+    /// references to it), well inside every per-collection cap, but a walk
+    /// that visits a shared reference once per slot performs the work of one
+    /// hundred distinct chains, roughly 6,300 node visits. This limit is
+    /// what actually bounds that work: counting stops
     /// the instant the running total would exceed it, so a specification
     /// engineered to make the true total astronomically large is rejected
     /// after doing only this many units of counting work, never after
@@ -346,8 +350,10 @@ public static class SpecLimits
     /// again, this figure was not re-derived on its own each time; it was
     /// re-verified as part of the same combined measurement described on
     /// <see cref="MaxTotalTextLength"/>. NOTE: this figure also cannot rise
-    /// above 297 (A4's shorter edge in points) without excluding A6, which one
-    /// shipped sample uses; that ceiling was not tested against, since every
+    /// above 297.64 (A6's OWN shorter edge in points, 105 mm; an earlier
+    /// version of this remark wrongly attributed that figure to A4, whose
+    /// shorter edge is 595.28 points) without excluding A6, which one shipped
+    /// sample uses; that ceiling was not tested against, since every
     /// measurement here has only ever found reason to keep this figure at 200
     /// or lower it, never to raise it.
     /// </summary>
