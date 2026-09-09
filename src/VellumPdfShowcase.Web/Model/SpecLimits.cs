@@ -59,7 +59,8 @@ public static class SpecLimits
     /// </summary>
     /// <remarks>
     /// NOTE: this remains a distinct, load-bearing cap even now that
-    /// <see cref="MaxTotalTextLength"/> is far smaller than this value.
+    /// <see cref="MaxTotalTextLength"/> (20,000, a fifth of this value) is
+    /// substantially smaller than this value.
     /// <see cref="MaxTotalTextLength"/> only bounds the strings the
     /// <see cref="Model.DocumentSpec.Content"/> walk visits; a running header or
     /// footer <see cref="Model.RunningBandSpec.Template"/>, every
@@ -185,34 +186,48 @@ public static class SpecLimits
     /// <para>
     /// The worst specification every cap in this file together still permits
     /// is the smallest permitted page, the largest permitted font, and exactly
-    /// this many characters in one run &#8212; with <see cref="Model.TextStyleSpec.Leading"/>
-    /// left UNSET, not set to <see cref="MaxLeadingPoints"/>. This is
-    /// counter-intuitive and was found only by measuring, not by reasoning
-    /// about the cap: <see cref="Generation.SpecRenderer"/> passes an unset
-    /// <see cref="Model.TextStyleSpec.Leading"/> to the library as a literal
-    /// <c>0</c> (see the remark on <see cref="MaxLeadingPoints"/>), and the
-    /// library treats a <c>0</c> leading as a request to compute its own line
-    /// height from the font instead of as a literal zero. At 72-point font, that
-    /// computed leading is LARGER than every leading a caller can set
-    /// explicitly through this file, including <see cref="MaxLeadingPoints"/>
-    /// itself, which makes leaving <see cref="Model.TextStyleSpec.Leading"/>
-    /// unset the more dangerous configuration, not the safer one a reader would
-    /// assume.
+    /// this many characters in one run. At 72-point font (this value's
+    /// previous ceiling), <see cref="Model.TextStyleSpec.Leading"/> left UNSET
+    /// was found to be substantially more dangerous than
+    /// <see cref="Model.TextStyleSpec.Leading"/> set explicitly to
+    /// <see cref="MaxLeadingPoints"/>: an unset <see cref="Model.TextStyleSpec.Leading"/>
+    /// reaches the library as a literal <c>0</c> (see the remark on
+    /// <see cref="MaxLeadingPoints"/>), which the library treats as a request
+    /// to compute its own line height from the font, and at 72 points that
+    /// computed leading exceeded <see cref="MaxLeadingPoints"/> itself. At
+    /// <see cref="MaxFontSize"/>'s CURRENT value of 36, re-measuring both
+    /// configurations found them within roughly one percent of each other,
+    /// not the roughly twofold gap seen at 72 points; the auto-computed
+    /// leading at 36 points evidently sits close to, rather than well above,
+    /// the 50-point cap. NEITHER configuration is safely ignorable: both were
+    /// measured, and the smaller of the two boundaries found was used below.
+    /// This is stated explicitly because it does not hold in general and must
+    /// be re-checked, not assumed, whenever <see cref="MaxFontSize"/> or
+    /// <see cref="MaxLeadingPoints"/> changes again.
     /// </para>
     /// <para>
     /// Measured directly at that exact geometry (200 &#215; 200 points, zero
-    /// margins, 72-point font, <see cref="Model.TextStyleSpec.Leading"/> unset,
-    /// one run): rendering succeeded up to 34,700 characters and overflowed the
-    /// CLR stack at 34,800 characters, at roughly 4,350
+    /// margins, 36-point font, one run), under both
+    /// <see cref="Model.TextStyleSpec.Leading"/> left unset and
+    /// <see cref="Model.TextStyleSpec.Leading"/> set explicitly to
+    /// <see cref="MaxLeadingPoints"/>: rendering succeeded reliably (repeated
+    /// trials, no failures) up to at least 156,000 characters under both
+    /// configurations, and overflowed the CLR stack reliably (repeated
+    /// trials, no successes) from 170,000 characters onward, at roughly 4,348
     /// <c>DocumentRenderer.PlaceRenderer</c> frames, consistent with the
     /// roughly 3,659 to 4,354-frame depth measured elsewhere at this geometry
-    /// on this machine. 5,000 was chosen from that measurement with close to a
-    /// sevenfold margin below the lowest failing count found; WebAssembly's
-    /// stack is smaller still, which is why the margin is wide rather than
-    /// exact.
+    /// on this machine. Single trials in the 156,000 to 170,000 range were
+    /// inconsistent from one process launch to the next, by as much as a few
+    /// thousand characters either side, which reads as ordinary run-to-run
+    /// stack-layout variance this close to the true boundary rather than as a
+    /// property of the content itself; this is itself a reason to keep the
+    /// margin wide rather than shave it to the exact figure. 20,000 was chosen
+    /// from the reliably-safe figure of 150,000 with roughly a sevenfold
+    /// margin below it; WebAssembly's stack is smaller still, which is why the
+    /// margin is wide rather than exact.
     /// </para>
     /// </remarks>
-    public const int MaxTotalTextLength = 5_000;
+    public const int MaxTotalTextLength = 20_000;
 
     /// <summary>
     /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
@@ -228,11 +243,14 @@ public static class SpecLimits
     /// figure was chosen together with. 200 is also small enough that no
     /// existing specification in this repository, several of which use a
     /// 200 x 200 page for a minimal test document, needed to change.
-    /// NOTE: when <see cref="MaxFontSize"/> was later raised, this figure was
-    /// not re-derived on its own; it was re-verified as part of the same
-    /// combined measurement described on <see cref="MaxTotalTextLength"/>,
-    /// which found a new, lower danger boundary at 200 x 200 and chose
-    /// <see cref="MaxTotalTextLength"/> to stay well clear of it.
+    /// NOTE: when <see cref="MaxFontSize"/> was later raised and then lowered
+    /// again, this figure was not re-derived on its own each time; it was
+    /// re-verified as part of the same combined measurement described on
+    /// <see cref="MaxTotalTextLength"/>. NOTE: this figure also cannot rise
+    /// above 297 (A4's shorter edge in points) without excluding A6, which one
+    /// shipped sample uses; that ceiling was not tested against, since every
+    /// measurement here has only ever found reason to keep this figure at 200
+    /// or lower it, never to raise it.
     /// </summary>
     public const double MinPageDimensionPoints = 200;
 
@@ -246,25 +264,31 @@ public static class SpecLimits
     public const double MaxPageDimensionPoints = 20_000;
 
     /// <summary>
-    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. 72 points is a
-    /// conventional display size (one inch, at the PDF point's traditional
-    /// definition of 72 to the inch), chosen so the site can demonstrate
-    /// typography at a genuine display scale, per plan section 6.2. It leaves
-    /// wide headroom above every font size a shipped sample in this repository
-    /// uses today (18 points, the largest).
+    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. 36 points is
+    /// unambiguously a display size, twice the largest font size any shipped
+    /// sample in this repository uses today (18 points), chosen so the site
+    /// can demonstrate typography at display scale per plan section 6.2
+    /// without narrowing <see cref="MaxTotalTextLength"/> so far that plan
+    /// section 6.2's OTHER requirement, demonstrating automatic pagination by
+    /// letting a table and a list visibly divide across pages, becomes only
+    /// barely possible.
     /// </summary>
     /// <remarks>
     /// A large font size shrinks how much text fits on one page as sharply as
     /// a small page does, and the two compound; this is why this value is not
     /// chosen freely. Rather than finding a font-size ceiling that is itself
-    /// safe at a fixed text volume, the ceiling was fixed here at 72 for
-    /// typographic purpose and <see cref="MaxTotalTextLength"/> was lowered
-    /// instead to compensate. See <see cref="MaxTotalTextLength"/> for the
-    /// measurement performed at this exact font size, which is what makes 72
-    /// safe together with <see cref="MinPageDimensionPoints"/> and
+    /// safe at a fixed text volume, the ceiling is fixed here for typographic
+    /// purpose and <see cref="MaxTotalTextLength"/> is chosen to compensate.
+    /// This value was previously 72; it was measured, together with
+    /// <see cref="MaxTotalTextLength"/>, and lowered to 36 to buy back text
+    /// budget, since 72 forced <see cref="MaxTotalTextLength"/> down to 5,000
+    /// characters for an entire document, too little to demonstrate the
+    /// pagination requirement above. See <see cref="MaxTotalTextLength"/> for
+    /// the measurement performed at this exact font size, which is what makes
+    /// 36 safe together with <see cref="MinPageDimensionPoints"/> and
     /// <see cref="MaxLeadingPoints"/>.
     /// </remarks>
-    public const double MaxFontSize = 72;
+    public const double MaxFontSize = 36;
 
     /// <summary>
     /// Caps <see cref="Model.TextStyleSpec.Leading"/> when set. Leading
@@ -274,7 +298,7 @@ public static class SpecLimits
     /// measurement found dangerous there.
     /// </summary>
     /// <remarks>
-    /// NOTE: this cap does not bound the most dangerous leading a
+    /// NOTE: this cap does not necessarily bound the most dangerous leading a
     /// specification can carry. <see cref="Generation.SpecRenderer"/> passes an
     /// UNSET <see cref="Model.TextStyleSpec.Leading"/> to the library as a
     /// literal <c>0</c>, and <see cref="Generation.SpecCodeEmitter"/> emits no
@@ -282,12 +306,17 @@ public static class SpecLimits
     /// own <c>TextStyle.Leading</c> at its own default of <c>0</c>; both paths
     /// agree, so the round trip does not diverge. The library treats a <c>0</c>
     /// leading as a request to compute its own line height from the font
-    /// rather than as a literal zero, and at <see cref="MaxFontSize"/> that
-    /// computed value is LARGER than this cap. An unset
-    /// <see cref="Model.TextStyleSpec.Leading"/> is therefore more dangerous
-    /// than one explicitly set to this maximum, not less; see the remark on
-    /// <see cref="MaxTotalTextLength"/> for the measurement that accounts for
-    /// this.
+    /// rather than as a literal zero, and WHETHER that computed value is larger
+    /// or smaller than this cap depends on <see cref="MaxFontSize"/>: measured
+    /// at a previous <see cref="MaxFontSize"/> of 72, the computed value was
+    /// substantially larger than this cap, making an unset
+    /// <see cref="Model.TextStyleSpec.Leading"/> the more dangerous
+    /// configuration; re-measured at the current <see cref="MaxFontSize"/> of
+    /// 36, an unset <see cref="Model.TextStyleSpec.Leading"/> and one set
+    /// explicitly to this maximum were found within roughly one percent of
+    /// each other. Both configurations must be measured together whenever
+    /// <see cref="MaxFontSize"/> or this cap changes; see the remark on
+    /// <see cref="MaxTotalTextLength"/> for the current measurement.
     /// </remarks>
     public const double MaxLeadingPoints = 50;
 

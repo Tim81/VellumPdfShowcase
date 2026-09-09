@@ -726,8 +726,10 @@ public sealed record TextStyleSpec
     /// Capped at <see cref="SpecLimits.MaxLeadingPoints"/> when set, for the
     /// same reason as <see cref="FontSize"/>: a large leading enlarges every
     /// line exactly as a large font size does. NOTE: leaving this unset is not
-    /// the safe end of the range; see the remark on
-    /// <see cref="SpecLimits.MaxLeadingPoints"/>.
+    /// reliably the safe end of the range; whether it is safer or more
+    /// dangerous than <see cref="SpecLimits.MaxLeadingPoints"/> depends on
+    /// <see cref="FontSize"/>, and must be measured rather than assumed. See
+    /// the remark on <see cref="SpecLimits.MaxLeadingPoints"/>.
     /// </summary>
     public double? Leading
     {

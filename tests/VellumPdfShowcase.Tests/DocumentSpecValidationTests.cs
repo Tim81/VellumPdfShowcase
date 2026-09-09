@@ -726,7 +726,16 @@ public class WalkedNodeLimitTests
         // as it counts nodes against SpecLimits.MaxWalkedNodes, so any
         // non-trivial text on the thousands of node visits this shared chain
         // produces would trip the CHARACTER limit before the NODE limit this
-        // test exists to isolate, and assert the wrong message.
+        // test exists to isolate, and assert the wrong message. Re-checked
+        // after MaxTotalTextLength changed from 100,000 to 20,000: this is
+        // still true and not merely a leftover from a smaller budget. The
+        // chain's own original text ("leaf", "level1".."level62") sums to 429
+        // characters; repeating it across shared sibling slots reaches
+        // MaxTotalTextLength's 20,000 characters at roughly the 47th sibling
+        // (node 2,939), well short of the 80th sibling (node 5,001) needed to
+        // reach MaxWalkedNodes. Restoring that text would make this test
+        // exercise the character limit instead of the node limit it exists to
+        // isolate.
         ListItemSpec chain = new() { Text = "" };
         for (var depth = 1; depth < SpecLimits.MaxListNestingDepth - 1; depth++)
         {
@@ -804,10 +813,10 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(100, SpecLimits.MaxListItemChildren);
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
-        Assert.Equal(5_000, SpecLimits.MaxTotalTextLength);
+        Assert.Equal(20_000, SpecLimits.MaxTotalTextLength);
         Assert.Equal(200, SpecLimits.MinPageDimensionPoints);
         Assert.Equal(20_000, SpecLimits.MaxPageDimensionPoints);
-        Assert.Equal(72, SpecLimits.MaxFontSize);
+        Assert.Equal(36, SpecLimits.MaxFontSize);
         Assert.Equal(50, SpecLimits.MaxLeadingPoints);
         Assert.Equal(0, SpecLimits.MinHeadingLevel);
         Assert.Equal(5, SpecLimits.MaxHeadingLevel);

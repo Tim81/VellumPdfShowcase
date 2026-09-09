@@ -63,35 +63,62 @@ public class PageSizeValidationTests
 }
 
 /// <summary>
-/// The worst specification every cap in this file together still permits:
+/// The worst specifications every cap in this file together still permits:
 /// the smallest allowed page, zero margins, the largest allowed font size,
 /// and exactly <see cref="SpecLimits.MaxTotalTextLength"/> characters in one
-/// run. Measured directly against the shipped library: this renders
-/// successfully, comfortably below the roughly 4,350-frame depth at which
+/// run. Measured directly against the shipped library: both render
+/// successfully, comfortably below the roughly 4,348-frame depth at which
 /// this exact geometry overflowed the stack on this machine. This is the
 /// regression guard plan section 3.4.0.2 calls a vacuous test if it is
 /// missing: without it, the caps above could be verified only by construction
 /// succeeding, never by the worst case they still allow actually rendering.
 /// </summary>
 /// <remarks>
-/// <see cref="TextStyleSpec.Leading"/> is deliberately left UNSET below, not
-/// set to <see cref="SpecLimits.MaxLeadingPoints"/>. That is the actual worst
-/// case, not the intuitive one: see the remark on
-/// <see cref="SpecLimits.MaxLeadingPoints"/> and on
-/// <see cref="SpecLimits.MaxTotalTextLength"/>. Reintroducing an explicit
-/// <c>Leading = SpecLimits.MaxLeadingPoints</c> here would make this test
-/// construct a SAFER specification than the actual worst case the caps
-/// permit, silently losing the coverage this guard exists for.
+/// There are TWO tests below, not one, because at the current
+/// <see cref="SpecLimits.MaxFontSize"/> of 36 there is no single answer to
+/// which of "<see cref="TextStyleSpec.Leading"/> left unset" and
+/// "<see cref="TextStyleSpec.Leading"/> set explicitly to
+/// <see cref="SpecLimits.MaxLeadingPoints"/>" is the worse configuration:
+/// re-measured at 36 points, the two were found within roughly one percent of
+/// each other, unlike at a previous <see cref="SpecLimits.MaxFontSize"/> of
+/// 72 points, where leaving it unset was substantially more dangerous. See
+/// the remark on <see cref="SpecLimits.MaxLeadingPoints"/>. Collapsing this
+/// back to one test would silently drop coverage of whichever configuration
+/// turns out, at some future <see cref="SpecLimits.MaxFontSize"/>, to be the
+/// more dangerous one.
 /// </remarks>
 public class WorstPermittedSpecificationTests
 {
     [Fact]
-    public void SmallestPageLargestFontAndMaxTotalText_RendersSuccessfully()
+    public void SmallestPageLargestFontAndMaxTotalTextWithLeadingUnset_RendersSuccessfully()
     {
         var style = new TextStyleSpec
         {
             Font = FontSpec.FromStandard14(Standard14.Helvetica),
             FontSize = SpecLimits.MaxFontSize,
+        };
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(SpecLimits.MinPageDimensionPoints, SpecLimits.MinPageDimensionPoints),
+            Margins = new EdgeInsets(0),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText(new string('a', SpecLimits.MaxTotalTextLength), style)],
+        };
+
+        var bytes = SpecRenderer.Render(spec);
+
+        Assert.NotEmpty(bytes);
+    }
+
+    [Fact]
+    public void SmallestPageLargestFontAndMaxTotalTextWithMaxLeadingExplicit_RendersSuccessfully()
+    {
+        var style = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.Helvetica),
+            FontSize = SpecLimits.MaxFontSize,
+            Leading = SpecLimits.MaxLeadingPoints,
         };
 
         var spec = new DocumentSpec
