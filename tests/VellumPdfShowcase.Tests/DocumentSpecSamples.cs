@@ -636,12 +636,24 @@ internal static class DocumentSpecSamples
     /// required by ISO 14289-1:2014 clause 7.1 (a non-empty XMP
     /// <c>dc:title</c>). <see cref="HeadingSpec.Level"/> is zero-based per the
     /// library's own documentation ("0 = top-level, 1 = sub-heading, etc."),
-    /// so the document's opening, and only, heading must be
-    /// <see langword="0"/>; <see langword="1"/> tags it H2 with no preceding
-    /// H1, which ISO 14289-1:2014 clause 7.4.2 rejects as a skipped level.
-    /// PDF/A preflight does not check heading hierarchy at all, which is why
-    /// this defect previously reached every sample in this file that uses a
-    /// single sole heading: each now uses <see langword="0"/>.
+    /// so the document's opening heading must be <see langword="0"/>;
+    /// <see langword="1"/> tags it H2 with no preceding H1, which ISO
+    /// 14289-1:2014 clause 7.4.2 rejects as a skipped level. PDF/A preflight
+    /// does not check heading hierarchy at all, which is why this defect
+    /// previously reached every sample in this file that uses a single sole
+    /// heading: each now uses <see langword="0"/>.
+    /// <para>
+    /// Cycle 7 review: this is also the one sample carrying a genuine
+    /// three-level heading hierarchy (0, 1, 2), added because every
+    /// conformance-claiming sample previously had at most one heading, which
+    /// left <see cref="SpecRoundTripTests.Sample_ClaimingConformance_HasValidHeadingHierarchy"/>'s
+    /// own loop over headings after the first dead code: it never ran, for
+    /// any sample, so the rule was unexercised by anything other than its
+    /// own first-heading check. <see cref="HeadingHierarchyRuleTests"/>
+    /// separately proves the rule detects a skipped level directly, but this
+    /// sample is what makes the loop itself run on every ordinary test run,
+    /// not only when that direct test happens to be looked at.
+    /// </para>
     /// </remarks>
     public static DocumentSpec PdfUA1WithOutputIntent()
     {
@@ -660,6 +672,10 @@ internal static class DocumentSpecSamples
             [
                 new HeadingSpec { Text = "PDF/UA-1 sample", Level = 0, Style = style, Language = "en" },
                 ParagraphSpec.FromText("Embeds a Liberation Sans face and declares an sRGB output intent.", style),
+                new HeadingSpec { Text = "A sub-heading", Level = 1, Style = style, Language = "en" },
+                ParagraphSpec.FromText("A sub-heading, one level below the document's opening heading.", style),
+                new HeadingSpec { Text = "A sub-sub-heading", Level = 2, Style = style, Language = "en" },
+                ParagraphSpec.FromText("A sub-sub-heading, two levels below the document's opening heading.", style),
             ],
             OutputIntent = new PdfAOutputIntentSpec
             {

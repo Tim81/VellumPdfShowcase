@@ -96,22 +96,49 @@ public class SpecRoundTripTests
     public void Sample_ClaimingConformance_HasValidHeadingHierarchy(string sampleName)
     {
         var levels = InvokeSample(sampleName).Content.OfType<HeadingSpec>().Select(heading => heading.Level).ToList();
+        var violation = HeadingHierarchyViolation(levels);
 
+        Assert.True(violation is null, violation is null ? null : $"{sampleName} {violation}");
+    }
+
+    /// <summary>
+    /// Cycle 7 review: extracted so the rule itself can be exercised directly
+    /// against a crafted level sequence, independently of whether any
+    /// SAMPLE happens to contain one. Before this fix, every conformance-
+    /// claiming sample had at most one heading (four had exactly one, one
+    /// had none), so the loop below never ran for any of them: the whole
+    /// rule was provably dead code that an absurd replacement comparison
+    /// left the suite green under. <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/>
+    /// now carries a genuine three-level hierarchy, so the loop runs for
+    /// real on every test run; <see cref="HeadingHierarchyRuleTests"/> below
+    /// proves the rule itself, independently of that or any other sample,
+    /// by feeding it a sequence that skips a level directly.
+    /// </summary>
+    /// <returns><see langword="null"/> when <paramref name="levels"/> is a valid hierarchy; otherwise a message naming the violation.</returns>
+    internal static string? HeadingHierarchyViolation(IReadOnlyList<int> levels)
+    {
         if (levels.Count == 0)
         {
-            return;
+            return null;
         }
 
-        Assert.Equal(SpecLimits.MinHeadingLevel, levels[0]);
+        if (levels[0] != SpecLimits.MinHeadingLevel)
+        {
+            return $"starts at heading level {levels[0]}, not {SpecLimits.MinHeadingLevel}.";
+        }
 
         var deepestSeen = levels[0];
         foreach (var level in levels.Skip(1))
         {
-            Assert.True(
-                level <= deepestSeen + 1,
-                $"{sampleName} jumps from a deepest heading level of {deepestSeen} to {level}, skipping a level.");
+            if (level > deepestSeen + 1)
+            {
+                return $"jumps from a deepest heading level of {deepestSeen} to {level}, skipping a level.";
+            }
+
             deepestSeen = Math.Max(deepestSeen, level);
         }
+
+        return null;
     }
 
     /// <summary>
@@ -482,5 +509,74 @@ public class SpecRoundTripTests
         using var stream = new MemoryStream();
         reader.SaveDecrypted(stream);
         return stream.ToArray();
+    }
+}
+
+/// <summary>
+/// Cycle 7 review: proves <see cref="SpecRoundTripTests.HeadingHierarchyViolation"/>
+/// actually detects a skipped level, independently of any
+/// <see cref="DocumentSpecSamples"/> member. Before cycle 7, every sample
+/// claiming a conformance profile had at most one heading, so
+/// <see cref="SpecRoundTripTests.Sample_ClaimingConformance_HasValidHeadingHierarchy"/>'s
+/// own loop over headings after the first never ran for any of them;
+/// replacing its comparison with an absurd one (for instance, always true)
+/// left the whole suite green. These tests exercise the rule directly, and
+/// <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/> now separately
+/// carries a genuine three-level hierarchy so the loop also runs for real on
+/// every ordinary test run.
+/// </summary>
+public class HeadingHierarchyRuleTests
+{
+    [Fact]
+    public void SkippedLevel_IsDetected()
+    {
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([0, 2]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("skipping a level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SkippedLevelDeeperInTheHierarchy_IsDetected()
+    {
+        // A valid 0, 1 opening followed by a jump straight to 3 (skipping 2),
+        // the shape a genuine multi-level document could actually produce by
+        // accident, rather than an impossible-looking single-step case.
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([0, 1, 3]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("skipping a level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FirstHeadingNotAtMinimumLevel_IsDetected()
+    {
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([1]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("starts at heading level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoHeadings_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([]));
+    }
+
+    [Fact]
+    public void SingleTopLevelHeading_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([0]));
+    }
+
+    /// <summary>
+    /// A genuine multi-level hierarchy, including a return to a shallower
+    /// level followed by descending again: valid because 2 never exceeds the
+    /// deepest level seen so far (2) plus one.
+    /// </summary>
+    [Fact]
+    public void GenuineMultiLevelHierarchyWithReturnToShallower_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([0, 1, 2, 1, 2]));
     }
 }
