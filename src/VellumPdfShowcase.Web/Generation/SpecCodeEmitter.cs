@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using VellumPdf.Encryption;
@@ -631,15 +632,7 @@ public static class SpecCodeEmitter
 
         private void EmitImage(ImageSpec imageSpec)
         {
-            var loaderName = imageSpec.Format switch
-            {
-                ImageFormat.Png => "PngImageLoader",
-                ImageFormat.Jpeg => "JpegImageLoader",
-                ImageFormat.Bmp => "BmpImageLoader",
-                ImageFormat.Gif => "GifImageLoader",
-                ImageFormat.Tiff => "TiffImageLoader",
-                _ => throw new ArgumentOutOfRangeException(nameof(imageSpec), imageSpec.Format, "Unrecognised image format."),
-            };
+            var loaderName = ImageLoaderName(imageSpec.Format);
 
             var imageVariable = $"image{_imageIndex}";
             writer.Line($"var {imageVariable} = {loaderName}.Load(Images[{_imageIndex}]);");
@@ -1104,6 +1097,32 @@ public static class SpecCodeEmitter
 
         return string.Join(" | ", flags);
     }
+
+    /// <summary>The Kernel loader type name for <paramref name="format"/>.</summary>
+    /// <remarks>
+    /// SECURITY / COVERAGE: the <c>default</c> arm is excluded from the
+    /// branch-coverage gate (<c>eng/check-emitter-branch-coverage.ps1</c>)
+    /// rather than removed. It is unreachable from the public API:
+    /// <see cref="DocumentSpec.Content"/> rejects any <see cref="ImageSpec"/>
+    /// whose declared <see cref="ImageSpec.Format"/> does not match its own
+    /// byte signature, and <see cref="ImageSignature.Matches"/>, which performs
+    /// that check, itself throws on any <see cref="ImageFormat"/> value
+    /// outside the five named members before a <see cref="DocumentSpec"/>
+    /// carrying one can ever be constructed. The arm cannot be deleted in its
+    /// place: <see cref="ImageFormat"/> is a public enumeration C# cannot
+    /// prove exhaustive from its five named members alone, so removing it
+    /// turns CS8509 into a build failure under <c>TreatWarningsAsErrors</c>.
+    /// </remarks>
+    [ExcludeFromCodeCoverage]
+    private static string ImageLoaderName(ImageFormat format) => format switch
+    {
+        ImageFormat.Png => "PngImageLoader",
+        ImageFormat.Jpeg => "JpegImageLoader",
+        ImageFormat.Bmp => "BmpImageLoader",
+        ImageFormat.Gif => "GifImageLoader",
+        ImageFormat.Tiff => "TiffImageLoader",
+        _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unrecognised image format."),
+    };
 
     private static string EmitPieSlice(PieSlice slice) =>
         string.IsNullOrEmpty(slice.Label)

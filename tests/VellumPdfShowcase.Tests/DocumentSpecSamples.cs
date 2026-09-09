@@ -986,4 +986,54 @@ internal static class DocumentSpecSamples
             ],
         };
     }
+
+    /// <summary>
+    /// The three <see cref="Generation.SpecCodeEmitter"/> branches the
+    /// branch-coverage gate (<c>eng/check-emitter-branch-coverage.ps1</c>)
+    /// found unreached once every other sample in this file was accounted
+    /// for. <see cref="DocumentMetadataSpec.Title"/> left unset, the
+    /// <see langword="null"/> arm of <c>SpecCodeEmitter.EmitMetadata</c>
+    /// that every prior metadata sample skipped by always setting a title.
+    /// A <see cref="ListItemSpec.Children"/> entry carrying its own
+    /// <see cref="ListItemSpec.Style"/>, the recursive yielding arm of
+    /// <c>SpecCodeEmitter.CollectTextStyles(ListItemSpec)</c> that the
+    /// unstyled nested item in <see cref="EveryContentItemTypeFullyCustomised"/>
+    /// never reaches. And two partially symmetric <see cref="EdgeInsets"/>
+    /// values, each matching on exactly one adjacent pair while every other
+    /// sample's margins are either fully uniform or fully distinct: one
+    /// matching <c>Top</c> and <c>Right</c> while <c>Bottom</c> differs, the
+    /// other matching <c>Top</c>/<c>Right</c> and <c>Right</c>/<c>Bottom</c>
+    /// while <c>Left</c> differs. Between the two, every one of the six
+    /// outcomes <c>SpecCodeEmitter.EmitEdgeInsets</c>'s three-way
+    /// <c>&amp;&amp;</c> chain can reach is now exercised at least once,
+    /// short-circuiting included.
+    /// </summary>
+    public static DocumentSpec FinalEmitterBranchCoverage()
+    {
+        var childStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 10 };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(400, 500),
+            DefaultTextStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) },
+            Metadata = new DocumentMetadataSpec { Subject = "No title, subject only." },
+            Content =
+            [
+                new ListSpec
+                {
+                    Style = ListStyle.Unordered,
+                    Items =
+                    [
+                        new ListItemSpec
+                        {
+                            Text = "Parent item",
+                            Children = [new ListItemSpec { Text = "Styled child item", Style = childStyle }],
+                        },
+                    ],
+                },
+                new LineSeparatorSpec { Margins = new EdgeInsets(7, 7, 3, 3) },
+                new LineSeparatorSpec { Margins = new EdgeInsets(10, 10, 10, 5) },
+            ],
+        };
+    }
 }

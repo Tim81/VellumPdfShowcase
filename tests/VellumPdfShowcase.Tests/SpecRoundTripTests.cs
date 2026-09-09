@@ -260,6 +260,11 @@ public class SpecRoundTripTests
     public async Task RoundTrip_RemainingEmitterBranchCoverage_MatchesSpecRenderer() =>
         await AssertRoundTripAsync(DocumentSpecSamples.RemainingEmitterBranchCoverage());
 
+    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.FinalEmitterBranchCoverage"/>.</summary>
+    [Fact]
+    public async Task RoundTrip_FinalEmitterBranchCoverage_MatchesSpecRenderer() =>
+        await AssertRoundTripAsync(DocumentSpecSamples.FinalEmitterBranchCoverage());
+
     /// <summary>
     /// Encryption introduces its own nondeterminism beyond the document
     /// identifier and the XMP timestamps: rendering the identical
