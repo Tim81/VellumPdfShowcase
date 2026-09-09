@@ -69,7 +69,11 @@ public sealed record DocumentSpec
     /// checked here, at construction, the way every other cross-property
     /// check in this type is.
     /// </remarks>
-    public required TextStyleSpec DefaultTextStyle { get; init; }
+    public required TextStyleSpec DefaultTextStyle
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(DefaultTextStyle));
+    }
 
     /// <summary>
     /// Raw TrueType font bytes for every embedded face the document uses. A
@@ -126,15 +130,38 @@ public sealed record DocumentSpec
     /// specification of charts with maximal-length slice labels reached
     /// 490,220,429 characters through that gap, 24.5 times
     /// <see cref="SpecLimits.MaxTotalTextLength"/>, entirely inside a total
-    /// this walk was already supposed to bound). <see cref="RunningBandSpec.Template"/>
-    /// on <see cref="Header"/> and <see cref="Footer"/>, every
-    /// <see cref="DocumentMetadataSpec"/> field, an output intent's own
-    /// identifier and info string, and an <see cref="EncryptionSpec"/>
-    /// password are DELIBERATELY outside this walk: each is a single
-    /// top-level property of this record (or of a record one of those
-    /// properties holds), appearing at most once per specification, so none
-    /// of them can be multiplied by shared structure the way a list, table or
-    /// chart entry can; <see cref="SpecLimits.MaxTextLength"/> alone already
+    /// this walk was already supposed to bound).
+    /// </para>
+    /// <para>
+    /// Round nine audit, Medium 3: two FURTHER kinds of member reachable
+    /// through this list were still missing, and are now counted too. Every
+    /// <see cref="TextStyleSpec.LinkUri"/> a style reachable from
+    /// <see cref="Content"/> can carry (a paragraph run's, a heading's, a
+    /// list item's, a list's own <see cref="ListSpec.DefaultStyle"/>, a
+    /// table cell's, and a table's own <see cref="TableSpec.DefaultCellStyle"/>),
+    /// capped individually at <see cref="SpecLimits.MaxUriLength"/> (2,048)
+    /// but, like every other member audited above, multipliable by shared
+    /// structure; and <see cref="HeadingSpec.Language"/>,
+    /// <see cref="ParagraphSpec.Language"/>, <see cref="ListItemSpec.Language"/>
+    /// (at every depth) and <see cref="TableCellSpec.Language"/>. Measured
+    /// directly before this fix: four paragraphs of 1,000 runs each, every
+    /// run carrying a distinct maximal-length <see cref="TextStyleSpec.LinkUri"/>,
+    /// counted only 4,000 characters (the runs' own text) while the emitted
+    /// C# carried 8,608,755. <see cref="DocumentSpec.Language"/> itself, on
+    /// this record rather than a member reachable THROUGH <see cref="Content"/>,
+    /// remains outside this walk for the same reason the members below are.
+    /// </para>
+    /// <para>
+    /// <see cref="RunningBandSpec.Template"/> and <see cref="RunningBandSpec.Style"/>'s
+    /// own <see cref="TextStyleSpec.LinkUri"/> on <see cref="Header"/> and
+    /// <see cref="Footer"/>, every <see cref="DocumentMetadataSpec"/> field,
+    /// an output intent's own identifier and info string, and an
+    /// <see cref="EncryptionSpec"/> password are DELIBERATELY outside this
+    /// walk: each is a single top-level property of this record (or of a
+    /// record one of those properties holds), appearing at most once per
+    /// specification, so none of them can be multiplied by shared structure
+    /// the way a list, table or chart entry can; <see cref="SpecLimits.MaxTextLength"/>
+    /// (or <see cref="SpecLimits.MaxUriLength"/>, for a link) alone already
     /// bounds each of them individually, and that bound cannot be
     /// out-multiplied by anything reachable from a single occurrence.
     /// </para>
@@ -278,6 +305,21 @@ public sealed record DocumentSpec
 
         foreach (var item in snapshot)
         {
+            if (item is null)
+            {
+                throw new ArgumentNullException(nameof(Content), "Content must not contain a null item.");
+            }
+
+            if (!IsRecognisedContentItemType(item))
+            {
+                throw new ArgumentException(
+                    $"Content contains a {item.GetType()}, which neither SpecRenderer nor SpecCodeEmitter " +
+                    "recognises. Only the eight ContentItemSpec subtypes both consumers switch over " +
+                    "(PlainTextSpec, HeadingSpec, ParagraphSpec, ListSpec, TableSpec, ImageSpec, PieChartSpec, " +
+                    "LineSeparatorSpec) may appear here; see the remark on ContentItemSpec.",
+                    nameof(Content));
+            }
+
             if (item is ImageSpec image && !ImageSignature.Matches(image.Format, image.Bytes))
             {
                 throw new ArgumentException(
@@ -319,6 +361,28 @@ public sealed record DocumentSpec
     }
 
     /// <summary>
+    /// Whether <paramref name="item"/> is one of the eight concrete
+    /// <see cref="ContentItemSpec"/> subtypes <see cref="Generation.SpecRenderer.AddContentItem"/>
+    /// and <see cref="Generation.SpecCodeEmitter.EmitContentItem"/> both
+    /// switch over. <see cref="ContentItemSpec"/> is a public, non-sealed
+    /// record any assembly may extend, and neither consumer's switch carries
+    /// a <see langword="default"/> arm any more (a <see langword="switch"/>
+    /// STATEMENT does not require one, unlike a switch EXPRESSION): before
+    /// this check existed, an unrecognised subtype passed construction,
+    /// rendered as though it were absent (silently skipped by
+    /// <see cref="Generation.SpecRenderer.AddContentItem"/>'s switch falling
+    /// through with no arm to match), and made
+    /// <see cref="Generation.SpecCodeEmitter.EmitContentItem"/> throw instead,
+    /// which is exactly the divergence CLAUDE.md's round-trip invariant
+    /// forbids. Rejecting it HERE, at construction, is what lets both
+    /// consumers omit a matching defensive arm entirely rather than
+    /// duplicating this membership check on both sides: a type that cannot
+    /// reach either switch needs no arm to reject it there.
+    /// </summary>
+    private static bool IsRecognisedContentItemType(ContentItemSpec item) =>
+        item is PlainTextSpec or HeadingSpec or ParagraphSpec or ListSpec or TableSpec or ImageSpec or PieChartSpec or LineSeparatorSpec;
+
+    /// <summary>
     /// Threads two running totals through one walk of <see cref="Content"/>,
     /// visiting a shared reference once per position it occupies exactly as
     /// <see cref="Generation.SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>
@@ -336,13 +400,14 @@ public sealed record DocumentSpec
         private int NodeCount { get; set; }
 
         /// <summary>
-        /// The running character total, exposed (not just the exceeded flag)
-        /// so <see cref="ValidateContentFitsPageArea"/> can re-run this same
-        /// walk to learn the specification's own total text volume, already
-        /// known to be at or under <see cref="SpecLimits.MaxTotalTextLength"/>
-        /// once <see cref="ValidateContent"/> has accepted it.
+        /// The running character total, checked against
+        /// <see cref="SpecLimits.MaxTotalTextLength"/> below. Used only by
+        /// this class itself: <see cref="ValidateContentFitsPageArea"/> no
+        /// longer re-reads it, or reuses this walk at all, since the page-area
+        /// bound now needs per-ELEMENT line counts (see
+        /// <see cref="EstimateElementLines"/>), not one document-wide total.
         /// </summary>
-        public long CharacterCount { get; private set; }
+        private long CharacterCount { get; set; }
 
         public bool NodeLimitExceeded { get; private set; }
 
@@ -358,7 +423,7 @@ public sealed record DocumentSpec
             switch (item)
             {
                 case PlainTextSpec plainText:
-                    return TryAddCharacters(plainText.Text.Length);
+                    return TryAddCharacters(plainText.Text.Length) && TryAddStyleUri(plainText.Style);
 
                 case HeadingSpec heading:
                     // BookmarkTitle is a second text-bearing member of this
@@ -367,14 +432,25 @@ public sealed record DocumentSpec
                     // remark on this class for why every text-bearing member
                     // reachable from Content, not merely the two the cycle 7
                     // review named (PieSlice.Label and AltText), must be
-                    // counted here.
+                    // counted here. Round nine review: Style.LinkUri and
+                    // Language are two further such members this walk missed
+                    // before; see TryAddStyleUri's own remark.
                     return TryAddCharacters(heading.Text.Length) &&
-                        TryAddCharacters(heading.BookmarkTitle?.Length ?? 0);
+                        TryAddCharacters(heading.BookmarkTitle?.Length ?? 0) &&
+                        TryAddCharacters(heading.Language?.Length ?? 0) &&
+                        TryAddStyleUri(heading.Style);
 
                 case ParagraphSpec paragraph:
+                    if (!TryAddCharacters(paragraph.Language?.Length ?? 0))
+                    {
+                        return false;
+                    }
+
                     foreach (var run in paragraph.Runs)
                     {
-                        if (!TryVisit() || !TryAddCharacters(run.Text.Length))
+                        // run.Style is never null: TextRunSpec's own
+                        // construction rejects that (see its remark).
+                        if (!TryVisit() || !TryAddCharacters(run.Text.Length) || !TryAddStyleUri(run.Style))
                         {
                             return false;
                         }
@@ -383,6 +459,11 @@ public sealed record DocumentSpec
                     return true;
 
                 case ListSpec list:
+                    if (!TryAddStyleUri(list.DefaultStyle))
+                    {
+                        return false;
+                    }
+
                     foreach (var listItem in list.Items)
                     {
                         if (!TryVisitListItem(listItem))
@@ -394,6 +475,11 @@ public sealed record DocumentSpec
                     return true;
 
                 case TableSpec table:
+                    if (!TryAddStyleUri(table.DefaultCellStyle))
+                    {
+                        return false;
+                    }
+
                     foreach (var row in table.Rows)
                     {
                         if (!TryVisit())
@@ -403,7 +489,10 @@ public sealed record DocumentSpec
 
                         foreach (var cell in row.Cells)
                         {
-                            if (!TryVisit() || !TryAddCharacters(cell.Content.Length))
+                            if (!TryVisit() ||
+                                !TryAddCharacters(cell.Content.Length) ||
+                                !TryAddCharacters(cell.Language?.Length ?? 0) ||
+                                !TryAddStyleUri(cell.Style))
                             {
                                 return false;
                             }
@@ -446,9 +535,36 @@ public sealed record DocumentSpec
             }
         }
 
+        /// <summary>
+        /// Adds <paramref name="style"/>'s own <see cref="TextStyleSpec.LinkUri"/>
+        /// length, or nothing when <paramref name="style"/> or its
+        /// <see cref="TextStyleSpec.LinkUri"/> is <see langword="null"/>.
+        /// </summary>
+        /// <remarks>
+        /// Round nine review, Medium 3: <see cref="TextStyleSpec.LinkUri"/>,
+        /// capped at <see cref="SpecLimits.MaxUriLength"/> (2,048) each, is
+        /// reachable through <see cref="Content"/> at every position a
+        /// <see cref="TextStyleSpec"/> can appear, and can therefore be
+        /// multiplied by shared structure exactly as any other text-bearing
+        /// member here can, but this walk never counted it. Measured
+        /// directly: four paragraphs of 1,000 runs each, every run carrying a
+        /// distinct maximal-length <see cref="TextStyleSpec.LinkUri"/>, counted
+        /// only 4,000 characters (the runs' own <see cref="TextRunSpec.Text"/>)
+        /// while the emitted C# carried 8,608,755 characters, entirely inside
+        /// a total this walk was already supposed to bound.
+        /// </remarks>
+        private bool TryAddStyleUri(TextStyleSpec? style) => TryAddCharacters(style?.LinkUri?.Length ?? 0);
+
         private bool TryVisitListItem(ListItemSpec item)
         {
-            if (!TryVisit() || !TryAddCharacters(item.Text.Length))
+            // Language, like Style.LinkUri, is a text-bearing member of this
+            // same node and reachable at every depth Children can multiply
+            // it to; see the remark on TryAddStyleUri for the identical gap
+            // this closes.
+            if (!TryVisit() ||
+                !TryAddCharacters(item.Text.Length) ||
+                !TryAddCharacters(item.Language?.Length ?? 0) ||
+                !TryAddStyleUri(item.Style))
             {
                 return false;
             }
@@ -632,18 +748,13 @@ public sealed record DocumentSpec
     }
 
     /// <summary>
-    /// Confirms this specification's PAGE GEOMETRY, not merely its total text
-    /// volume, cannot force <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>,
-    /// which recurses once per page continuation, past
-    /// <see cref="SpecLimits.MaxSafePageContinuations"/> continuations; that
-    /// recursion overflows the CLR stack, which cannot be caught, so this must
-    /// run before either real consumer does any work. See the remark on
-    /// <see cref="SpecLimits.MaxSafePageContinuations"/> for the measurement:
-    /// <see cref="SpecLimits.MaxTotalTextLength"/> alone is safe only at a
-    /// content box at or above roughly the one its own worst-case measurement
-    /// used, and <see cref="Margins"/> or a tall <see cref="RunningBandSpec.Height"/>
-    /// are each, alone, enough to shrink a specification's actual content box
-    /// far below that.
+    /// Confirms this specification's PAGE GEOMETRY cannot force
+    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>, which
+    /// recurses once per page continuation, past
+    /// <see cref="SpecLimits.MaxSafePageContinuations"/> continuations while
+    /// placing any ONE element of <see cref="Content"/>; that recursion
+    /// overflows the CLR stack, which cannot be caught, so this must run
+    /// before either real consumer does any work.
     /// </summary>
     /// <remarks>
     /// Like <see cref="ValidateEmbeddedFontReferences"/>, this cannot be
@@ -658,6 +769,56 @@ public sealed record DocumentSpec
     /// alongside <see cref="ValidateEmbeddedFontReferences"/>, before doing
     /// anything else, for the identical reason.
     /// <para>
+    /// TWO corrections were needed to a previous version of this bound, both
+    /// found only once a reproduction was measured directly rather than
+    /// assumed from first principles.
+    /// </para>
+    /// <para>
+    /// FIRST: what overflows the stack is the number of continuations placing
+    /// a SINGLE element of <see cref="Content"/> requires, not the document's
+    /// own total page count. Measured directly: twenty thousand pages built
+    /// from twenty thousand separate top-level elements renders cleanly in
+    /// about half a second, because <c>DocumentRenderer</c>'s recursion
+    /// unwinds between top-level elements; what does not unwind is placing
+    /// ONE element (a list, in particular) whose own rendered lines span many
+    /// pages. A bound that sums every element's own line count and compares
+    /// the TOTAL against <see cref="SpecLimits.MaxSafePageContinuations"/>
+    /// would therefore both under- and over-protect: it would admit a single
+    /// oversized element sitting beside many trivial ones (the sum stays
+    /// under the ceiling; the one dangerous element does not), and it would
+    /// reject many small, individually safe elements for no reason (each
+    /// unwinds independently; summing them anyway invents a hazard that is
+    /// not there). This bound therefore takes the WORST single element's own
+    /// estimated line count, never a sum across <see cref="Content"/>.
+    /// </para>
+    /// <para>
+    /// SECOND: line count is driven by NODE count, not character count. A
+    /// list item, a table row, or any other block-level element starts a new
+    /// rendered line regardless of how few characters it carries, so an
+    /// estimate built only from total characters divided by an assumed
+    /// characters-per-page figure can pass a specification whose NODE count
+    /// alone already demands more lines than the page can hold. Measured
+    /// directly: a 20,000 x 200 point page, 55-point margins, and one list of
+    /// 1,650 items each carrying two children (4,950 <see cref="ListItemSpec"/>
+    /// instances, each holding a single-character <see cref="ListItemSpec.Text"/>
+    /// of <c>"W"</c>) carries only 4,950 characters, far under
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>, and only 4,951 walked
+    /// nodes, under <see cref="SpecLimits.MaxWalkedNodes"/>; a character-only
+    /// estimate saw almost no text and computed roughly 9 page continuations,
+    /// comfortably passing, while the library still recurses once per
+    /// RENDERED LINE and this list alone requires 4,950 of them. This bound
+    /// now takes, per element, the GREATER of an estimated text-wrap line
+    /// count and a node-forced line count: every <see cref="PlainTextSpec"/>,
+    /// <see cref="HeadingSpec"/>, <see cref="ParagraphSpec"/> (as a whole, its
+    /// runs' combined length), <see cref="ListItemSpec"/> (at every depth
+    /// <see cref="ListSpec.Items"/> reaches) and <see cref="TableRowSpec"/>
+    /// contributes at least one line even when its own text is empty, exactly
+    /// as the library's own line-based layout does; the walk that already
+    /// enumerates these same positions, for <see cref="SpecLimits.MaxWalkedNodes"/>,
+    /// is what this bound now also drives its line count from, rather than
+    /// only that walk's character total.
+    /// </para>
+    /// <para>
     /// The bound deliberately does not measure this specification's ACTUAL
     /// glyphs or ACTUAL line height: doing so would require inspecting a
     /// visitor-supplied embedded TrueType font's own metrics, which this
@@ -669,56 +830,174 @@ public sealed record DocumentSpec
     /// the same bound already established, on <see cref="SpecLimits.MaxLeadingPoints"/>'s
     /// own remark, to safely cover both an explicit maximal
     /// <see cref="TextStyleSpec.Leading"/> and the library's own auto-computed
-    /// line height at <see cref="SpecLimits.MaxFontSize"/>. Both assumptions
-    /// are deliberately generous in the SAFE direction: they can only make
-    /// this reject a specification that would actually have rendered, never
-    /// admit one that would not.
+    /// line height at <see cref="SpecLimits.MaxFontSize"/>. Re-measured
+    /// directly against the single dense-text reproduction this bound was
+    /// originally derived from (see <see cref="SpecLimits.MaxSafePageContinuations"/>'s
+    /// own remark): the boundary between reliable rendering and reliable
+    /// overflow there sits at roughly 4,200 and 4,350 page continuations
+    /// respectively, consistent with the 4,250-to-4,500 band already recorded
+    /// there, so <see cref="SpecLimits.MaxSafePageContinuations"/> at 2,000
+    /// keeps the same wide margin under both the old, character-only estimate
+    /// and this node-aware one.
+    /// </para>
+    /// <para>
+    /// NOTE: an <see cref="ImageSpec"/> or <see cref="PieChartSpec"/> whose
+    /// own declared dimensions are large (up to <see cref="SpecLimits.MaxImageDimensionPoints"/>
+    /// or <see cref="SpecLimits.MaxPieChartDiameterPoints"/>, both far larger
+    /// than one line) is counted as exactly one line here, the same
+    /// unconditional floor every block-level element gets; this bound does
+    /// NOT model the vertical space either actually occupies. That remains
+    /// unmeasured: whether a run of many large, page-filling images or charts
+    /// can itself force the same per-continuation recursion a run of text
+    /// lines does was not established either way while fixing the defect
+    /// above, and is called out here rather than silently assumed safe.
     /// </para>
     /// </remarks>
     public void ValidateContentFitsPageArea()
     {
-        var walk = new ContentWalkState();
-        foreach (var item in Content)
-        {
-            if (!walk.TryVisitNode(item))
-            {
-                // Content's own construction already rejects anything that
-                // reaches either limit; unreachable for a spec that exists.
-                break;
-            }
-        }
-
-        var totalTextLength = walk.CharacterCount;
-        if (totalTextLength <= 0)
-        {
-            return;
-        }
-
         var contentWidth = Page.WidthPoints - Margins.Left - Margins.Right;
         var contentHeight = Page.HeightPoints - Margins.Top - Margins.Bottom
             - ReservedBandHeight(Header) - ReservedBandHeight(Footer);
 
         var charsPerLine = (long)Math.Max(0, Math.Floor(contentWidth / SpecLimits.MaxFontSize));
         var linesPerPage = (long)Math.Max(0, Math.Floor(contentHeight / SpecLimits.MaxLeadingPoints));
-        var charsPerPage = charsPerLine * linesPerPage;
 
-        var pagesNeeded = charsPerPage > 0
-            ? (totalTextLength + charsPerPage - 1) / charsPerPage
+        long worstElementLines = 0;
+        foreach (var item in Content)
+        {
+            worstElementLines = Math.Max(worstElementLines, EstimateElementLines(item, charsPerLine));
+        }
+
+        if (worstElementLines <= 0)
+        {
+            return;
+        }
+
+        var pagesNeeded = linesPerPage > 0
+            ? (worstElementLines + linesPerPage - 1) / linesPerPage
             : long.MaxValue;
 
         if (pagesNeeded > SpecLimits.MaxSafePageContinuations)
         {
             throw new ArgumentException(
                 $"This specification's page ({Page.WidthPoints:0.##} x {Page.HeightPoints:0.##} points) minus " +
-                "its margins and running-band heights leaves a content box too small to place its own text " +
-                $"within {SpecLimits.MaxSafePageContinuations} page continuations, at a worst-case " +
-                $"{SpecLimits.MaxFontSize}-point glyph width and {SpecLimits.MaxLeadingPoints}-point line " +
-                "height. DocumentRenderer.PlaceRenderer recurses once per page continuation and that recursion " +
-                "overflows the CLR stack, which cannot be caught. Enlarge the page, reduce the margins or " +
-                "running-band heights, or reduce the amount of text.",
+                "its margins and running-band heights leaves a content box too small to place its worst single " +
+                $"element of Content within {SpecLimits.MaxSafePageContinuations} page continuations, at a " +
+                $"worst-case {SpecLimits.MaxFontSize}-point glyph width and {SpecLimits.MaxLeadingPoints}-point " +
+                "line height, counting a line forced by list-item, table-row and other block-level node " +
+                "structure alongside wrapped text. DocumentRenderer.PlaceRenderer recurses once per page " +
+                "continuation and that recursion overflows the CLR stack, which cannot be caught. Enlarge the " +
+                "page, reduce the margins or running-band heights, or reduce the amount of text or the number " +
+                "of list items and table rows in this element.",
                 nameof(Page));
         }
     }
+
+    /// <summary>
+    /// The estimated number of rendered lines placing <paramref name="item"/>
+    /// alone would require, at <paramref name="charsPerLine"/> characters per
+    /// line: the greater, per line-producing position, of its own wrapped
+    /// text length and the unconditional one-line floor every such position
+    /// carries regardless of how little text it holds. See
+    /// <see cref="ValidateContentFitsPageArea"/>'s own remark for why this is
+    /// computed per element, summed only WITHIN one element's own nested
+    /// structure (a list's items at every depth, a table's rows), and never
+    /// summed ACROSS the top-level elements of <see cref="Content"/>.
+    /// </summary>
+    private static long EstimateElementLines(ContentItemSpec item, long charsPerLine)
+    {
+        switch (item)
+        {
+            case PlainTextSpec plainText:
+                return LinesForCharacters(plainText.Text.Length, charsPerLine);
+
+            case HeadingSpec heading:
+                // BookmarkTitle is not laid-out text (it names a PDF outline
+                // entry, not a rendered line), so it does not contribute here,
+                // unlike heading.Text itself.
+                return LinesForCharacters(heading.Text.Length, charsPerLine);
+
+            case ParagraphSpec paragraph:
+            {
+                long chars = 0;
+                foreach (var run in paragraph.Runs)
+                {
+                    chars = SaturatingAdd(chars, run.Text.Length);
+                }
+
+                return LinesForCharacters(chars, charsPerLine);
+            }
+
+            case ListSpec list:
+            {
+                long lines = 0;
+                foreach (var listItem in list.Items)
+                {
+                    lines = SaturatingAdd(lines, EstimateListItemLines(listItem, charsPerLine));
+                }
+
+                return lines;
+            }
+
+            case TableSpec table:
+            {
+                long lines = 0;
+                foreach (var row in table.Rows)
+                {
+                    long rowChars = 0;
+                    foreach (var cell in row.Cells)
+                    {
+                        rowChars = SaturatingAdd(rowChars, cell.Content.Length);
+                    }
+
+                    lines = SaturatingAdd(lines, LinesForCharacters(rowChars, charsPerLine));
+                }
+
+                return lines;
+            }
+
+            default:
+                // ImageSpec, PieChartSpec, LineSeparatorSpec: none lays out
+                // wrapped text of its own (an image's or chart's AltText, and
+                // a chart slice's Label, are accessibility metadata, never a
+                // rendered line), but each is still a block-level element
+                // that occupies at least one line; see the NOTE on
+                // ValidateContentFitsPageArea about what this floor does NOT
+                // model for either type.
+                return 1;
+        }
+    }
+
+    /// <summary>Mirrors <see cref="EstimateElementLines"/> for one <see cref="ListItemSpec"/>, recursing into <see cref="ListItemSpec.Children"/> at every depth.</summary>
+    private static long EstimateListItemLines(ListItemSpec item, long charsPerLine)
+    {
+        var lines = LinesForCharacters(item.Text.Length, charsPerLine);
+        foreach (var child in item.Children)
+        {
+            lines = SaturatingAdd(lines, EstimateListItemLines(child, charsPerLine));
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// The number of lines <paramref name="length"/> characters need at
+    /// <paramref name="charsPerLine"/> characters per line, floored at one:
+    /// every line-producing position occupies at least one line even when its
+    /// own text is empty, matching the library's own block layout. When
+    /// <paramref name="charsPerLine"/> is zero or negative (the content box is
+    /// too narrow for even one worst-case glyph), any non-empty text cannot
+    /// be placed at all; that is represented here as a large sentinel rather
+    /// than an unbounded value, so a caller summing several such results with
+    /// <see cref="SaturatingAdd"/> cannot overflow.
+    /// </summary>
+    private static long LinesForCharacters(long length, long charsPerLine) =>
+        charsPerLine <= 0
+            ? (length > 0 ? long.MaxValue / 4 : 1)
+            : Math.Max(1, (length + charsPerLine - 1) / charsPerLine);
+
+    /// <summary>Adds <paramref name="a"/> and <paramref name="b"/>, clamping at <see cref="long.MaxValue"/> instead of overflowing.</summary>
+    private static long SaturatingAdd(long a, long b) => a > long.MaxValue - b ? long.MaxValue : a + b;
 
     /// <summary>
     /// The content height a <see cref="RunningBandSpec"/> reserves for
@@ -824,7 +1103,31 @@ public enum FontKind
 /// </summary>
 public sealed record FontSpec
 {
-    public required FontKind Kind { get; init; }
+    /// <summary>
+    /// Which of <see cref="FontKind"/>'s two named members this reference
+    /// selects. Validated here, at construction, the same way
+    /// <see cref="EmbeddedFontIndex"/> below rejects a negative value:
+    /// <see cref="FontKind"/> is a public enumeration, and <see cref="FromStandard14"/>
+    /// and <see cref="FromEmbedded"/> are convenience factories, not the only
+    /// way to set this property. A caller may always write
+    /// <c>new FontSpec { Kind = (FontKind)99 }</c> directly through the
+    /// object-initializer syntax the two factories themselves use, so
+    /// claiming this member unreachable outside the two factories was false;
+    /// measured directly, the repository's own test suite constructs exactly
+    /// that value. Rejecting it here, rather than downstream, is what lets
+    /// both <see cref="Generation.SpecRenderer"/> and
+    /// <see cref="Generation.SpecCodeEmitter"/> treat <see cref="FontKind.Embedded"/>
+    /// against everything else as a two-way, exhaustive comparison with no
+    /// unreachable arm to keep in step.
+    /// </summary>
+    public required FontKind Kind
+    {
+        get;
+        init => field = value is FontKind.Standard14 or FontKind.Embedded
+            ? value
+            : throw new ArgumentException($"Kind must be one of FontKind's named members; got {value}.", nameof(Kind));
+    }
+
     public Standard14 Standard14Face { get; init; }
 
     /// <summary>
@@ -867,7 +1170,11 @@ public sealed record FontSpec
 /// </remarks>
 public sealed record TextStyleSpec
 {
-    public required FontSpec Font { get; init; }
+    public required FontSpec Font
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(Font));
+    }
 
     /// <summary>
     /// Defaults to 12, matching <c>TextStyle</c>'s own default exactly, for the
@@ -984,6 +1291,16 @@ public sealed record TextRunSpec(string Text, TextStyleSpec Style)
 }
 
 /// <summary>The base type for one item of ordered document content.</summary>
+/// <remarks>
+/// Declared <see langword="abstract"/> and public, so any assembly may write
+/// a further subtype, but <see cref="DocumentSpec.Content"/>'s own
+/// construction-time validation (<c>IsRecognisedContentItemType</c>) rejects
+/// every value that is not one of the eight subtypes below (or is
+/// <see langword="null"/>): a fully constructed <see cref="DocumentSpec"/> is
+/// therefore guaranteed to hold only members of that closed set, and neither
+/// <see cref="Generation.SpecRenderer"/> nor <see cref="Generation.SpecCodeEmitter"/>
+/// needs a matching defensive arm of its own to stay in step with the other.
+/// </remarks>
 public abstract record ContentItemSpec;
 
 /// <summary>A <c>Heading</c>. A <see langword="null"/> <see cref="Style"/> lets the library apply automatic styling for the level.</summary>
@@ -1596,7 +1913,12 @@ public sealed record RunningBandSpec
         init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Template));
     }
 
-    public required TextStyleSpec Style { get; init; }
+    public required TextStyleSpec Style
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(Style));
+    }
+
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
 
     public double? Height

@@ -267,8 +267,13 @@ public static class SpecLimits
     /// <summary>
     /// The maximum number of page continuations
     /// <see cref="Model.DocumentSpec.ValidateContentFitsPageArea"/> permits a
-    /// specification's own page geometry to require for its own total text
-    /// volume. <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
+    /// specification's own page geometry to require for placing the WORST
+    /// SINGLE element of <see cref="Model.DocumentSpec.Content"/>, never a sum
+    /// across every element (see that method's own remark for why: recursion
+    /// unwinds between top-level elements, so a document-wide total would
+    /// both wrongly admit one oversized element sitting beside many trivial
+    /// ones and wrongly reject many small, independently safe elements).
+    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
     /// recurses once per page continuation and that recursion cannot be
     /// caught, so this is a second, independent bound on the same hazard
     /// <see cref="MaxTotalTextLength"/> bounds, needed because
@@ -315,8 +320,19 @@ public static class SpecLimits
     /// overflowed stayed within a narrow band (roughly 4,250 to 4,500 pages),
     /// consistent with the stack overflowing at a roughly fixed RECURSION
     /// DEPTH regardless of how that depth was reached; this is what makes a
-    /// single page-count ceiling, rather than a character-count ceiling,
-    /// the correct bound to add.
+    /// PER-CONTINUATION ceiling, rather than a per-character one, the correct
+    /// quantity to bound. NOTE: every reproduction that established this
+    /// figure used a single dense-text element, where that element's own
+    /// continuation count and the document's whole page count are the same
+    /// number; an earlier version of this remark generalised that coincidence
+    /// into "a single page-count ceiling... is the correct bound to add",
+    /// which reads as a document-wide total and is not what this cap is. The
+    /// bound this cap feeds is per ELEMENT (see the summary above and
+    /// <see cref="Model.DocumentSpec.ValidateContentFitsPageArea"/>'s own
+    /// remark), and re-measuring at that same geometry with the corrected,
+    /// node-aware line estimate reproduces the identical 4,200-to-4,350-page
+    /// boundary, confirming the VALUE below did not need to change, only the
+    /// arithmetic that compares a specification against it.
     /// </description></item>
     /// </list>
     /// 2,000 is chosen with headroom below that measured 4,250-to-4,500-page
