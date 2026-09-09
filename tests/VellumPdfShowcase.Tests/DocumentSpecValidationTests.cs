@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using VellumPdf.Encryption;
 using VellumPdf.Layout.Core;
 using VellumPdf.Layout.Elements;
@@ -118,18 +119,28 @@ public class DocumentSpecValidationTests
     /// actually has, so it inspects a future member without anyone having to
     /// remember to teach it that member's name.
     /// <para>
-    /// A member's type has value equality here when it is a value type (a
-    /// <see langword="struct"/>, <see langword="enum"/>, or
-    /// <see cref="Nullable{T}"/> of one; <see cref="ValueType.Equals(object?)"/>
-    /// compares every field), a <see cref="string"/>, or a reference type
-    /// that itself overrides <c>Equals(object?)</c> rather than inheriting
-    /// <see cref="object.Equals(object?)"/>'s reference comparison, which is
-    /// exactly what a C# <see langword="record"/> generates automatically and
-    /// what an ordinary array or <see cref="List{T}"/> does NOT. An
-    /// array- or list-typed member, the shape plan section 3.4.0.1 names by
-    /// example (a dash pattern), is caught by this last rule: neither type
-    /// overrides <c>Equals(object?)</c>, so this test fails the moment one is
-    /// added, whether or not the two constructed instances happen to set it.
+    /// Cycle 7 review: the ORIGINAL version of this guard enumerated
+    /// <see cref="TextStyleSpec"/>'s own PROPERTIES and waved through every
+    /// VALUE type unconditionally, on the theory that
+    /// <see cref="ValueType.Equals(object?)"/> always compares every field.
+    /// Three shapes broke that theory while leaving the guard green: a
+    /// <see langword="readonly record struct"/> WRAPPING an array (an array
+    /// field's own equality is reference-based regardless of what wraps it,
+    /// and <see cref="System.Collections.Immutable.ImmutableArray{T}"/>, the
+    /// natural type for the dash pattern plan section 3.4.0.1 names, has
+    /// exactly this shape); a public FIELD, invisible to <c>GetProperties</c>
+    /// entirely; and a CLASS that overrides <c>Equals(object?)</c> to compare
+    /// by reference, which the original guard's own final check (does an
+    /// override exist at all) waved through since an override, any override,
+    /// satisfied it. See <see cref="HasValueEquality"/> for how each is
+    /// closed: FIELDS, not properties, are enumerated (a struct's own
+    /// backing field for a wrapped array is exactly how the field enumeration
+    /// below finds it); a member's own type is walked RECURSIVELY into its
+    /// own fields regardless of value-type-ness or override presence,
+    /// bottoming out only at a genuine primitive, <see langword="enum"/>, or
+    /// <see cref="string"/>, and treating <see langword="array"/> as always
+    /// unsafe; and a CLASS with a custom override is additionally checked
+    /// BEHAVIOURALLY, not merely for the override's presence.
     /// </para>
     /// </summary>
     [Fact]
@@ -137,38 +148,184 @@ public class DocumentSpecValidationTests
         "Trimming",
         "IL2072",
         Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
-            "Type.GetMethod cannot observe a member removed by the linker.")]
+            "Type.GetFields/GetMethod cannot observe a member removed by the linker.")]
     public void TextStyleSpec_EveryMember_HasValueEquality()
     {
-        var properties = typeof(TextStyleSpec).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-        Assert.NotEmpty(properties);
+        var fields = typeof(TextStyleSpec).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotEmpty(fields);
 
-        foreach (var property in properties)
+        foreach (var field in fields)
         {
             Assert.True(
-                HasValueEquality(property.PropertyType),
-                $"TextStyleSpec.{property.Name} has type {property.PropertyType}, which does not implement " +
+                HasValueEquality(field.FieldType),
+                $"TextStyleSpec.{field.Name} has type {field.FieldType}, which does not implement " +
                 "value equality. Record equality falls back to reference equality for it, which would let " +
                 "two value-equal TextStyleSpec instances compare unequal; see the remark on TextStyleSpec.");
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="type"/> genuinely implements value equality,
+    /// walked recursively into its own instance FIELDS (never merely its
+    /// properties: a raw public field has no corresponding property, and a
+    /// property's own backing field is exactly what this reaches for an
+    /// auto-implemented or <see langword="field"/>-keyword property). A
+    /// primitive, <see langword="enum"/>, <see cref="decimal"/> or
+    /// <see cref="string"/> bottoms the recursion out as safe. An
+    /// <see langword="array"/> is always unsafe: <see cref="Array"/> does not
+    /// override <c>Equals(object?)</c>, and neither does the compiler-
+    /// generated per-field comparison a C# <see langword="record"/> or
+    /// <see langword="record struct"/> performs for an array-typed field of
+    /// its OWN, so being a record is not, on its own, a reason to stop
+    /// recursing either.
+    /// <para>
+    /// A reference type additionally needs a genuine <c>Equals(object?)</c>
+    /// override (otherwise it falls back to <see cref="object.Equals(object?)"/>'s
+    /// reference comparison directly) AND passes a BEHAVIOURAL check
+    /// reflection alone cannot substitute for: two instances of the type
+    /// built through <see cref="RuntimeHelpers.GetUninitializedObject"/>,
+    /// which runs no constructor at all, hold identical, all-default field
+    /// values by construction, so a genuinely structural override must
+    /// consider them equal; an override that instead compares object
+    /// identity (<c>ReferenceEquals(this, obj)</c>, the shape plan section
+    /// 3.4.0.1 also warns against) reports two distinct, separately
+    /// allocated instances as unequal regardless of their field contents,
+    /// which is exactly what this check catches and a presence-only check
+    /// on the override cannot.
+    /// </para>
+    /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
         Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
-            "Type.GetMethod cannot observe a member removed by the linker.")]
-    private static bool HasValueEquality(Type type)
+            "Type.GetFields/GetMethod cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2067",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
+    private static bool HasValueEquality(Type type, HashSet<Type>? visiting = null)
     {
         var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
 
-        if (underlyingType.IsValueType || underlyingType == typeof(string))
+        if (underlyingType.IsPrimitive || underlyingType.IsEnum || underlyingType == typeof(string) || underlyingType == typeof(decimal))
         {
             return true;
         }
 
-        var equalsMethod = underlyingType.GetMethod(nameof(Equals), BindingFlags.Public | BindingFlags.Instance, [typeof(object)]);
-        return equalsMethod is not null && equalsMethod.DeclaringType != typeof(object);
+        if (underlyingType.IsArray)
+        {
+            return false;
+        }
+
+        visiting ??= [];
+        if (!visiting.Add(underlyingType))
+        {
+            // A type reachable from itself. No member type in this codebase
+            // is actually self-referential; treat it as safe rather than
+            // recursing forever, so a future one fails loudly some other
+            // way (a stack overflow while constructing an instance, most
+            // likely) instead of silently here.
+            return true;
+        }
+
+        try
+        {
+            if (underlyingType.IsClass)
+            {
+                var equalsMethod = underlyingType.GetMethod(nameof(Equals), BindingFlags.Public | BindingFlags.Instance, [typeof(object)]);
+                if (equalsMethod is null || equalsMethod.DeclaringType == typeof(object))
+                {
+                    return false;
+                }
+
+                var blankA = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                var blankB = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                if (!blankA.Equals(blankB))
+                {
+                    return false;
+                }
+            }
+
+            var fields = underlyingType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            return fields.All(field => HasValueEquality(field.FieldType, visiting));
+        }
+        finally
+        {
+            visiting.Remove(underlyingType);
+        }
+    }
+
+    /// <summary>
+    /// Proves <see cref="HasValueEquality"/> itself rejects each of the three
+    /// shapes the cycle 7 review named, none of which the ORIGINAL guard
+    /// (wave through every value type; accept any override at all) caught.
+    /// Each nested type below exists only to be fed to <see cref="HasValueEquality"/>
+    /// directly; none is a member of <see cref="TextStyleSpec"/>, so this
+    /// does not depend on, or risk corrupting, the model itself.
+    /// </summary>
+    public class HasValueEqualityGuardTests
+    {
+        /// <summary>The exact shape plan section 3.4.0.1 names by example: a value type wrapping an array, matching <see cref="System.Collections.Immutable.ImmutableArray{T}"/>.</summary>
+        private readonly record struct ArrayWrappingRecordStruct(int[] Values);
+
+        /// <summary>A public FIELD, not a property, of array type: invisible to <c>GetProperties</c> entirely.</summary>
+        private sealed class PublicArrayFieldHazard
+        {
+            public int[] Values = [];
+        }
+
+        /// <summary>An override that exists, so a presence-only check accepts it, but compares object identity rather than field contents.</summary>
+        private sealed class ReferenceEqualityOverrideHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) => ReferenceEquals(this, obj);
+
+            public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
+        }
+
+        /// <summary>A genuine, structurally-correct override, included as the counterpart proof: the guard must not reject a type merely for having one.</summary>
+        private sealed class StructuralEqualityOverride
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) => obj is StructuralEqualityOverride other && Value.Equals(other.Value);
+
+            public override int GetHashCode() => Value.GetHashCode();
+        }
+
+        [Fact]
+        public void ArrayWrappingRecordStruct_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(ArrayWrappingRecordStruct)));
+
+        [Fact]
+        public void PublicArrayFieldHazard_ArrayFieldType_IsRejected()
+        {
+            // Demonstrates the enumeration-strategy half of the fix, not
+            // only HasValueEquality's own recursion: GetProperties finds
+            // nothing on this type at all, so a guard built on it would
+            // never even reach the array field to reject it.
+            var properties = typeof(PublicArrayFieldHazard).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            Assert.Empty(properties);
+
+            var fields = typeof(PublicArrayFieldHazard).GetFields(BindingFlags.Public | BindingFlags.Instance);
+            var valuesField = Assert.Single(fields);
+            Assert.False(HasValueEquality(valuesField.FieldType));
+        }
+
+        [Fact]
+        public void ReferenceEqualityOverrideHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(ReferenceEqualityOverrideHazard)));
+
+        [Fact]
+        public void StructuralEqualityOverride_IsAccepted() =>
+            Assert.True(HasValueEquality(typeof(StructuralEqualityOverride)));
     }
 }
 
