@@ -180,10 +180,20 @@ public static class SpecLimits
     /// leave when multiplied together: 5,000 nodes at 100,000 characters each is
     /// 500,000,000 characters, about 954 MB of UTF-16. Measured on the way there,
     /// a specification carrying 200,062,485 characters emitted its C# in 1.3 s
-    /// and rendered a 40.6 MB PDF in 8,972 ms on desktop x64; WebAssembly is
-    /// single-threaded and materially slower. This limit targets rendering well
-    /// under 250 ms on desktop x64, which measurement puts comfortably above
-    /// 100,000 characters in every geometry this file also bounds.
+    /// and rendered a 40.6 MB PDF in 8,972 ms on desktop x64. NOTE: an earlier
+    /// version of this remark claimed generation stays "well under 250 ms on
+    /// desktop x64" at this value's own boundary; measured directly, in the
+    /// browser this application actually ships to, generation at
+    /// <see cref="MaxTotalTextLength"/> took 1,681 ms and, in a separate
+    /// structurally heavier specification also within every cap in this file,
+    /// 4,194 ms. Both are far above 250 ms, and neither figure is a defect:
+    /// nothing in this file promises a specific generation time, only that
+    /// generation completes (see <see cref="Generation.SpecRenderer"/> and
+    /// <see cref="Generation.SpecCodeEmitter"/> yielding to the browser's own
+    /// macrotask queue rather than blocking it unboundedly). WebAssembly is
+    /// single-threaded and materially slower than desktop x64 for
+    /// string-heavy work of exactly this kind, which is the entire reason the
+    /// two figures differ so sharply from the desktop measurement above.
     /// <para>
     /// Text volume is not only a CPU-time hazard. Measured directly:
     /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c> recurses once per page continuation, so a

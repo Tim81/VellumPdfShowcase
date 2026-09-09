@@ -60,6 +60,31 @@ public static class SpecCodeEmitter
     /// the round-trip test compiles this snippet with; a script's top level is
     /// not a method body, and the compiler rejects a using declaration there.
     /// </para>
+    /// <para>
+    /// Exception contract: every failure this method can produce surfaces as
+    /// <see cref="ArgumentException"/> (including its
+    /// <see cref="ArgumentOutOfRangeException"/> and <see cref="ArgumentNullException"/>
+    /// subtypes, for a malformed <paramref name="spec"/> the model failed to
+    /// reject), the SAME family <see cref="Generation.SpecRenderer.Render"/>
+    /// promises. Unlike <see cref="Generation.SpecRenderer.Render"/>, this
+    /// method NEVER throws <see cref="InvalidOperationException"/>: it emits
+    /// TEXT referencing <paramref name="spec"/>'s asset bytes (<c>Images[N]</c>,
+    /// an embedded font, an ICC profile) by position, and never decodes or
+    /// parses any of them itself, so a well-signed but structurally corrupt
+    /// image or font that makes <see cref="Generation.SpecRenderer.Render"/>
+    /// throw <see cref="InvalidOperationException"/> makes this method return
+    /// successfully instead, with code that is nonetheless CORRECT: a visitor
+    /// who copies it and runs it against the same bytes hits the identical
+    /// decode failure <see cref="Generation.SpecRenderer.Render"/> already
+    /// hit, unwrapped, in their own environment, which is the expected
+    /// outcome of copying code that references bad bytes, not a defect in
+    /// what this method produced. A caller wanting one catch clause complete
+    /// for THIS method alone can therefore catch <see cref="ArgumentException"/>;
+    /// a caller wanting completeness across both this method and
+    /// <see cref="Generation.SpecRenderer.Render"/> together still needs
+    /// <see cref="InvalidOperationException"/> too, exactly as
+    /// <see cref="Generation.SpecRenderer.Render"/>'s own contract already states.
+    /// </para>
     /// </remarks>
     public static string Emit(DocumentSpec spec)
     {

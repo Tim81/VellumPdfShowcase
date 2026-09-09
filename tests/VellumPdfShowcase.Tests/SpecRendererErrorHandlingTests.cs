@@ -34,6 +34,33 @@ public class SpecRendererErrorHandlingTests
         Assert.Contains("image", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Cycle 7 review: proves the asymmetry <see cref="SpecCodeEmitter.Emit"/>'s
+    /// own exception contract now documents. <see cref="SpecCodeEmitter.Emit"/>
+    /// emits TEXT referencing <c>Images[0]</c> by position; it never decodes
+    /// the bytes themselves, so the SAME specification that makes
+    /// <see cref="SpecRenderer.Render"/> throw <see cref="InvalidOperationException"/>
+    /// (<see cref="Render_WellSignedButMalformedPng_ThrowsLegibleInvalidOperationException"/>
+    /// above) makes <see cref="SpecCodeEmitter.Emit"/> succeed instead, with
+    /// code that correctly references the same bad bytes.
+    /// </summary>
+    [Fact]
+    public void Emit_WellSignedButMalformedPng_SucceedsWhereRenderThrows()
+    {
+        byte[] truncatedPng = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFF, 0xFF, 0xFF];
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new ImageSpec { Format = ImageFormat.Png, Bytes = truncatedPng }],
+        };
+
+        Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
+
+        var code = SpecCodeEmitter.Emit(spec);
+        Assert.Contains("PngImageLoader.Load(Images[0])", code, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Render_MalformedEmbeddedFont_ThrowsLegibleInvalidOperationException()
     {
