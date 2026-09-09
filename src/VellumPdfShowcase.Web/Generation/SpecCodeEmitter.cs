@@ -398,8 +398,13 @@ public static class SpecCodeEmitter
                 case LineSeparatorSpec lineSeparator:
                     EmitLineSeparator(lineSeparator);
                     break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(item), item, "Unrecognised content item type.");
+
+                // No default arm: DocumentSpec.Content's own construction-time
+                // validation (IsRecognisedContentItemType) already rejects any
+                // ContentItemSpec subtype other than the eight named above, so
+                // this switch STATEMENT (unlike a switch expression) compiles
+                // without one and has no unreachable branch for the coverage
+                // gate to find. See the remark on ContentItemSpec.
             }
         }
 
@@ -1179,12 +1184,20 @@ public static class SpecCodeEmitter
         // FontReference has an implicit conversion from both Standard14 and
         // EmbeddedFontHandle, so FontRef can be assigned the face or handle
         // directly, without the otherwise-redundant `new FontReference(...)`.
-        var fontRefExpr = spec.Font.Kind switch
-        {
-            FontKind.Standard14 => $"Standard14.{spec.Font.Standard14Face}",
-            FontKind.Embedded => $"embeddedFont{spec.Font.EmbeddedFontIndex}",
-            _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Font.Kind, "Unrecognised font kind."),
-        };
+        //
+        // A two-way comparison against FontKind.Embedded, not a switch over
+        // both named members, for the identical coverage reason documented on
+        // SpecRenderer.ImageLoaders, SpecRenderer.ToTextStyle and
+        // SpecCodeEmitter.ImageLoaderName: a switch EXPRESSION here would need
+        // a default arm the compiler requires but FontSpec.Kind's own
+        // construction-time validation (see its remark) makes unreachable,
+        // and that arm's branch outcome would be attributed to this method
+        // regardless of where any thrown exception is constructed. FontKind
+        // has exactly two members; anything other than Embedded is
+        // Standard14 by construction, for any FontSpec that exists.
+        var fontRefExpr = spec.Font.Kind == FontKind.Embedded
+            ? $"embeddedFont{spec.Font.EmbeddedFontIndex}"
+            : $"Standard14.{spec.Font.Standard14Face}";
 
         List<string> properties = [$"FontRef = {fontRefExpr}", $"FontSize = {Num(spec.FontSize)}"];
 

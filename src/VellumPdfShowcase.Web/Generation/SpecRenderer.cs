@@ -73,6 +73,19 @@ public static class SpecRenderer
     /// See the remark on <see cref="TextRunSpec"/> for where each of those
     /// dereferences was.
     /// </para>
+    /// <para>
+    /// Round nine review: the SAME shape of gap survived in three further
+    /// <see langword="required"/> members with no null check of their own,
+    /// found by the identical reasoning applied to the rest of the model
+    /// rather than assumed closed once <see cref="TextRunSpec"/> was fixed: a
+    /// <see cref="RunningBandSpec"/> with a <see langword="null"/> <see cref="RunningBandSpec.Style"/>,
+    /// a <see langword="null"/> <see cref="DocumentSpec.DefaultTextStyle"/>,
+    /// and a <see cref="TextStyleSpec"/> with a <see langword="null"/>
+    /// <see cref="TextStyleSpec.Font"/> each reached <see cref="NullReferenceException"/>
+    /// the same way <see cref="TextRunSpec.Style"/> once did. All three are
+    /// now validated at their own construction, the same way; the contract
+    /// above is true again as of this fix.
+    /// </para>
     /// </remarks>
     public static byte[] Render(DocumentSpec spec)
     {
@@ -215,6 +228,17 @@ public static class SpecRenderer
         }
     }
 
+    /// <summary>
+    /// No default arm: <see cref="DocumentSpec.Content"/>'s own
+    /// construction-time validation already rejects any <see cref="ContentItemSpec"/>
+    /// subtype other than the eight named below, and a null item, so this
+    /// switch STATEMENT (unlike a switch expression) compiles without one and
+    /// has no unreachable branch for the coverage gate to find. Before that
+    /// validation existed, an unrecognised subtype silently fell through this
+    /// switch as though it were absent, while <see cref="Generation.SpecCodeEmitter.EmitContentItem"/>
+    /// threw for the identical input: exactly the divergence CLAUDE.md's
+    /// round-trip invariant forbids. See the remark on <c>ContentItemSpec</c>.
+    /// </summary>
     private static void AddContentItem(Document document, ContentItemSpec item, RenderContext context)
     {
         switch (item)
@@ -474,12 +498,18 @@ public static class SpecRenderer
         // both named members, for the identical coverage reason documented
         // on SpecRenderer.ImageLoaders and SpecCodeEmitter.ImageLoaderName: a
         // switch over this public enumeration would need a default arm the
-        // compiler requires but the public API makes unreachable (FontSpec
-        // only ever constructs a FontKind through FromStandard14 or
-        // FromEmbedded), and that arm's branch outcome would be attributed
-        // to this method regardless of where any thrown exception is
-        // constructed. FontKind has exactly two members; anything other than
-        // Embedded is Standard14 by construction.
+        // compiler requires but FontSpec.Kind's own construction-time
+        // validation (see its remark) makes unreachable, and that arm's
+        // branch outcome would be attributed to this method regardless of
+        // where any thrown exception is constructed. FontKind has exactly
+        // two members; anything other than Embedded is Standard14, for any
+        // FontSpec that exists. NOTE: an earlier version of this comment
+        // claimed FontSpec only ever constructs a Kind through
+        // FromStandard14 or FromEmbedded; that was false (a caller may
+        // always write `new FontSpec { Kind = (FontKind)99 }` directly, and
+        // this repository's own test suite once did), which is why the
+        // guarantee here now rests on FontSpec.Kind's own validation, not on
+        // the shape of its two factory methods.
         var fontRef = spec.Font.Kind == FontKind.Embedded
             ? new FontReference(context.Fonts[spec.Font.EmbeddedFontIndex])
             : new FontReference(spec.Font.Standard14Face);
