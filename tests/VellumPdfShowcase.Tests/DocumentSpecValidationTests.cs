@@ -456,6 +456,68 @@ public class DocumentSpecCollectionAliasingTests
 }
 
 /// <summary>
+/// Cycle 7 review: <see cref="TextRunSpec"/> was the one bare positional
+/// record in this model, with neither <see cref="TextRunSpec.Text"/> nor
+/// <see cref="TextRunSpec.Style"/> validated at all; five different inputs
+/// reached <see cref="NullReferenceException"/> as a result, which made
+/// <see cref="SpecRenderer.Render"/>'s own documented exception contract
+/// false, since that contract promises only <see cref="ArgumentException"/>
+/// or <see cref="InvalidOperationException"/>. These tests pin the fix at
+/// the narrowest point it can be pinned: construction
+/// of a <see cref="TextRunSpec"/> itself, before it can ever reach a
+/// <see cref="ParagraphSpec"/>, let alone <see cref="SpecRenderer.Render"/>
+/// or <see cref="Generation.SpecCodeEmitter.Emit"/>.
+/// </summary>
+public class TextRunSpecValidationTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    [Fact]
+    public void NullStyle_ThrowsAtConstruction()
+    {
+        Assert.Throws<ArgumentNullException>(() => new TextRunSpec("x", null!));
+    }
+
+    [Fact]
+    public void NullText_ThrowsAtConstruction()
+    {
+        Assert.Throws<ArgumentNullException>(() => new TextRunSpec(null!, Style()));
+    }
+
+    [Fact]
+    public void TextBeyondMaxTextLength_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => new TextRunSpec(new string('x', SpecLimits.MaxTextLength + 1), Style()));
+        Assert.Contains("Text", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TextAtMaxTextLength_Constructs()
+    {
+        var run = new TextRunSpec(new string('x', SpecLimits.MaxTextLength), Style());
+        Assert.Equal(SpecLimits.MaxTextLength, run.Text.Length);
+    }
+
+    /// <summary>
+    /// The specific hazard cycle 7 found: a <see langword="null"/>
+    /// <see cref="TextRunSpec.Style"/> reaching <see cref="ParagraphSpec"/>
+    /// untouched, because that record's own <c>ValidateRuns</c> checked only
+    /// <see cref="TextRunSpec.Text"/>. Now impossible: the
+    /// <see cref="ArgumentNullException"/> above fires before a
+    /// <see cref="TextRunSpec"/> with a <see langword="null"/>
+    /// <see cref="TextRunSpec.Style"/> can exist to be placed in
+    /// <see cref="ParagraphSpec.Runs"/> at all.
+    /// </summary>
+    [Fact]
+    public void NullStyleCannotReachParagraphSpec()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new ParagraphSpec { Runs = [new TextRunSpec("x", null!)] });
+    }
+}
+
+/// <summary>
 /// <see cref="ListItemSpec.Children"/> caps nesting depth at
 /// <see cref="SpecLimits.MaxListNestingDepth"/>, the one plan section 5.4
 /// control a wrapped parser call cannot rescue, because an uncaught stack

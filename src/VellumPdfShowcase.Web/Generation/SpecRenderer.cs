@@ -61,6 +61,18 @@ public static class SpecRenderer
     /// every other cross-feature incompatibility the library enforces at save
     /// time rather than at construction; see the remark on
     /// <see cref="DocumentSpec.UseObjectStreams"/>.
+    /// <para>
+    /// Cycle 7 review: this contract was FALSE until <see cref="TextRunSpec"/>
+    /// validated its own members. <see cref="TextRunSpec"/> was, before that
+    /// fix, this model's one bare positional record with neither member
+    /// checked at all; a <see cref="TextRunSpec.Style"/> of
+    /// <see langword="null"/> passed <see cref="ParagraphSpec"/>'s own
+    /// construction untouched and reached <see cref="NullReferenceException"/>
+    /// from several different dereferences downstream, none of them
+    /// <see cref="ArgumentException"/> or <see cref="InvalidOperationException"/>.
+    /// See the remark on <see cref="TextRunSpec"/> for where each of those
+    /// dereferences was.
+    /// </para>
     /// </remarks>
     public static byte[] Render(DocumentSpec spec)
     {

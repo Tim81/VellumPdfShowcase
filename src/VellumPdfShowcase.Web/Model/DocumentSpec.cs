@@ -926,7 +926,40 @@ public sealed record TextStyleSpec
 }
 
 /// <summary>One inline run of a <see cref="ParagraphSpec"/>, matching the library's <c>TextRun</c>.</summary>
-public sealed record TextRunSpec(string Text, TextStyleSpec Style);
+/// <remarks>
+/// Cycle 7 review: this was the one bare positional record anywhere in this
+/// model, with neither member validated at all, which is exactly why
+/// <see cref="SpecRenderer.Render"/>'s documented exception contract was
+/// false. A <see cref="Style"/> of <see langword="null"/>, in particular,
+/// passed <see cref="ParagraphSpec"/>'s own construction untouched (that
+/// type's <c>ValidateRuns</c> checked only <see cref="Text"/>) and reached
+/// <see cref="NullReferenceException"/> from several different places
+/// downstream instead: <see cref="DocumentSpec.ValidateEmbeddedFontReferences"/>
+/// dereferences <c>run.Style.Font</c> directly, and both
+/// <see cref="SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>
+/// dereference a run's <see cref="Style"/> while building the library's own
+/// <c>TextRun</c> or the matching emitted expression. Both members are now
+/// validated here, at THIS record's own construction, the same way every
+/// other required member in this model is: <see cref="Style"/> can no
+/// longer be <see langword="null"/> by the time a <see cref="TextRunSpec"/>
+/// exists at all, which closes every one of those paths at once rather than
+/// requiring each downstream dereference to be found and guarded
+/// individually.
+/// </remarks>
+public sealed record TextRunSpec(string Text, TextStyleSpec Style)
+{
+    public string Text
+    {
+        get;
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Text));
+    } = SpecLimits.ValidateString(Text, SpecLimits.MaxTextLength, nameof(Text));
+
+    public TextStyleSpec Style
+    {
+        get;
+        init => field = value ?? throw new ArgumentNullException(nameof(Style));
+    } = Style ?? throw new ArgumentNullException(nameof(Style));
+}
 
 /// <summary>The base type for one item of ordered document content.</summary>
 public abstract record ContentItemSpec;
@@ -984,9 +1017,12 @@ public sealed record HeadingSpec : ContentItemSpec
 public sealed record ParagraphSpec : ContentItemSpec
 {
     /// <summary>
-    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxParagraphRuns"/>,
-    /// snapshotted with a collection expression at construction, and each
-    /// run's <see cref="TextRunSpec.Text"/> is capped at <see cref="SpecLimits.MaxTextLength"/>.
+    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxParagraphRuns"/>
+    /// and snapshotted with a collection expression at construction. Each
+    /// run's own <see cref="TextRunSpec.Text"/> and <see cref="TextRunSpec.Style"/>
+    /// are validated by <see cref="TextRunSpec"/> itself, at its own
+    /// construction, so nothing further needs checking about an individual
+    /// run here; see the remark on <see cref="TextRunSpec"/>.
     /// </summary>
     public required IReadOnlyList<TextRunSpec> Runs
     {
@@ -1018,11 +1054,6 @@ public sealed record ParagraphSpec : ContentItemSpec
         if (value.Count > SpecLimits.MaxParagraphRuns)
         {
             throw new ArgumentException($"A paragraph must not have more than {SpecLimits.MaxParagraphRuns} runs; got {value.Count}.", nameof(Runs));
-        }
-
-        foreach (var run in value)
-        {
-            SpecLimits.ValidateString(run.Text, SpecLimits.MaxTextLength, nameof(Runs));
         }
 
         return [.. value];
