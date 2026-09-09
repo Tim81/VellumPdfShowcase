@@ -20,6 +20,16 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
 
     <!--
+      Branch coverage for the emitter-branch gate (eng/check-emitter-branch-coverage.ps1).
+      coverlet.collector, above, is the VSTest data collector and never activates
+      under the native Microsoft.Testing.Platform host this project runs (see the
+      "dotnet test is broken here" note in CLAUDE.md). coverlet.MTP is coverlet's
+      own Microsoft.Testing.Platform integration and instruments the test host
+      directly, with no VSTest handshake in the path.
+    -->
+    <PackageVersion Include="coverlet.MTP" Version="10.0.1" />
+
+    <!--
       Roslyn scripting for the round-trip test only (tests/VellumPdfShowcase.Tests).
       Compiles the C# that SpecCodeEmitter produces and executes it, so that the
       test can assert its output against SpecRenderer's. Never referenced by
