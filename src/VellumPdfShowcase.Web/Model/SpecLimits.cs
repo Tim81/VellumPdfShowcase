@@ -49,14 +49,17 @@ public static class SpecLimits
     /// <summary>
     /// Caps every plain-text string a specification carries: heading text and
     /// bookmark title, paragraph run text, plain text, list item and cell
-    /// content, alternative text on images and charts, running header and
-    /// footer templates, document metadata fields, output intent identifiers
-    /// and info strings, and encryption passwords. 100,000 characters is far
-    /// beyond anything a person would type into a demonstration document, but
-    /// nowhere near large enough on its own to let a specification's emitted
-    /// C# snippet or rendered PDF grow pathologically; <see cref="MaxWalkedNodes"/>
-    /// is what bounds how many such strings one specification can multiply
-    /// together through shared structure.
+    /// content, alternative text on images and charts, document metadata
+    /// fields, output intent identifiers and info strings, and encryption
+    /// passwords. 100,000 characters is far beyond anything a person would
+    /// type into a demonstration document, but nowhere near large enough on
+    /// its own to let a specification's emitted C# snippet or rendered PDF
+    /// grow pathologically; <see cref="MaxWalkedNodes"/> is what bounds how
+    /// many such strings one specification can multiply together through
+    /// shared structure. NOTE: a running header or footer's own
+    /// <see cref="Model.RunningBandSpec.Template"/> is NOT among these; it is
+    /// bounded by the much smaller <see cref="MaxRunningBandTemplateLength"/>
+    /// instead, for the reason given on that constant.
     /// </summary>
     /// <remarks>
     /// NOTE: this remains a distinct, load-bearing cap even now that
@@ -71,16 +74,65 @@ public static class SpecLimits
     /// this remark wrongly listed the label as outside the walk; it counted
     /// the SLICE as a node but never its label's own length, which let
     /// 490,220,429 characters through a total this walk exists to bound; see
-    /// the remark on <see cref="Model.DocumentSpec.Content"/>). A running
-    /// header or footer <see cref="Model.RunningBandSpec.Template"/>, every
+    /// the remark on <see cref="Model.DocumentSpec.Content"/>). Every
     /// <see cref="Model.DocumentMetadataSpec"/> field, an output intent's
     /// identifier and info string, and an encryption password remain outside
     /// that walk and carry no other length bound than this cap, because each
     /// is a single top-level property that can appear at most once per
-    /// specification and so cannot be multiplied by shared structure the way
-    /// a list, table or chart entry can.
+    /// specification and, unlike a running band's <see cref="Model.RunningBandSpec.Template"/>,
+    /// is never laid out once per page either, so it cannot be multiplied by
+    /// shared structure OR by pagination the way a list, table or chart entry,
+    /// or a running band, can.
     /// </remarks>
     public const int MaxTextLength = 100_000;
+
+    /// <summary>
+    /// Caps <see cref="Model.RunningBandSpec.Template"/>. A running band
+    /// holds one line of text substituting <c>{page}</c> and <c>{pages}</c>,
+    /// so <see cref="MaxTextLength"/> (100,000 characters) is meaningless
+    /// here: a template is laid out once PER PAGE, not once per
+    /// specification, and page count is exactly the quantity
+    /// <see cref="MaxTotalTextLength"/> and <see cref="MaxWalkedNodes"/>
+    /// exist to bound. Neither of those two caps, nor
+    /// <see cref="Model.DocumentSpec.Content"/>'s own walk, sees a
+    /// <see cref="Model.DocumentSpec.Header"/> or
+    /// <see cref="Model.DocumentSpec.Footer"/> at all, so nothing else in
+    /// this file stops the product of template length and page count from
+    /// growing without bound; this cap is the only thing that does.
+    /// </summary>
+    /// <remarks>
+    /// MEASURED directly, on the worst specification every other cap in this
+    /// file together still permits and that also forces the deepest
+    /// pagination this model can express: a 20,000 by 260 point page,
+    /// 55-point margins, a 36-point style with 50-point leading, one list of
+    /// 1,650 items each with two children, and both a header and a footer
+    /// with <see cref="Model.RunningBandSpec.Height"/> set to 30 all render
+    /// 4,950 pages, on desktop x64 in Release:
+    /// <list type="table">
+    /// <item><term>template length 1</term><description>2,015,291 bytes, 171 ms</description></item>
+    /// <item><term>template length 200</term><description>2,018,591 bytes, 226 ms</description></item>
+    /// <item><term>template length 2,000</term><description>2,160,491 bytes, 280 ms</description></item>
+    /// <item><term>template length 100,000</term><description>3,282,491 bytes, 5,518 ms</description></item>
+    /// </list>
+    /// A cap of 200 costs about 55 ms and 3,300 bytes over the one-character
+    /// floor at this geometry, a small fraction of the roughly 5.3 s the
+    /// removed 100,000-character cap cost; 200 characters is also far beyond
+    /// any running header or footer this showcase would ever demonstrate, so
+    /// it is chosen over a larger value that would still measure cheaply.
+    /// <para>
+    /// <see cref="Model.RunningBandSpec.Style"/>'s own
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> was checked for the same
+    /// multiplication and found NOT to have it: a footer whose style carries
+    /// a maximal-length (<see cref="MaxUriLength"/>, 2,048)
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> renders byte-for-byte
+    /// identical output, 1,027,765 bytes, to the same footer with no
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> at all, across this same
+    /// 4,950-page specification. The library does not turn a running band's
+    /// link into a per-page annotation, so <see cref="MaxUriLength"/> alone
+    /// already bounds it and no dedicated cap is needed here.
+    /// </para>
+    /// </remarks>
+    public const int MaxRunningBandTemplateLength = 200;
 
     /// <summary>
     /// Caps a BCP 47 language tag. RFC 5646's own ABNF sets no length ceiling
@@ -626,6 +678,10 @@ public static class ImageSignature
         ImageFormat.Tiff => bytes.Length >= 4 &&
             ((bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2A && bytes[3] == 0x00) ||
              (bytes[0] == 0x4D && bytes[1] == 0x4D && bytes[2] == 0x00 && bytes[3] == 0x2A)),
+        // Unreachable through any DocumentSpec today, because ImageSpec.Format validates against this same
+        // enum at construction; kept anyway as a defensive boundary against a future ImageFormat member the
+        // switch above has not been taught to sniff, so an unrecognised value fails loudly here rather than
+        // silently falling through to "does not match" and being treated as a rejected, well-formed image.
         _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unrecognised image format."),
     };
 }

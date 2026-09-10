@@ -152,18 +152,47 @@ public sealed record DocumentSpec
     /// remains outside this walk for the same reason the members below are.
     /// </para>
     /// <para>
-    /// <see cref="RunningBandSpec.Template"/> and <see cref="RunningBandSpec.Style"/>'s
-    /// own <see cref="TextStyleSpec.LinkUri"/> on <see cref="Header"/> and
-    /// <see cref="Footer"/>, every <see cref="DocumentMetadataSpec"/> field,
-    /// an output intent's own identifier and info string, and an
-    /// <see cref="EncryptionSpec"/> password are DELIBERATELY outside this
-    /// walk: each is a single top-level property of this record (or of a
-    /// record one of those properties holds), appearing at most once per
-    /// specification, so none of them can be multiplied by shared structure
-    /// the way a list, table or chart entry can; <see cref="SpecLimits.MaxTextLength"/>
-    /// (or <see cref="SpecLimits.MaxUriLength"/>, for a link) alone already
-    /// bounds each of them individually, and that bound cannot be
-    /// out-multiplied by anything reachable from a single occurrence.
+    /// <see cref="RunningBandSpec.Template"/> on <see cref="Header"/> and
+    /// <see cref="Footer"/> is DELIBERATELY outside this walk, but NOT for
+    /// the reason once given here. It is a single top-level property that
+    /// appears at most once per specification, so it cannot be multiplied by
+    /// shared STRUCTURE the way a list, table or chart entry can; that part
+    /// was always true. It misses that a running band is laid out once per
+    /// PAGE, and page count is exactly the quantity
+    /// <see cref="SpecLimits.MaxTotalTextLength"/> and
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> exist to bound, so a template
+    /// this walk (or any cap on <see cref="Content"/>) cannot see IS
+    /// multiplied, by pagination rather than by structure. A 100,000-character
+    /// template rendered across the 4,950 pages this model's other caps
+    /// together still permit measured 3,282,491 bytes and 5,518 ms, against
+    /// 2,015,291 bytes and 171 ms for a one-character template on the
+    /// identical document. <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
+    /// bounds it directly instead, at a value measured small enough that the
+    /// multiplication it cannot avoid stays cheap; see that constant's own
+    /// remark for the figures.
+    /// </para>
+    /// <para>
+    /// <see cref="RunningBandSpec.Style"/>'s own <see cref="TextStyleSpec.LinkUri"/>
+    /// on <see cref="Header"/> and <see cref="Footer"/>, every
+    /// <see cref="DocumentMetadataSpec"/> field, an output intent's own
+    /// identifier and info string, and an <see cref="EncryptionSpec"/>
+    /// password remain DELIBERATELY outside this walk, and for these the
+    /// original reasoning holds: each is a single top-level property of this
+    /// record (or of a record one of those properties holds), appearing at
+    /// most once per specification, so none of them can be multiplied by
+    /// shared structure the way a list, table or chart entry can, AND, unlike
+    /// <see cref="RunningBandSpec.Template"/>, none of them is laid out once
+    /// per page either. For the link specifically this was verified rather
+    /// than assumed: a running band whose style carries a maximal-length
+    /// (<see cref="SpecLimits.MaxUriLength"/>, 2,048)
+    /// <see cref="TextStyleSpec.LinkUri"/> renders byte-for-byte identical
+    /// output to the same band with none, across the same 4,950-page
+    /// specification, because the library does not turn it into a per-page
+    /// link annotation. <see cref="SpecLimits.MaxTextLength"/> (or
+    /// <see cref="SpecLimits.MaxUriLength"/>, for a link) alone already
+    /// bounds each of these individually, and that bound cannot be
+    /// out-multiplied by anything reachable from a single occurrence or by
+    /// pagination.
     /// </para>
     /// </remarks>
     /// <remarks>
@@ -1683,10 +1712,18 @@ public sealed record LineSeparatorSpec : ContentItemSpec
 /// </summary>
 public sealed record RunningBandSpec
 {
+    /// <remarks>
+    /// Capped at <see cref="SpecLimits.MaxRunningBandTemplateLength"/>, NOT
+    /// <see cref="SpecLimits.MaxTextLength"/>: a band is laid out once per
+    /// page, so its template length is multiplied by page count in a way no
+    /// other single top-level string in this model is. See the remark on
+    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the
+    /// measurement behind the value.
+    /// </remarks>
     public required string Template
     {
         get;
-        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Template));
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxRunningBandTemplateLength, nameof(Template));
     }
 
     public required TextStyleSpec Style

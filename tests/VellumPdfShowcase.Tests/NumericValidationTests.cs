@@ -310,18 +310,27 @@ public class DeepPaginationTests
     /// <summary>
     /// The reproductions below only mean something while the model still admits
     /// a document deep enough to have reached the defect. 2.3.0 died past
-    /// roughly 4,250 page continuations, and at this geometry one character is
-    /// one page, so a text budget under that threshold would leave these tests
-    /// passing on a document 2.3.0 would have rendered happily.
+    /// roughly 4,250 page continuations, and at THIS geometry one character is
+    /// NOT one page: <see cref="DefaultMarginsWideGlyphRepro"/> fills with the
+    /// four-character string <c>"WWW "</c>, and the trailing space does not
+    /// start a page, so three of every four characters produce a page and the
+    /// fourth does not. MEASURED: 4,500 characters gives 3,375 pages, and
+    /// 5,336 gives 4,002; both match a ratio of exactly 0.75 pages per
+    /// character, not 1. A text budget under the floor this ratio implies
+    /// would leave these tests passing on a document that does not render
+    /// deeply enough to mean anything.
     /// </summary>
     [Fact]
     public void TextAndNodeBudgets_StayAboveTheCrashThreshold()
     {
         Assert.True(
-            SpecLimits.MaxTotalTextLength >= 4_500,
-            $"MaxTotalTextLength is {SpecLimits.MaxTotalTextLength}, below the roughly 4,250 page continuations " +
-            "VellumPdf.Layout 2.3.0 needed to overflow the stack. The reproductions in this class would still " +
-            "pass, on documents that never reached the defect.");
+            SpecLimits.MaxTotalTextLength >= 5_336,
+            $"MaxTotalTextLength is {SpecLimits.MaxTotalTextLength}. DefaultMarginsWideGlyphRepro renders at a " +
+            "measured 0.75 pages per character, not the 1 an earlier version of this sentinel assumed, so " +
+            "DefaultMarginsWideGlyphRepro_RendersDeeply's own PageCount > 4,000 assertion needs at least 5,336 " +
+            "characters (floor(chars / 4) * 3 > 4,000) to pass; anything from 4,500 up to 5,335 satisfied the " +
+            "old, wrong floor here while still failing that render assertion, with an opaque Assert.True(false) " +
+            "rather than this message.");
 
         Assert.True(
             SpecLimits.MaxWalkedNodes >= 4_951,
@@ -1092,5 +1101,107 @@ public class SpecRendererExceptionUniformityTests
         };
 
         Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
+    }
+}
+
+/// <summary>
+/// Guards round ten Finding 1: a running band is laid out once per page, so
+/// <see cref="RunningBandSpec.Template"/>'s length is multiplied by page
+/// count, a multiplication <see cref="SpecLimits.MaxTotalTextLength"/> and
+/// <see cref="SpecLimits.MaxWalkedNodes"/> cannot see because
+/// <see cref="DocumentSpec.Header"/> and <see cref="DocumentSpec.Footer"/>
+/// sit outside <see cref="DocumentSpec.Content"/>'s walk. See the remark on
+/// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the measurements
+/// this class checks against.
+/// </summary>
+public class RunningBandTemplateCapTests
+{
+    private static TextStyleSpec Style() => new()
+    {
+        Font = FontSpec.FromStandard14(Standard14.Helvetica),
+        FontSize = 36,
+        Leading = 50,
+    };
+
+    [Fact]
+    public void TemplateAtCap_Constructs()
+    {
+        var band = new RunningBandSpec
+        {
+            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength),
+            Style = Style(),
+        };
+
+        Assert.Equal(SpecLimits.MaxRunningBandTemplateLength, band.Template.Length);
+    }
+
+    [Fact]
+    public void TemplateOverCap_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => new RunningBandSpec
+        {
+            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength + 1),
+            Style = Style(),
+        });
+
+        Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The exact shape the coordinator measured Finding 1 against: a 20,000
+    /// by 260 point page, 55-point margins, the 36-point/50-point-leading
+    /// style, one list of 1,650 items each with two children, and both a
+    /// header and a footer with <see cref="RunningBandSpec.Height"/> set to
+    /// 30, all rendering 4,950 pages. The template on both bands is set to
+    /// exactly <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
+    /// characters, the largest this model now admits. MEASURED at that cap's
+    /// current value of 200: 226 ms. If the cap were removed (falling back to
+    /// <see cref="SpecLimits.MaxTextLength"/>, 100,000) or widened toward it,
+    /// this same shape measured 5,518 ms; the assertion below catches either
+    /// change by timing out long before that. Under the fix, this test itself
+    /// stays fast: the point is the cap holding, not a long render.
+    /// </summary>
+    [Fact]
+    public void MaximalTemplateOnDeepPagination_RendersWithinBudget()
+    {
+        var style = Style();
+
+        List<ListItemSpec> topLevelItems = [];
+        for (var i = 0; i < 1_650; i++)
+        {
+            topLevelItems.Add(new ListItemSpec
+            {
+                Text = "W",
+                Children = [new ListItemSpec { Text = "W" }, new ListItemSpec { Text = "W" }],
+            });
+        }
+
+        var band = new RunningBandSpec
+        {
+            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength),
+            Style = style,
+            Height = 30,
+        };
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(20_000, 260),
+            Margins = new EdgeInsets(55),
+            DefaultTextStyle = style,
+            Content = [new ListSpec { Style = ListStyle.Unordered, DefaultStyle = style, Items = topLevelItems }],
+            Header = band,
+            Footer = band,
+        };
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var bytes = SpecRenderer.Render(spec);
+        sw.Stop();
+
+        Assert.NotEmpty(bytes);
+        Assert.True(
+            sw.ElapsedMilliseconds < 2_000,
+            $"Rendering took {sw.ElapsedMilliseconds} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
+            "about 226 ms; a template anywhere near MaxTextLength (100,000) on this same shape takes about " +
+            "5,518 ms, so a budget of 2,000 ms catches a removed or substantially widened cap.");
     }
 }
