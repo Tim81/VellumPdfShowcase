@@ -354,10 +354,14 @@ public class DocumentSpecValidationTests
                 // of the hazard this guard exists for: an OVER-equal member
                 // would make the renderer's style cache and the emitter's
                 // hoisting collapse two DIFFERENT styles into one, and the
-                // library's adjacent-run merging would follow. So perturb one
-                // field at a time and require the override to notice at least
-                // one of them.
-                if (!ReportsInequalityOnSomeField(underlyingType))
+                // library's adjacent-run merging would follow. So perturb
+                // every field, one at a time, and require the override to
+                // notice EACH one it is possible to perturb: an override that
+                // notices field one but ignores field two is exactly as
+                // over-equal, for two instances differing only in field two,
+                // as one that ignores every field, so "some field noticed" is
+                // not enough.
+                if (!ReportsInequalityOnEveryField(underlyingType))
                 {
                     return false;
                 }
@@ -374,14 +378,31 @@ public class DocumentSpecValidationTests
 
     /// <summary>
     /// Whether <paramref name="type"/>'s own <c>Equals</c> reports two
-    /// instances unequal when exactly one field differs, for at least one
-    /// field. A type with no perturbable field is accepted, since there is
-    /// nothing its override could be ignoring.
+    /// instances unequal when exactly one field differs, for EVERY field it
+    /// is possible to perturb, not merely some of them. A type with no
+    /// perturbable field is accepted, since there is nothing its override
+    /// could be ignoring.
     /// </summary>
     /// <remarks>
     /// Fields are set by reflection on uninitialized instances, so this asks
     /// only whether the override READS its own state, never whether the type
     /// would accept those values through its own constructor.
+    /// <para>
+    /// Requiring EVERY field, rather than accepting the first one whose
+    /// perturbation the override happens to notice, closes a Low: the "some
+    /// field wins" rule this replaced accepted an override that compares
+    /// field one and ignores field two outright, so two instances differing
+    /// only in field two compared equal. That is over-equality, the exact
+    /// hazard this guard exists to prevent: the renderer's style cache and
+    /// the emitter's hoisting would collapse two different styles into one.
+    /// By the same "some field wins" logic, an override that THROWS while
+    /// comparing one field but answers honestly for another was also
+    /// accepted, which was weaker than the blank-instance check above this
+    /// one is meant to be symmetric with. Both are now unsafe unconditionally:
+    /// a field the override does not demonstrably notice, whether because it
+    /// silently agrees or because it throws, fails the whole type immediately,
+    /// regardless of what the override does with any other field.
+    /// </para>
     /// </remarks>
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -398,10 +419,9 @@ public class DocumentSpecValidationTests
         "IL3050",
         Justification = "Test-only reflection; this assembly is never AOT-published, and the enum types perturbed " +
             "here are this model's own.")]
-    private static bool ReportsInequalityOnSomeField(Type type)
+    private static bool ReportsInequalityOnEveryField(Type type)
     {
         var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var attempted = false;
 
         foreach (var field in fields)
         {
@@ -426,36 +446,35 @@ public class DocumentSpecValidationTests
                 continue;
             }
 
-            // This field WAS perturbed. Whatever the override does with it
-            // from here counts toward the verdict, so a type with only this
-            // one perturbable field can no longer be waved through as
-            // "nothing was perturbable" below.
-            attempted = true;
-
             try
             {
-                if (!Equals(baseline, perturbed))
+                if (Equals(baseline, perturbed))
                 {
-                    return true;
+                    // The override did not notice this field changed. That is
+                    // unsafe on its own, regardless of what it does with any
+                    // other field: reject the whole type immediately rather
+                    // than let a later field's honest comparison paper over
+                    // this one.
+                    return false;
                 }
             }
             catch
             {
                 // An override that THROWS while comparing a perturbed
                 // instance has not demonstrably noticed this field either:
-                // it is exactly as unsafe as one that silently returns
-                // true for it. Symmetric with the blank-instance check
-                // above, which treats a throw as "not proven safe, so
-                // unsafe" rather than as evidence of nothing. Previously
-                // this was caught by decrementing a shared counter back to
-                // the value it held before this field was tried, which let
-                // a type whose ONLY perturbable field throws here read as
-                // "nothing was perturbable" and be accepted; `attempted`
-                // stays true instead, so that outcome is now rejected.
+                // it is exactly as unsafe as one that silently agrees for
+                // it. Symmetric with the blank-instance check above, which
+                // treats a throw as "not proven safe, so unsafe" rather than
+                // as evidence of nothing, and, now, with the "did not
+                // notice" branch immediately above: reject immediately
+                // rather than let another field's honest comparison hide it.
+                return false;
             }
         }
 
-        return !attempted;
+        // Every perturbable field was noticed (or there were none to
+        // perturb, in which case there is nothing to have ignored).
+        return true;
     }
 
     /// <summary>A value distinguishable from <paramref name="fieldType"/>'s default, when one can be produced.</summary>
@@ -766,7 +785,7 @@ public class DocumentSpecValidationTests
         private readonly record struct NonPrimitiveValueTypeField(double X, double Y);
 
         /// <summary>
-        /// The hazard <see cref="ReportsInequalityOnSomeField"/>'s missing
+        /// The hazard <see cref="ReportsInequalityOnEveryField"/>'s missing
         /// arm for a non-primitive value type let through: a class with one
         /// field of exactly <see cref="NonPrimitiveValueTypeField"/>'s shape,
         /// and an override that reports every instance of its own type equal
@@ -777,7 +796,7 @@ public class DocumentSpecValidationTests
         /// value type arm, this field could not be perturbed at all: the
         /// blank-instance check passed (the override always returns
         /// <see langword="true"/> for its own type), and
-        /// <see cref="ReportsInequalityOnSomeField"/> then found no
+        /// <see cref="ReportsInequalityOnEveryField"/> then found no
         /// perturbable field and returned <see langword="true"/> vacuously,
         /// accepting this hazard. <see cref="ColorRgb"/> and
         /// <see cref="EdgeInsets"/> are already members of this model and
@@ -804,7 +823,7 @@ public class DocumentSpecValidationTests
             Assert.False(HasValueEquality(typeof(NonPrimitiveValueTypeFieldAlwaysEqualHazard)));
 
         /// <summary>
-        /// The second gap in <see cref="ReportsInequalityOnSomeField"/>: an
+        /// The second gap in <see cref="ReportsInequalityOnEveryField"/>: an
         /// override that THROWS while comparing a perturbed instance, for
         /// its only perturbable field. The blank-instance check above this
         /// one, comparing two untouched instances where <see cref="Value"/>
@@ -840,6 +859,71 @@ public class DocumentSpecValidationTests
         [Fact]
         public void EqualsThrowsOnPerturbedFieldHazard_IsRejectedRatherThanAccepted() =>
             Assert.False(HasValueEquality(typeof(EqualsThrowsOnPerturbedFieldHazard)));
+
+        /// <summary>
+        /// The Low <see cref="ReportsInequalityOnEveryField"/> was rewritten
+        /// to close: two fields, but the override compares only
+        /// <see cref="FieldA"/> and ignores <see cref="FieldB"/> outright. The
+        /// "at least one field reports inequality" rule this guard replaced
+        /// accepted this type: perturbing <see cref="FieldA"/> alone made
+        /// <c>Equals</c> disagree, and the previous rule returned as soon as
+        /// any one field did, without ever perturbing <see cref="FieldB"/>.
+        /// Two instances differing only in <see cref="FieldB"/> compare equal
+        /// under this override, which is the exact over-equality hazard this
+        /// guard exists to prevent: the renderer's style cache and the
+        /// emitter's hoisting would collapse two different styles into one.
+        /// </summary>
+        private sealed class IgnoresOneFieldOverrideHazard
+        {
+            public double FieldA { get; init; }
+
+            public double FieldB { get; init; }
+
+            public override bool Equals(object? obj) =>
+                obj is IgnoresOneFieldOverrideHazard other && FieldA.Equals(other.FieldA);
+
+            public override int GetHashCode() => FieldA.GetHashCode();
+        }
+
+        [Fact]
+        public void IgnoresOneFieldOverrideHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(IgnoresOneFieldOverrideHazard)));
+
+        /// <summary>
+        /// The mirror Low, also closed by requiring every field: an override
+        /// that THROWS while comparing a perturbed <see cref="FieldA"/> but
+        /// answers <see cref="FieldB"/> honestly. Under the "at least one
+        /// field reports inequality" rule this guard replaced, perturbing
+        /// <see cref="FieldA"/> threw (swallowed, since a throw proves
+        /// nothing on its own), and perturbing <see cref="FieldB"/> then
+        /// reported inequality honestly, so the type was accepted: weaker
+        /// than the blank-instance check this method is meant to be
+        /// symmetric with, which already treats a throw as unsafe regardless
+        /// of anything else.
+        /// </summary>
+        private sealed class ThrowsOnOneFieldHonestOnAnotherHazard
+        {
+            public double FieldA { get; init; }
+
+            public double FieldB { get; init; }
+
+            public override bool Equals(object? obj)
+            {
+                var other = (ThrowsOnOneFieldHonestOnAnotherHazard)obj!;
+                if (FieldA != 0 || other.FieldA != 0)
+                {
+                    throw new InvalidOperationException("Equals cannot compare a perturbed FieldA.");
+                }
+
+                return FieldB.Equals(other.FieldB);
+            }
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void ThrowsOnOneFieldHonestOnAnotherHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(ThrowsOnOneFieldHonestOnAnotherHazard)));
     }
 }
 

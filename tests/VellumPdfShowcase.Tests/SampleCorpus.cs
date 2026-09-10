@@ -99,6 +99,14 @@ public class SampleCorpusTests
     /// corpus. A sample added with a shape the predicate does not match is
     /// otherwise covered by nothing at all.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this used <see cref="Assert.Equal{T}(System.Collections.Generic.ISet{T}, System.Collections.Generic.ISet{T})"/>
+    /// directly over two <see cref="HashSet{T}"/> instances, which prints both
+    /// sides truncated at the same five elements and so names neither side's
+    /// actual difference; <see cref="RosterAssertions.AssertSameRoster"/>
+    /// replaces it with the same treatment
+    /// <see cref="Corpus_ContainsExactlyTheExpectedRoster"/> uses.
+    /// </remarks>
     [Fact]
     public void EveryPublicSampleFactory_IsDiscovered()
     {
@@ -107,7 +115,7 @@ public class SampleCorpusTests
             .Where(method => method.ReturnType == typeof(DocumentSpec))
             .Select(method => method.Name);
 
-        Assert.Equal(declared.ToHashSet(StringComparer.Ordinal), SampleCorpus.Names().ToHashSet(StringComparer.Ordinal));
+        RosterAssertions.AssertSameRoster(declared, SampleCorpus.Names());
     }
 
     /// <summary>
@@ -165,6 +173,6 @@ public class SampleCorpusTests
             nameof(DocumentSpecSamples.FinalEmitterBranchCoverage),
         ];
 
-        Assert.Equal(expected.ToHashSet(StringComparer.Ordinal), SampleCorpus.Names().ToHashSet(StringComparer.Ordinal));
+        RosterAssertions.AssertSameRoster(expected, SampleCorpus.Names());
     }
 }

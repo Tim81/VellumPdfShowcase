@@ -147,10 +147,36 @@ public class CoverageScopeTests
     /// "declared" side the moment its namespace changes, regardless of where
     /// it goes. What neither test catches is a helper authored directly in
     /// another known namespace, never having lived in
-    /// <c>VellumPdfShowcase.Web.Generation</c> at all. Closing that would
-    /// require knowing, for a given type, whether its logic BELONGS to the
-    /// generation path, which is a judgement this reflection-based pair of
-    /// tests has no way to make.
+    /// <c>VellumPdfShowcase.Web.Generation</c> at all.
+    /// </para>
+    /// <para>
+    /// NOTE: a review round considered closing that remaining gap with a
+    /// fixed, per-namespace roster over <c>VellumPdfShowcase.Web.Model</c>,
+    /// the same treatment <see cref="GateRoster_MatchesTheInstrumentedNamespace"/>
+    /// above already gives <c>VellumPdfShowcase.Web.Generation</c> and
+    /// <see cref="SampleCorpus"/> gives the sample corpus, and decided against
+    /// it, for a reason narrower than "reflection cannot judge which
+    /// namespace a type's logic belongs to": belonging is the wrong test in
+    /// the first place, and this repository already applies the right one,
+    /// ARRIVAL, in both places just named. The difference is churn against
+    /// benefit, not feasibility. <c>VellumPdfShowcase.Web.Generation</c> is
+    /// four types, added rarely, because it is dispatch and emission logic
+    /// that changes shape only when a new consumer of
+    /// <see cref="VellumPdfShowcase.Web.Model.DocumentSpec"/> is introduced.
+    /// <c>VellumPdfShowcase.Web.Model</c> is this project's
+    /// capability catalogue itself: it already declares roughly thirty public
+    /// types across two files and grows with every new content, chart or
+    /// styling capability the showcase adds, which is the project's normal,
+    /// expected shape of change. A roster there would need editing on nearly
+    /// every feature commit, for a defect shape (dispatch or per-content-type
+    /// switching logic authored directly in the model namespace rather than
+    /// extracted from the generation one) that is also a conspicuous
+    /// architectural smell in the diff that introduces it: a record file
+    /// growing a <see langword="switch"/> over
+    /// <see cref="VellumPdfShowcase.Web.Model.ContentItemSpec"/> subtypes is
+    /// not a quiet change. The exposure this leaves is therefore
+    /// BOUNDED, by the namespace's own small and reviewable type count, and
+    /// RECORDED, by this remark, rather than uncheckable in principle.
     /// </para>
     /// </remarks>
     [Fact]

@@ -195,10 +195,60 @@ public class SymmetryTests
     }
 
     /// <summary>
-    /// The names alone, so that <see cref="AdversarialCorpusTests"/> can assert
-    /// over the same corpus without a second copy of the discovery rule.
+    /// The fixed roster of every adversarial specification factory this file
+    /// declares, named explicitly with <see langword="nameof"/> rather than
+    /// derived by scanning for a name suffix. The corpus was previously
+    /// discovered by a rule with no floor: any static, private,
+    /// <see cref="DocumentSpec"/>-returning method whose name happened to end
+    /// in <c>Specification</c> enrolled itself, so renaming a factory off
+    /// that suffix removed it from every theory drawing on this method
+    /// silently, and those theories then passed with fewer cases. Demonstrated
+    /// directly: renaming seven of these ten factories off the suffix left the
+    /// suite green at a smaller case count, with the content-shaped
+    /// dangling-reference walk, <see cref="SharedStyleAcrossNestedStructureSpecification"/>,
+    /// and three of the documented asymmetries silently gone. A rename or
+    /// deletion of a listed factory is now a build error, since
+    /// <see langword="nameof"/> stops compiling the moment the name it names
+    /// no longer exists; a factory renamed off the suffix while its
+    /// <see langword="nameof"/> reference is updated to match (so this method
+    /// still compiles) is instead caught by
+    /// <see cref="AdversarialCorpusTests.Corpus_ContainsExactlyTheExpectedRoster"/>,
+    /// which compares this fixed roster against
+    /// <see cref="DiscoverAdversarialSpecificationNamesBySuffix"/>, the
+    /// original discovery rule, kept only for that comparison.
+    /// <para>
+    /// NOTE: adding a legitimate new adversarial factory means adding its name
+    /// here too. That is deliberate, not an oversight, for the same reason
+    /// <see cref="SampleCorpus"/>'s own fixed roster gives: naming every
+    /// member explicitly, rather than deriving the roster from any predicate,
+    /// is the only way this list can notice one going missing without also
+    /// being blind to it going missing for the same reason.
+    /// </para>
     /// </summary>
     internal static IEnumerable<string> AdversarialSpecificationNames() =>
+    [
+        nameof(DanglingDefaultStyleFontIndexSpecification),
+        nameof(DanglingContentFontIndexSpecification),
+        nameof(DanglingHeaderFontIndexSpecification),
+        nameof(DanglingNestedListItemFontIndexSpecification),
+        nameof(SharedStyleAcrossNestedStructureSpecification),
+        nameof(MalformedButWellSignedImageSpecification),
+        nameof(MalformedEmbeddedFontSpecification),
+        nameof(EmptyOwnerPasswordSpecification),
+        nameof(OutputIntentRejectedByLibrarySpecification),
+        nameof(ObjectStreamsWithEncryptionSpecification),
+    ];
+
+    /// <summary>
+    /// The discovery rule <see cref="AdversarialSpecificationNames"/> used
+    /// before the fixed roster replaced it, kept only so
+    /// <see cref="AdversarialCorpusTests.Corpus_ContainsExactlyTheExpectedRoster"/>,
+    /// which lives in a different class and so has no access to these private
+    /// factories for a direct <see langword="nameof"/> reference of its own,
+    /// can detect a factory that still matches this suffix rule but is
+    /// missing from the fixed roster, or one that no longer matches it.
+    /// </summary>
+    internal static IEnumerable<string> DiscoverAdversarialSpecificationNamesBySuffix() =>
         typeof(SymmetryTests)
             .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
             .Where(method => method.ReturnType == typeof(DocumentSpec) && method.Name.EndsWith("Specification", StringComparison.Ordinal))
@@ -534,20 +584,30 @@ public class SymmetryGuardRuleTests
 }
 
 /// <summary>
-/// The adversarial corpus is discovered by reflection over method names, with
-/// no floor: renaming a factory off the <c>Specification</c> suffix removes it
-/// from the theory silently, and the theory then passes with fewer cases. This
-/// pins what the corpus must CONTAIN, in terms of the verdicts it produces
-/// rather than a count, which is the property that actually matters.
+/// The adversarial corpus is now a fixed roster, named explicitly with
+/// <see langword="nameof"/> on <see cref="SymmetryTests.AdversarialSpecificationNames"/>;
+/// see that member's remark for what replaced the previous no-floor
+/// discovery-by-suffix rule and why. This class pins what the corpus must
+/// CONTAIN, in terms of the verdicts it produces rather than a count, which is
+/// the property that actually matters, and separately pins the fixed roster
+/// itself against the original discovery rule.
 /// </summary>
 public class AdversarialCorpusTests
 {
     /// <summary>
-    /// The three outcomes a consumer can produce for a specification that
+    /// The four outcomes a consumer can produce for a specification that
     /// itself constructed successfully. Collapsing "accepted" and "refused at
     /// run time" into one bucket is exactly what let this corpus's original
     /// verdict helper pass on a specification neither consumer rejected,
-    /// while claiming to have found the documented asymmetry.
+    /// while claiming to have found the documented asymmetry. Separating
+    /// <see cref="RefusedAtRuntime"/> from <see cref="Crashed"/> closes a
+    /// narrower version of the same defect: a bare <c>catch (Exception)</c>
+    /// previously assigned <see cref="RefusedAtRuntime"/>, the verdict this
+    /// file documents as the LIBRARY refusing at execution time, to anything
+    /// that was not an <see cref="ArgumentException"/>, including a
+    /// <see cref="NullReferenceException"/> from a genuine bug. A crash could
+    /// therefore be reported as the documented asymmetry
+    /// <see cref="Corpus_ContainsADocumentedAsymmetry"/> exists to pin.
     /// </summary>
     private enum ConsumerVerdict
     {
@@ -557,8 +617,11 @@ public class AdversarialCorpusTests
         /// <summary>The consumer's own per-content-type or per-feature dispatch refused this specification as malformed, with an <see cref="ArgumentException"/>.</summary>
         RejectedAsMalformed,
 
-        /// <summary>The specification constructed and passed dispatch, but the library itself refused it only at execution time, with some other exception.</summary>
+        /// <summary>The specification constructed and passed dispatch, but the library itself refused it only at execution time, with an <see cref="InvalidOperationException"/>: the documented, deliberate asymmetry this file's class remark names.</summary>
         RefusedAtRuntime,
+
+        /// <summary>The consumer threw something that is neither an <see cref="ArgumentException"/> nor an <see cref="InvalidOperationException"/>: not a documented rejection of any kind, and never to be reported as one.</summary>
+        Crashed,
     }
 
     private static ConsumerVerdict Verdict(Action action)
@@ -572,11 +635,54 @@ public class AdversarialCorpusTests
         {
             return ConsumerVerdict.RejectedAsMalformed;
         }
-        catch (Exception)
+        catch (InvalidOperationException)
         {
             return ConsumerVerdict.RefusedAtRuntime;
         }
+        catch (Exception)
+        {
+            return ConsumerVerdict.Crashed;
+        }
     }
+
+    /// <summary>
+    /// Drives <see cref="Verdict"/> directly with all four outcomes a
+    /// consumer action can produce, for the reason
+    /// <see cref="SymmetryGuardRuleTests"/> drives
+    /// <see cref="SymmetryTests.AgreementViolation"/> directly rather than
+    /// leaving it to whatever the corpus happens to exercise: the corpus
+    /// alone only ever produces the outcomes its own members happen to
+    /// trigger today, so a classification rule with a blind spot in it could
+    /// regress silently. Closes the Low directly: before the fix, a bare
+    /// <c>catch (Exception)</c> classified a
+    /// <see cref="NullReferenceException"/>, the signature of a genuine bug
+    /// rather than a documented library refusal, identically to a genuine
+    /// <see cref="InvalidOperationException"/>, so <see cref="Verdict"/>
+    /// could not tell a crash from the documented asymmetry
+    /// <see cref="Corpus_ContainsADocumentedAsymmetry"/> exists to pin, and a
+    /// spec that crashed one consumer while the other succeeded would have
+    /// been reported as exactly that asymmetry.
+    /// </summary>
+    [Fact]
+    public void Verdict_Accepts_WhenTheActionSucceeds() =>
+        Assert.Equal(ConsumerVerdict.Accepted, Verdict(() => { }));
+
+    [Fact]
+    public void Verdict_RejectsAsMalformed_OnArgumentException() =>
+        Assert.Equal(ConsumerVerdict.RejectedAsMalformed, Verdict(() => throw new ArgumentException("malformed")));
+
+    [Fact]
+    public void Verdict_RefusedAtRuntime_OnInvalidOperationException() =>
+        Assert.Equal(ConsumerVerdict.RefusedAtRuntime, Verdict(() => throw new InvalidOperationException("library refused")));
+
+    /// <summary>
+    /// The exact shape the fix closes: a crash unrelated to either
+    /// documented exception contract must not be classified the same as the
+    /// documented, deliberate asymmetry.
+    /// </summary>
+    [Fact]
+    public void Verdict_Crashed_OnAnyOtherException() =>
+        Assert.Equal(ConsumerVerdict.Crashed, Verdict(() => throw new NullReferenceException("genuine bug")));
 
     private static (ConsumerVerdict Render, ConsumerVerdict Emit) Verdicts(DocumentSpec spec) =>
         (Verdict(() => SpecRenderer.Render(spec)), Verdict(() => SpecCodeEmitter.Emit(spec)));
@@ -617,4 +723,20 @@ public class AdversarialCorpusTests
         Assert.Contains(
             Corpus().Select(Verdicts),
             verdict => verdict is (ConsumerVerdict.RefusedAtRuntime, ConsumerVerdict.Accepted));
+
+    /// <summary>
+    /// Pins the fixed roster on <see cref="SymmetryTests.AdversarialSpecificationNames"/>
+    /// against <see cref="SymmetryTests.DiscoverAdversarialSpecificationNamesBySuffix"/>,
+    /// the original discovery-by-suffix rule. A factory renamed off the
+    /// <c>Specification</c> suffix (with its own <see langword="nameof"/>
+    /// reference updated to match, so the fixed roster still compiles) drops
+    /// out of the suffix-based side and fails here; a new factory added to
+    /// this file but never added to the fixed roster does the same, from the
+    /// other side.
+    /// </summary>
+    [Fact]
+    public void Corpus_ContainsExactlyTheExpectedRoster() =>
+        RosterAssertions.AssertSameRoster(
+            SymmetryTests.AdversarialSpecificationNames(),
+            SymmetryTests.DiscoverAdversarialSpecificationNamesBySuffix());
 }
