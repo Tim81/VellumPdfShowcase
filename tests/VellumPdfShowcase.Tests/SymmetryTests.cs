@@ -167,27 +167,13 @@ public class SymmetryTests
     /// <see cref="SpecRoundTripTests"/> uses, reused here rather than
     /// duplicated so a new sample is automatically added to this corpus too.
     /// </summary>
-    public static TheoryData<string> AllSampleNames()
-    {
-        TheoryData<string> names = [];
-        foreach (var method in typeof(DocumentSpecSamples)
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(method => method.ReturnType == typeof(DocumentSpec) && method.GetParameters().All(p => p.IsOptional)))
-        {
-            names.Add(method.Name);
-        }
-
-        return names;
-    }
+    public static TheoryData<string> AllSampleNames() => SampleCorpus.AllSampleNames();
 
     [Theory]
     [MemberData(nameof(AllSampleNames))]
     public void Sample_RenderAndEmitAgree(string sampleName)
     {
-        var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)!;
-        var spec = (DocumentSpec)method.Invoke(null, [.. method.GetParameters().Select(p => p.DefaultValue)])!;
-
-        RenderAndEmitAgreeOnArgumentRejection(spec);
+        RenderAndEmitAgreeOnArgumentRejection(SampleCorpus.Invoke(sampleName));
     }
 
     /// <summary>

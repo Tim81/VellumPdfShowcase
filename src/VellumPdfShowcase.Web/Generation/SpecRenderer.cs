@@ -64,6 +64,56 @@ public static class SpecRenderer
     /// time rather than at construction; see the remark on
     /// <see cref="DocumentSpec.UseObjectStreams"/>.
     /// <para>
+    /// WHAT ENFORCES THIS, stated exactly, because an earlier version of this
+    /// remark declared the contract "true again as of this fix" and was
+    /// overstating it. Three things carry it, and none of them is a blanket
+    /// catch:
+    /// </para>
+    /// <para>
+    /// FIRST, the model rejects out-of-range and null members at construction,
+    /// so a value that would make an unwrapped library call throw something
+    /// outside the family cannot be built. That is why every gap found in this
+    /// contract has been closed in <see cref="DocumentSpec"/> rather than here.
+    /// Two rounds of it are recorded below, and a third was an undefined
+    /// enumeration member: <c>(Standard14)99</c> reached
+    /// <c>new FontReference</c> and threw a raw
+    /// <see cref="IndexOutOfRangeException"/> until
+    /// <c>SpecLimits.ValidateEnum</c> stopped it at construction.
+    /// </para>
+    /// <para>
+    /// SECOND, five library entry points are wrapped, each normalising to
+    /// <see cref="InvalidOperationException"/>: the image loaders, the
+    /// TrueType font parser, <c>SetPdfAOutputIntent</c>, <c>Encrypt</c> and
+    /// <c>Save</c>. Those are the calls that parse visitor-supplied bytes or
+    /// enforce a cross-feature rule at save time, which is to say the calls
+    /// that can fail on a well-formed specification.
+    /// </para>
+    /// <para>
+    /// THIRD, a theory over the whole sample and adversarial corpus asserts
+    /// that when this method throws, the type is
+    /// <see cref="ArgumentException"/> or <see cref="InvalidOperationException"/>.
+    /// That makes the contract executable rather than a promise in prose.
+    /// </para>
+    /// <para>
+    /// NOTE what is NOT claimed. The remaining library calls are unwrapped:
+    /// <c>Language</c>, <c>SetDefaultFont</c>, each <c>Add</c> overload, every
+    /// element constructor, <c>SetColumnWidths</c> and
+    /// <c>UseCmykOutputIntent</c>. The contract holds for them because the
+    /// model bounds what reaches them, not because anything here would catch a
+    /// surprise. A library change that made one of them throw a new type on an
+    /// input this model still admits would break this contract, and the corpus
+    /// theory is what would report it.
+    /// </para>
+    /// <para>
+    /// NOTE on <c>UseCmykOutputIntent</c> specifically, since it is the one
+    /// unwrapped call whose sibling three lines above IS wrapped: it can throw
+    /// only <see cref="ArgumentNullException"/>, for a null identifier, and
+    /// <see cref="CmykOutputIntentSpec.OutputConditionIdentifier"/> is a
+    /// validated non-null string, so that failure is unreachable. A wrapper
+    /// there would be an arm no test could reach, which this repository has
+    /// learned to treat as a liability rather than as safety.
+    /// </para>
+    /// <para>
     /// Cycle 7 review: this contract was FALSE until <see cref="TextRunSpec"/>
     /// validated its own members. <see cref="TextRunSpec"/> was, before that
     /// fix, this model's one bare positional record with neither member
@@ -85,8 +135,7 @@ public static class SpecRenderer
     /// and a <see cref="TextStyleSpec"/> with a <see langword="null"/>
     /// <see cref="TextStyleSpec.Font"/> each reached <see cref="NullReferenceException"/>
     /// the same way <see cref="TextRunSpec.Style"/> once did. All three are
-    /// now validated at their own construction, the same way; the contract
-    /// above is true again as of this fix.
+    /// now validated at their own construction, the same way.
     /// </para>
     /// </remarks>
     public static byte[] Render(DocumentSpec spec)

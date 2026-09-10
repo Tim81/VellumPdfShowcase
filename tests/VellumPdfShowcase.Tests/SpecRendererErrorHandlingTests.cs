@@ -1,3 +1,4 @@
+using System.Reflection;
 using VellumPdf.Encryption;
 using VellumPdfShowcase.Web.Generation;
 using VellumPdfShowcase.Web.Model;
@@ -111,5 +112,65 @@ public class SpecRendererErrorHandlingTests
 
         var exception = Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
         Assert.Contains("encrypt", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// Makes <see cref="SpecRenderer.Render"/>'s exception contract executable
+/// instead of a promise in prose: over the whole corpus, when Render throws,
+/// the type must be <see cref="ArgumentException"/> (or a subtype) or
+/// <see cref="InvalidOperationException"/>, and nothing else.
+/// </summary>
+/// <remarks>
+/// The contract was stated in that remark for several rounds and was false for
+/// most of them, each time because a member the model did not validate reached
+/// an unwrapped library call: a null run style, three further null required
+/// members, and an undefined <c>Standard14</c> face that produced a raw
+/// <see cref="IndexOutOfRangeException"/>. Each was found by reading rather
+/// than by any test. This is the test.
+/// <para>
+/// NOTE: what this can prove is bounded by the corpus. It asserts the contract
+/// for the specifications this repository builds, not for every specification
+/// the model admits. It is a regression guard, not a proof.
+/// </para>
+/// </remarks>
+public class RenderExceptionContractTests
+{
+    [Theory]
+    [MemberData(nameof(SymmetryTests.AllSampleNames), MemberType = typeof(SymmetryTests))]
+    public void Sample_RenderThrowsOnlyContractedTypes(string sampleName)
+    {
+        var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)!;
+        var spec = (DocumentSpec)method.Invoke(null, [.. method.GetParameters().Select(p => p.DefaultValue)])!;
+
+        AssertContracted(spec);
+    }
+
+    [Theory]
+    [MemberData(nameof(SymmetryTests.AdversarialSpecNames), MemberType = typeof(SymmetryTests))]
+    public void AdversarialSpecification_RenderThrowsOnlyContractedTypes(string specName)
+    {
+        var method = typeof(SymmetryTests).GetMethod(specName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        var spec = (DocumentSpec)method.Invoke(null, null)!;
+
+        AssertContracted(spec);
+    }
+
+    private static void AssertContracted(DocumentSpec spec)
+    {
+        try
+        {
+            SpecRenderer.Render(spec);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            // Contracted.
+        }
+        catch (Exception ex)
+        {
+            Assert.Fail(
+                $"SpecRenderer.Render threw {ex.GetType().FullName} ({ex.Message}), which is outside its documented " +
+                "exception contract of ArgumentException or InvalidOperationException.");
+        }
     }
 }

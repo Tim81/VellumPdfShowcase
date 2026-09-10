@@ -27,21 +27,43 @@ namespace VellumPdfShowcase.Tests;
 /// </remarks>
 public class SpecRoundTripTests
 {
-    [Fact]
-    public async Task RoundTrip_EveryContentItemTypeFullyCustomised_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.EveryContentItemTypeFullyCustomised());
+    /// <summary>
+    /// Every sample in <see cref="SampleCorpus"/>, round-tripped: the emitted
+    /// C# is compiled and executed, and its PDF compared against
+    /// <see cref="SpecRenderer"/>'s own output for the same specification.
+    /// </summary>
+    /// <remarks>
+    /// This was nineteen hand-written call sites, one per sample, while the
+    /// symmetry guard discovered its corpus reflectively. A sample added to
+    /// <see cref="DocumentSpecSamples"/> was therefore covered by one suite
+    /// automatically and by this one only if someone also added a call site.
+    /// Each sample's own reason for existing is documented on its factory,
+    /// which is where the removed comments pointed anyway.
+    /// <para>
+    /// An encrypted sample takes the encrypted assertion path, because its
+    /// output cannot be compared even in normalised form until both sides are
+    /// decrypted: the encryption key derives in part from the random
+    /// <c>/ID</c>. See the remark on <see cref="AssertEncryptedRoundTripAsync"/>.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SampleNames))]
+    public async Task RoundTrip_Sample_MatchesSpecRenderer(string sampleName)
+    {
+        var spec = SampleCorpus.Invoke(sampleName);
 
-    [Fact]
-    public async Task RoundTrip_EveryContentItemTypeAtDefault_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.EveryContentItemTypeAtDefault());
+        if (spec.Encryption is null)
+        {
+            await AssertRoundTripAsync(spec);
+        }
+        else
+        {
+            await AssertEncryptedRoundTripAsync(spec);
+        }
+    }
 
-    [Fact]
-    public async Task RoundTrip_PdfA2bWithOutputIntent_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.PdfA2bWithOutputIntent());
-
-    [Fact]
-    public async Task RoundTrip_PdfA2uWithOutputIntent_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.PdfA2uWithOutputIntent());
+    /// <summary>The shared corpus, so this suite and the symmetry guard cannot drift apart.</summary>
+    public static TheoryData<string> SampleNames() => SampleCorpus.AllSampleNames();
 
     /// <summary>
     /// The structural guard: every <see cref="DocumentSpecSamples"/> member
@@ -172,44 +194,11 @@ public class SpecRoundTripTests
     /// parameter would neither be preflighted here nor reachable by
     /// <see cref="InvokeSample"/>, with no error to say so.
     /// </summary>
-    private static IEnumerable<MethodInfo> SampleFactoryMethods() =>
-        typeof(DocumentSpecSamples)
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(method => method.ReturnType == typeof(DocumentSpec) && method.GetParameters().All(p => p.IsOptional));
+    private static IEnumerable<MethodInfo> SampleFactoryMethods() => SampleCorpus.FactoryMethods();
 
-    /// <summary>The default value of every parameter of <paramref name="method"/>, in order, for invoking it as a no-argument factory.</summary>
-    private static object?[] DefaultArguments(MethodInfo method) =>
-        [.. method.GetParameters().Select(p => p.DefaultValue)];
+    private static object?[] DefaultArguments(MethodInfo method) => SampleCorpus.DefaultArguments(method);
 
-    private static DocumentSpec InvokeSample(string sampleName)
-    {
-        var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException($"DocumentSpecSamples has no public static member named {sampleName} returning a DocumentSpec.");
-        return (DocumentSpec)method.Invoke(null, DefaultArguments(method))!;
-    }
-
-    /// <summary>
-    /// Two lists (in fact all four list styles), two tables and two
-    /// multi-run paragraphs in the same document. The emitted code names
-    /// each with a document-wide counter, so a second <c>list</c>,
-    /// <c>table</c> or <c>runs</c> local sharing the name of the first is a
-    /// compile error this test would catch the moment it existed.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_MultipleListsTablesAndParagraphs_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.MultipleListsTablesAndParagraphs());
-
-    /// <summary>
-    /// A string holding the whole C0 control range plus NEL, LINE SEPARATOR
-    /// and PARAGRAPH SEPARATOR, alongside a quote, a backslash and a brace
-    /// pair. U+0085, U+2028 or U+2029 anywhere in visitor-supplied text
-    /// terminates a naively emitted string literal mid-string, so this test
-    /// fails to compile if <see cref="Generation.SpecCodeEmitter.Emit"/> ever
-    /// stops escaping them.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_ControlCharactersAndLineSeparators_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.ControlCharactersAndLineSeparators());
+    private static DocumentSpec InvokeSample(string sampleName) => SampleCorpus.Invoke(sampleName);
 
     /// <summary>
     /// The isolated-surrogate arm of <c>SpecCodeEmitter.Literal</c> cannot be
@@ -234,115 +223,6 @@ public class SpecRoundTripTests
 
         Assert.Equal(code, roundTripped);
     }
-
-    /// <summary>
-    /// See the doc comment on <see cref="DocumentSpecSamples.SharedAndValueEqualRunStyles"/>.
-    /// A two-run paragraph sharing one <c>TextStyleSpec</c> instance must
-    /// render identically to one whose two runs are distinct but value-equal
-    /// instances, since both <see cref="Generation.SpecRenderer"/> and
-    /// <see cref="Generation.SpecCodeEmitter"/> merge on value equality.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_SharedAndValueEqualRunStyles_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.SharedAndValueEqualRunStyles());
-
-    [Fact]
-    public async Task RoundTrip_AdditionalCoverage_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.AdditionalCoverage());
-
-    [Fact]
-    public async Task RoundTrip_PdfA2aWithOutputIntent_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.PdfA2aWithOutputIntent());
-
-    /// <summary>PDF/UA-1, the fourth and last of the four conformance profiles plan section 6.2 requires.</summary>
-    [Fact]
-    public async Task RoundTrip_PdfUA1WithOutputIntent_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.PdfUA1WithOutputIntent());
-
-    /// <summary>
-    /// A <see cref="PlainTextSpec"/> with no explicit style. This is the one
-    /// content item that reads <see cref="DocumentSpec.DefaultTextStyle"/>
-    /// through the library's <c>Document.Add(string, TextStyle?)</c>
-    /// overload, so this test is what makes that property load-bearing: a
-    /// renderer or emitter that stopped consulting it, or that stopped
-    /// calling <c>Document.SetDefaultFont</c> with it, would produce a
-    /// visibly different PDF and fail this comparison.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_PlainTextUsesDocumentDefault_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.PlainTextUsesDocumentDefault());
-
-    /// <summary>Covers the <see cref="CmykOutputIntentSpec"/> branch of both <see cref="SpecRenderer"/> and <see cref="Generation.SpecCodeEmitter"/>, which no other sample reaches.</summary>
-    [Fact]
-    public async Task RoundTrip_CmykOutputIntent_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.CmykOutputIntent());
-
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingBranchCoverage"/>.</summary>
-    [Fact]
-    public async Task RoundTrip_RemainingBranchCoverage_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.RemainingBranchCoverage());
-
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.RemainingEmitterBranchCoverage"/>.</summary>
-    [Fact]
-    public async Task RoundTrip_RemainingEmitterBranchCoverage_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.RemainingEmitterBranchCoverage());
-
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.FinalEmitterBranchCoverage"/>.</summary>
-    [Fact]
-    public async Task RoundTrip_FinalEmitterBranchCoverage_MatchesSpecRenderer() =>
-        await AssertRoundTripAsync(DocumentSpecSamples.FinalEmitterBranchCoverage());
-
-    /// <summary>
-    /// Encryption introduces its own nondeterminism beyond the document
-    /// identifier and the XMP timestamps: rendering the identical
-    /// <see cref="DocumentSpec"/> through <see cref="SpecRenderer"/> twice
-    /// produces two different encrypted byte streams, because the standard
-    /// security handler derives its key material in part from the (already
-    /// nondeterministic) document identifier. A plain
-    /// <see cref="PdfNormalization.Normalize"/> comparison of the raw output
-    /// therefore cannot pass here even when the two documents are logically
-    /// identical, so this test decrypts both sides with the known password
-    /// first and compares the plaintext that comes back.
-    /// </summary>
-    /// <remarks>
-    /// Decrypting first is not enough on its own.
-    /// <see cref="PdfReader.SaveDecrypted(System.IO.Stream)"/> strips the
-    /// whole <c>/Encrypt</c> dictionary, which is the only place
-    /// <c>UserPassword</c>, <c>Permissions</c> and <c>EncryptMetadata</c> live,
-    /// so a decrypted-content-only comparison would pass even if the PDF the
-    /// visitor downloads carries a different password or permission set than
-    /// the code displayed next to it. <see cref="AssertEncryptionMatchesSpec"/>
-    /// and <see cref="AssertPasswordAuthenticates"/> read the <c>/Encrypt</c>
-    /// dictionary itself, on both outputs, before either is decrypted.
-    /// </remarks>
-    [Fact]
-    public async Task RoundTrip_Encrypted_DecryptsToMatchingContent() =>
-        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.Encrypted());
-
-    /// <summary>See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoPermissions"/>.</summary>
-    [Fact]
-    public async Task RoundTrip_EncryptedNoPermissions_DecryptsToMatchingContent() =>
-        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedNoPermissions());
-
-    /// <summary>
-    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedOwnerPasswordOnly"/>.
-    /// Opening with an empty user password must succeed and must
-    /// authenticate as the user, not the owner, since only the owner password
-    /// was actually set.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_EncryptedOwnerPasswordOnly_DecryptsToMatchingContent() =>
-        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedOwnerPasswordOnly());
-
-    /// <summary>
-    /// See the doc comment on <see cref="DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted"/>.
-    /// This is the one sample that proves the recorded behaviour
-    /// directly: opening with the user password authenticates as OWNER,
-    /// because no distinct owner password was ever set.
-    /// </summary>
-    [Fact]
-    public async Task RoundTrip_EncryptedNoOwnerPasswordUnrestricted_DecryptsToMatchingContent() =>
-        await AssertEncryptedRoundTripAsync(DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted());
 
     /// <summary>
     /// Per the remark on <see cref="EncryptionSpec"/>: the password

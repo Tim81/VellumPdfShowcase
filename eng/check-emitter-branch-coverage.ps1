@@ -334,7 +334,11 @@ $expectedTypes = @(
     'VellumPdfShowcase.Web.Generation.ConformanceMapping',
     'VellumPdfShowcase.Web.Generation.SpecAssets'
 )
-$seenTypeNames = $targetClasses | ForEach-Object { $_.name }
+# Nested types and compiler-generated state machines appear under names such as
+# '...SpecCodeEmitter/Emitter' and '...SpecCodeEmitter/<CollectTextStyles>d__5'.
+# Both belong to their enclosing type for roster purposes, so the segment before
+# the first '/' is what is compared.
+$seenTypeNames = $targetClasses | ForEach-Object { ($_.name -split '/')[0] } | Sort-Object -Unique
 $missingTypes = $expectedTypes | Where-Object { $seenTypeNames -notcontains $_ }
 if ($missingTypes.Count -gt 0) {
     Write-Error (
@@ -343,6 +347,23 @@ if ($missingTypes.Count -gt 0) {
         "`$coverletInclude` ($coverletInclude) no longer matches, or genuinely deleted. If it moved " +
         "deliberately, update `$coverletInclude` (and `$expectedTypes` in this script) to follow it; a type " +
         "silently leaving this gate's scope is exactly the failure mode this check exists to catch."
+    )
+    exit 1
+}
+
+# The check above is one-directional, and a subset check cannot see a type
+# ARRIVING. A helper extracted out of SpecCodeEmitter into a new type in this
+# same namespace is instrumented and branch-checked immediately, but it is not
+# on the roster, so ITS own later migration out of scope would go unnoticed:
+# the very failure the roster exists to prevent, reintroduced by the extraction
+# that made the roster stale. Requiring equality rather than containment means
+# a new type has to be added here deliberately.
+$surplusTypes = $seenTypeNames | Where-Object { $expectedTypes -notcontains $_ }
+if ($surplusTypes.Count -gt 0) {
+    Write-Error (
+        "The coverage report holds $($surplusTypes.Count) type(s) in ${targetNamespaceLabel} that this gate's " +
+        "roster does not name: $($surplusTypes -join ', '). A type this gate covers must be on the roster, so " +
+        "that its own future migration out of scope is caught. Add it to `$expectedTypes` in this script."
     )
     exit 1
 }

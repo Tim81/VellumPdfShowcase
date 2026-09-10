@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using VellumPdf.Encryption;
@@ -345,6 +346,21 @@ public class DocumentSpecValidationTests
                     // demonstrated inequality: not proven safe, so unsafe.
                     return false;
                 }
+
+                // The blank-instance check above tests only one polarity.
+                // An Equals that ignores its own fields and returns true for
+                // anything of its own type passes it, passes the field
+                // recursion below, and is accepted. That is the exact mirror
+                // of the hazard this guard exists for: an OVER-equal member
+                // would make the renderer's style cache and the emitter's
+                // hoisting collapse two DIFFERENT styles into one, and the
+                // library's adjacent-run merging would follow. So perturb one
+                // field at a time and require the override to notice at least
+                // one of them.
+                if (!ReportsInequalityOnSomeField(underlyingType))
+                {
+                    return false;
+                }
             }
 
             var fields = underlyingType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -354,6 +370,139 @@ public class DocumentSpecValidationTests
         {
             visiting.Remove(underlyingType);
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="type"/>'s own <c>Equals</c> reports two
+    /// instances unequal when exactly one field differs, for at least one
+    /// field. A type with no perturbable field is accepted, since there is
+    /// nothing its override could be ignoring.
+    /// </summary>
+    /// <remarks>
+    /// Fields are set by reflection on uninitialized instances, so this asks
+    /// only whether the override READS its own state, never whether the type
+    /// would accept those values through its own constructor.
+    /// </remarks>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetFields cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2067",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Test-only reflection; this assembly is never AOT-published, and the enum types perturbed " +
+            "here are this model's own.")]
+    private static bool ReportsInequalityOnSomeField(Type type)
+    {
+        var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var perturbable = 0;
+
+        foreach (var field in fields)
+        {
+            if (!TryPerturbedValue(field.FieldType, out var perturbedValue))
+            {
+                continue;
+            }
+
+            perturbable++;
+
+            try
+            {
+                var baseline = RuntimeHelpers.GetUninitializedObject(type);
+                var perturbed = RuntimeHelpers.GetUninitializedObject(type);
+                field.SetValue(perturbed, perturbedValue);
+
+                if (!Equals(baseline, perturbed))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // A field this technique cannot set, or an override that
+                // throws on these instances, proves nothing either way.
+                perturbable--;
+            }
+        }
+
+        return perturbable == 0;
+    }
+
+    /// <summary>A value distinguishable from <paramref name="fieldType"/>'s default, when one can be produced.</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetFields cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2067",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Test-only reflection; this assembly is never AOT-published, and the enum types perturbed " +
+            "here are this model's own.")]
+    private static bool TryPerturbedValue(Type fieldType, out object? value)
+    {
+        var underlying = Nullable.GetUnderlyingType(fieldType) ?? fieldType;
+
+        if (underlying == typeof(string))
+        {
+            value = "perturbed";
+            return true;
+        }
+
+        if (underlying == typeof(bool))
+        {
+            value = true;
+            return true;
+        }
+
+        if (underlying.IsEnum)
+        {
+            var named = Enum.GetValues(underlying).Cast<object>().FirstOrDefault(member => Convert.ToInt64(member, CultureInfo.InvariantCulture) != 0);
+            value = named;
+            return named is not null;
+        }
+
+        if (underlying.IsPrimitive || underlying == typeof(decimal))
+        {
+            try
+            {
+                value = Convert.ChangeType(1, underlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        if (underlying.IsClass && !underlying.IsAbstract)
+        {
+            try
+            {
+                value = RuntimeHelpers.GetUninitializedObject(underlying);
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        value = null;
+        return false;
     }
 
     /// <summary>
@@ -395,6 +544,33 @@ public class DocumentSpecValidationTests
 
             public override int GetHashCode() => Value.GetHashCode();
         }
+
+        /// <summary>
+        /// The mirror of <see cref="ReferenceEqualityOverrideHazard"/>: an
+        /// override that reports EVERY instance of its own type equal,
+        /// ignoring its own fields. It passes a check that compares two blank
+        /// instances and demands equality, and it passes the field recursion,
+        /// so it was accepted before the perturbation check existed.
+        /// </summary>
+        /// <remarks>
+        /// The consequence is the exact hazard this guard exists to prevent,
+        /// with the sign reversed. The renderer caches styles and the emitter
+        /// hoists them, both keyed on record equality; an over-equal member
+        /// would collapse two DIFFERENT styles into one, and the library's
+        /// merging of adjacent runs sharing a style instance would follow.
+        /// </remarks>
+        private sealed class AlwaysEqualOverrideHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) => obj is AlwaysEqualOverrideHazard;
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void AlwaysEqualOverrideHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(AlwaysEqualOverrideHazard)));
 
         [Fact]
         public void ArrayWrappingRecordStruct_IsRejected() =>
