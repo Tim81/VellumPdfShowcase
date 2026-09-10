@@ -192,17 +192,53 @@ public class DocumentSpecValidationTests
             "Type.GetFields/GetMethod cannot observe a member removed by the linker.")]
     public void TextStyleSpec_EveryMember_HasValueEquality()
     {
-        var fields = typeof(TextStyleSpec).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var fields = AllInstanceFields(typeof(TextStyleSpec)).ToList();
         Assert.NotEmpty(fields);
 
         foreach (var field in fields)
         {
+            var isSafe = HasValueEquality(field.FieldType, visiting: null, out var reason);
             Assert.True(
-                HasValueEquality(field.FieldType),
-                $"TextStyleSpec.{field.Name} has type {field.FieldType}, which does not implement " +
-                "value equality. Record equality falls back to reference equality for it, which would let " +
-                "two value-equal TextStyleSpec instances compare unequal; see the remark on TextStyleSpec.");
+                isSafe,
+                $"TextStyleSpec.{field.Name} has type {field.FieldType}: {reason} Record equality falls back to " +
+                "reference equality for a member like this, which would let two value-equal TextStyleSpec " +
+                "instances compare unequal; see the remark on TextStyleSpec.");
         }
+    }
+
+    /// <summary>
+    /// Every instance field <paramref name="type"/> declares, walked up its
+    /// own inheritance chain. <c>Type.GetFields(BindingFlags.NonPublic | ...)</c>
+    /// alone returns only a PRIVATE field declared on <paramref name="type"/>
+    /// itself: <c>BindingFlags.FlattenHierarchy</c> governs static members
+    /// only, so a base type's own private field, exactly the shape a
+    /// record's compiler-generated auto-property backing field takes one
+    /// level up an inheritance chain, is invisible to a single
+    /// non-recursive <c>GetFields</c> call regardless of which flags are
+    /// combined with <c>NonPublic</c>. Walking the chain by hand with
+    /// <c>BindingFlags.DeclaredOnly</c> at each level is the only way to
+    /// reach a base type's own private fields.
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetFields/BaseType cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.BaseType losing DynamicallyAccessedMembers annotations across the walk cannot observe a member " +
+            "removed by the linker.")]
+    private static List<FieldInfo> AllInstanceFields(Type type)
+    {
+        List<FieldInfo> fields = [];
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            fields.AddRange(current.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        }
+
+        return fields;
     }
 
     /// <summary>
@@ -235,6 +271,27 @@ public class DocumentSpecValidationTests
     /// on the override cannot.
     /// </para>
     /// </summary>
+    private static bool HasValueEquality(Type type, HashSet<Type>? visiting = null) =>
+        HasValueEquality(type, visiting, out _);
+
+    /// <summary>
+    /// Finding 4: the single-<paramref name="type"/> overload above reduced
+    /// every rejection to one message, "does not implement value equality,
+    /// record equality falls back to reference equality for it", which is
+    /// untrue for at least two shapes a maintainer could plausibly meet: a
+    /// type whose <c>Equals</c> override IS genuinely structural but that
+    /// this guard cannot prove safe (a member typed as an abstract base,
+    /// where <see cref="RuntimeHelpers.GetUninitializedObject(Type)"/> itself
+    /// throws), and a type whose override correctly and deliberately ignores
+    /// a field (a memoised hash cache) that this guard's own
+    /// every-field-must-be-noticed rule cannot distinguish from a field
+    /// ignored by oversight. Both are still rejected, deliberately: this
+    /// guard stays strict rather than special-casing either shape, since
+    /// neither is common enough here to be worth the extra rule, but the
+    /// <paramref name="reason"/> this overload reports now names which of
+    /// the several distinct checks actually failed, rather than always
+    /// naming the same generic one.
+    /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
@@ -250,17 +307,21 @@ public class DocumentSpecValidationTests
         "IL2067",
         Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
             "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
-    private static bool HasValueEquality(Type type, HashSet<Type>? visiting = null)
+    private static bool HasValueEquality(Type type, HashSet<Type>? visiting, out string? reason)
     {
         var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
 
         if (underlyingType.IsPrimitive || underlyingType.IsEnum || underlyingType == typeof(string) || underlyingType == typeof(decimal))
         {
+            reason = null;
             return true;
         }
 
         if (underlyingType.IsArray)
         {
+            reason = $"{underlyingType} is an array. Array does not override Equals(object?), and neither does the " +
+                "compiler-generated per-field comparison a record performs for an array-typed field of its own, so " +
+                "it falls back to reference equality regardless of the array's own contents.";
             return false;
         }
 
@@ -280,6 +341,10 @@ public class DocumentSpecValidationTests
             // IReadOnlyList<T> and differ in whether they implement value
             // equality), so there is no safe way to recurse further: treated
             // as unsafe, the same as an array.
+            reason = $"{underlyingType} is an interface. Its concrete runtime type is not known statically, and " +
+                "different concrete types satisfying it disagree about whether they implement value equality " +
+                "(List<T> does not; ImmutableArray<T> does), so this cannot be verified without knowing what is " +
+                "actually stored there.";
             return false;
         }
 
@@ -291,6 +356,7 @@ public class DocumentSpecValidationTests
             // recursing forever, so a future one fails loudly some other
             // way (a stack overflow while constructing an instance, most
             // likely) instead of silently here.
+            reason = null;
             return true;
         }
 
@@ -311,6 +377,8 @@ public class DocumentSpecValidationTests
 
             if (underlyingType.IsClass && !hasCustomOverride)
             {
+                reason = $"{underlyingType} is a reference type with no Equals(object?) override of its own, so it " +
+                    "falls back to object.Equals, reference equality.";
                 return false;
             }
 
@@ -324,26 +392,54 @@ public class DocumentSpecValidationTests
                 // regardless of what its override actually did. Running this
                 // check for any type with a custom override, class or
                 // struct, closes that.
+                object blankA;
+                object blankB;
                 try
                 {
-                    var blankA = RuntimeHelpers.GetUninitializedObject(underlyingType);
-                    var blankB = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                    blankA = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                    blankB = RuntimeHelpers.GetUninitializedObject(underlyingType);
+                }
+                catch (Exception ex)
+                {
+                    // Finding 4: previously an unlabelled `catch` that
+                    // returned false with no distinguishing message. A
+                    // member typed as an abstract base (an abstract record,
+                    // for instance) reaches exactly this catch, since
+                    // GetUninitializedObject cannot instantiate an abstract
+                    // type at all; that failure says nothing about whether
+                    // the type's OWN equality is structural, only that this
+                    // guard could not test it. Treated the same as a
+                    // demonstrated inequality: not proven safe, so unsafe,
+                    // but the reason now says which of the two applied.
+                    reason = $"{underlyingType}'s Equals override could not be tested behaviourally: constructing " +
+                        $"a blank instance via RuntimeHelpers.GetUninitializedObject threw {ex.GetType().Name} " +
+                        $"({ex.Message}). This commonly means the type cannot be instantiated without running a " +
+                        "constructor (an abstract type, for instance); its value-equality behaviour is therefore " +
+                        "unverified, not disproven, and is treated as unsafe rather than assumed safe.";
+                    return false;
+                }
+
+                try
+                {
                     if (!Equals(blankA, blankB))
                     {
+                        reason = $"{underlyingType}'s Equals override reports two blank (all-default-field) " +
+                            "instances unequal, so it does not perform a genuine structural comparison.";
                         return false;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Low (round nine): an override that DEREFERENCES a
-                    // field (rather than merely comparing it) throws on
-                    // RuntimeHelpers.GetUninitializedObject's all-default
-                    // blank instances even though it might behave perfectly
-                    // well on real ones; this previously propagated as a
-                    // raw, opaque exception out of the guard itself, rather
-                    // than the guard's own clear "does not implement value
-                    // equality" failure message. Treated the same as a
-                    // demonstrated inequality: not proven safe, so unsafe.
+                    // An override that DEREFERENCES a field (rather than
+                    // merely comparing it) throws on two all-default blank
+                    // instances even though it might behave perfectly well
+                    // on real ones; this must not propagate as a raw,
+                    // opaque exception out of the guard itself. Treated the
+                    // same as a demonstrated inequality: not proven safe, so
+                    // unsafe.
+                    reason = $"{underlyingType}'s Equals override threw {ex.GetType().Name} ({ex.Message}) while " +
+                        "comparing two blank (all-default-field) instances, rather than completing a genuine " +
+                        "structural comparison.";
                     return false;
                 }
 
@@ -361,14 +457,37 @@ public class DocumentSpecValidationTests
                 // over-equal, for two instances differing only in field two,
                 // as one that ignores every field, so "some field noticed" is
                 // not enough.
-                if (!ReportsInequalityOnEveryField(underlyingType))
+                if (!ReportsInequalityOnEveryField(underlyingType, out var unnoticedFieldReason))
                 {
+                    // Finding 4: this rejection can also be a FALSE positive,
+                    // for a type whose value equality is genuinely correct in
+                    // both polarities but that has a field (a memoised hash
+                    // cache, say) its override deliberately and correctly
+                    // ignores. This guard cannot distinguish that from a
+                    // field ignored by oversight, so it stays strict and
+                    // rejects both, but the reason now names the field and
+                    // says so, rather than claiming the type "does not
+                    // implement value equality", which would be false for
+                    // the deliberate-ignore case.
+                    reason = $"{underlyingType}'s Equals override does not demonstrably notice a change in every " +
+                        $"one of its own instance fields ({unnoticedFieldReason}). This guard cannot distinguish a " +
+                        "field the override deliberately and correctly ignores (a memoised hash cache, for " +
+                        "instance) from one it silently omits by oversight, so both are treated as unsafe.";
                     return false;
                 }
             }
 
-            var fields = underlyingType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            return fields.All(field => HasValueEquality(field.FieldType, visiting));
+            foreach (var field in AllInstanceFields(underlyingType))
+            {
+                if (!HasValueEquality(field.FieldType, visiting, out var fieldReason))
+                {
+                    reason = $"its own field '{field.Name}' has type {field.FieldType}, and {fieldReason}";
+                    return false;
+                }
+            }
+
+            reason = null;
+            return true;
         }
         finally
         {
@@ -419,11 +538,24 @@ public class DocumentSpecValidationTests
         "IL3050",
         Justification = "Test-only reflection; this assembly is never AOT-published, and the enum types perturbed " +
             "here are this model's own.")]
-    private static bool ReportsInequalityOnEveryField(Type type)
+    /// <remarks>
+    /// Finding 1: enumerates <paramref name="type"/>'s fields through
+    /// <see cref="AllInstanceFields"/>, which walks the inheritance chain,
+    /// rather than a single non-recursive <c>GetFields</c> call, for the
+    /// identical reason <see cref="HasValueEquality(Type, HashSet{Type}?, out string?)"/>
+    /// does: a base type's own private field, invisible to a single
+    /// <c>GetFields</c> call regardless of which flags accompany
+    /// <c>NonPublic</c>, is exactly where an override could be ignoring a
+    /// change without this method ever perturbing it to find out.
+    /// <paramref name="unnoticedFieldReason"/> names the specific field and
+    /// the specific way its perturbation went unnoticed (finding 4), rather
+    /// than leaving the caller to report the generic "does not implement
+    /// value equality" for what might be a field an override deliberately
+    /// and correctly ignores.
+    /// </remarks>
+    private static bool ReportsInequalityOnEveryField(Type type, out string? unnoticedFieldReason)
     {
-        var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-        foreach (var field in fields)
+        foreach (var field in AllInstanceFields(type))
         {
             if (!TryPerturbedValue(field.FieldType, out var perturbedValue))
             {
@@ -455,10 +587,12 @@ public class DocumentSpecValidationTests
                     // other field: reject the whole type immediately rather
                     // than let a later field's honest comparison paper over
                     // this one.
+                    unnoticedFieldReason = $"perturbing field '{field.Name}' alone left two otherwise-identical " +
+                        "instances comparing equal";
                     return false;
                 }
             }
-            catch
+            catch (Exception ex)
             {
                 // An override that THROWS while comparing a perturbed
                 // instance has not demonstrably noticed this field either:
@@ -468,12 +602,15 @@ public class DocumentSpecValidationTests
                 // as evidence of nothing, and, now, with the "did not
                 // notice" branch immediately above: reject immediately
                 // rather than let another field's honest comparison hide it.
+                unnoticedFieldReason = $"comparing an instance with only field '{field.Name}' perturbed threw " +
+                    $"{ex.GetType().Name} ({ex.Message})";
                 return false;
             }
         }
 
         // Every perturbable field was noticed (or there were none to
         // perturb, in which case there is nothing to have ignored).
+        unnoticedFieldReason = null;
         return true;
     }
 
@@ -924,6 +1061,164 @@ public class DocumentSpecValidationTests
         [Fact]
         public void ThrowsOnOneFieldHonestOnAnotherHazard_IsRejected() =>
             Assert.False(HasValueEquality(typeof(ThrowsOnOneFieldHonestOnAnotherHazard)));
+
+        /// <summary>
+        /// Finding 1: <c>GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)</c>,
+        /// without <see langword="DeclaredOnly"/> and without walking
+        /// <see cref="Type.BaseType"/> by hand, does NOT return a base
+        /// type's own PRIVATE fields; <see cref="BindingFlags.FlattenHierarchy"/>
+        /// governs static members only. A record's auto-property backing
+        /// field is exactly such a private field, so an array-typed member
+        /// declared on a BASE record was invisible to the previous,
+        /// single-call enumeration one level up an inheritance chain. This
+        /// base record carries the hazard.
+        /// </summary>
+        private record ArrayCarryingBaseRecord
+        {
+            public int[] Values { get; init; } = [];
+        }
+
+        /// <summary>
+        /// The derived record itself carries no array; the hazard is
+        /// reachable only by walking up to <see cref="ArrayCarryingBaseRecord"/>.
+        /// A guard that enumerates only <see cref="ArrayCarryingDerivedRecord"/>'s
+        /// own declared fields (its own backing field for
+        /// <see cref="Value"/>, a <see langword="double"/>) finds nothing
+        /// unsafe and accepts this type; measured directly against the
+        /// pre-fix single-call enumeration, it did.
+        /// </summary>
+        private sealed record ArrayCarryingDerivedRecord : ArrayCarryingBaseRecord
+        {
+            public double Value { get; init; }
+        }
+
+        [Fact]
+        public void ArrayCarryingDerivedRecord_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(ArrayCarryingDerivedRecord)));
+
+        /// <summary>
+        /// The concrete failure <see cref="ArrayCarryingDerivedRecord_IsRejected"/>
+        /// exists to catch, the same shape as
+        /// <see cref="DashPatternHazard_TwoContentEqualInstances_AreNotEqual"/>
+        /// one level of inheritance further down: two instances holding
+        /// separately-allocated but content-equal arrays in the INHERITED
+        /// member are not <c>Equals</c>, because the compiler-generated
+        /// per-field comparison the derived record's own <c>Equals</c>
+        /// delegates to, for the base record's fields, compares
+        /// <see cref="ArrayCarryingBaseRecord.Values"/> by reference.
+        /// </summary>
+        [Fact]
+        public void ArrayCarryingDerivedRecord_TwoContentEqualInstances_AreNotEqual()
+        {
+            var first = new ArrayCarryingDerivedRecord { Values = [1, 2, 3], Value = 5 };
+            var second = new ArrayCarryingDerivedRecord { Values = [1, 2, 3], Value = 5 };
+
+            Assert.NotEqual(first, second);
+        }
+
+        /// <summary>
+        /// The honest counterpart the finding asked for: a base and derived
+        /// record pair with the identical SHAPE of inheritance as
+        /// <see cref="ArrayCarryingBaseRecord"/>/<see cref="ArrayCarryingDerivedRecord"/>,
+        /// but with no array anywhere in the chain. The walk up
+        /// <see cref="Type.BaseType"/> that finding 1 added must not turn
+        /// into over-rejection of a perfectly safe base member merely
+        /// because it now reaches fields it previously could not see.
+        /// </summary>
+        private record WellBehavedBaseRecord
+        {
+            public double BaseValue { get; init; }
+        }
+
+        private sealed record WellBehavedDerivedRecord : WellBehavedBaseRecord
+        {
+            public double DerivedValue { get; init; }
+        }
+
+        [Fact]
+        public void WellBehavedDerivedRecord_IsAccepted() =>
+            Assert.True(HasValueEquality(typeof(WellBehavedDerivedRecord)));
+
+        /// <summary>
+        /// Finding 4, first shape: a class with a memoised hash field its
+        /// <c>Equals</c> override correctly and deliberately ignores. Value
+        /// equality is correct in BOTH polarities (two instances with equal
+        /// <see cref="Value"/> compare equal regardless of
+        /// <see cref="_cachedHash"/>; two with different <see cref="Value"/>
+        /// compare unequal), but <see cref="ReportsInequalityOnEveryField"/>'s
+        /// every-field rule cannot tell that from a field ignored by
+        /// oversight, so this type is still rejected. What this test pins is
+        /// not the rejection (deliberately kept, per the finding) but that
+        /// the failure REASON now names the actual field and the actual
+        /// mechanism, rather than the old blanket "does not implement value
+        /// equality", which would be false here: this type's own equality
+        /// is, in fact, correct.
+        /// </summary>
+        private sealed class MemoisedHashFieldHazard
+        {
+            public double Value { get; init; }
+
+            private int? _cachedHash;
+
+            public override bool Equals(object? obj) => obj is MemoisedHashFieldHazard other && Value.Equals(other.Value);
+
+            public override int GetHashCode() => _cachedHash ??= Value.GetHashCode();
+        }
+
+        [Fact]
+        public void MemoisedHashFieldHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(MemoisedHashFieldHazard)));
+
+        [Fact]
+        public void MemoisedHashFieldHazard_RejectionReasonNamesTheIgnoredFieldRatherThanClaimingNoValueEquality()
+        {
+            var isSafe = HasValueEquality(typeof(MemoisedHashFieldHazard), visiting: null, out var reason);
+
+            Assert.False(isSafe);
+            Assert.NotNull(reason);
+            Assert.Contains("_cachedHash", reason, StringComparison.Ordinal);
+            Assert.DoesNotContain("does not implement value equality", reason, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Finding 4, second shape: a member typed as an abstract record
+        /// base. <see cref="RuntimeHelpers.GetUninitializedObject(Type)"/>
+        /// cannot instantiate an abstract type at all, so the behavioural
+        /// blank-instance check throws before it can compare anything, which
+        /// says nothing about whether this type's OWN equality is
+        /// structural. The previous unlabelled <c>catch</c> reported this
+        /// identically to a genuinely broken override; this test pins that
+        /// the reason now says construction failed, not that equality is
+        /// broken.
+        /// </summary>
+        private abstract record AbstractRecordBase
+        {
+            public double Value { get; init; }
+        }
+
+        private sealed record AbstractRecordBaseMemberHazard
+        {
+            public AbstractRecordBase? Inner { get; init; }
+        }
+
+        [Fact]
+        public void AbstractRecordBase_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(AbstractRecordBase)));
+
+        [Fact]
+        public void AbstractRecordBase_RejectionReasonNamesConstructionFailureRatherThanClaimingNoValueEquality()
+        {
+            var isSafe = HasValueEquality(typeof(AbstractRecordBase), visiting: null, out var reason);
+
+            Assert.False(isSafe);
+            Assert.NotNull(reason);
+            Assert.Contains("could not be tested behaviourally", reason, StringComparison.Ordinal);
+            Assert.DoesNotContain("does not implement value equality", reason, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AbstractRecordBaseMemberHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(AbstractRecordBaseMemberHazard)));
     }
 }
 

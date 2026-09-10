@@ -174,3 +174,82 @@ public class RenderExceptionContractTests
         }
     }
 }
+
+/// <summary>
+/// The <see cref="Generation.SpecCodeEmitter.Emit"/> counterpart to
+/// <see cref="RenderExceptionContractTests"/>. <see cref="Generation.SpecCodeEmitter.Emit"/>
+/// has its own documented exception contract (see its remark), narrower than
+/// <see cref="SpecRenderer.Render"/>'s own: it may throw
+/// <see cref="ArgumentException"/> for a malformed specification the model
+/// failed to reject, but NEVER <see cref="InvalidOperationException"/>, since
+/// it emits text referencing asset bytes by position and never decodes,
+/// parses, or executes any of them.
+/// </summary>
+/// <remarks>
+/// Before this class existed, nothing made an unexpected exception from
+/// <see cref="Generation.SpecCodeEmitter.Emit"/> fail the suite over either
+/// corpus. <c>AdversarialCorpusTests</c> computes a <c>Crashed</c> verdict
+/// that distinguishes a genuine crash from a documented refusal, but nothing
+/// asserted against it: its own theories check only that SOME corpus member
+/// matches a pattern (both consumers reject; Render refuses at run time while
+/// Emit accepts), never that NO member crashed. Demonstrated directly:
+/// injecting a <see cref="NullReferenceException"/> into
+/// <see cref="Generation.SpecCodeEmitter.Emit"/> for a shape unique to one
+/// adversarial corpus member left the suite green, with that member's
+/// verdict merely moving from "refused as malformed" to "crashed" while the
+/// corpus-level theories stayed satisfied by other members, and
+/// <see cref="SymmetryTests"/>'s own agreement rule saw neither side
+/// rejecting as malformed, so it saw no disagreement to report either. This
+/// class closes that gap the same way <see cref="RenderExceptionContractTests"/>
+/// closes it for <see cref="SpecRenderer.Render"/>: it asserts the contract
+/// directly, over the same sample and adversarial corpora, so a crash in
+/// <see cref="Generation.SpecCodeEmitter.Emit"/> on any corpus member fails
+/// here regardless of what any other member's verdict happens to be.
+/// <para>
+/// NOTE: what this can prove is bounded by the corpus, exactly as
+/// <see cref="RenderExceptionContractTests"/>'s own note states. It is a
+/// regression guard, not a proof.
+/// </para>
+/// </remarks>
+public class EmitExceptionContractTests
+{
+    [Theory]
+    [MemberData(nameof(SymmetryTests.AllSampleNames), MemberType = typeof(SymmetryTests))]
+    public void Sample_EmitThrowsOnlyContractedTypes(string sampleName)
+    {
+        var method = typeof(DocumentSpecSamples).GetMethod(sampleName, BindingFlags.Public | BindingFlags.Static)!;
+        var spec = (DocumentSpec)method.Invoke(null, [.. method.GetParameters().Select(p => p.DefaultValue)])!;
+
+        AssertContracted(spec);
+    }
+
+    [Theory]
+    [MemberData(nameof(SymmetryTests.AdversarialSpecNames), MemberType = typeof(SymmetryTests))]
+    public void AdversarialSpecification_EmitThrowsOnlyContractedTypes(string specName)
+    {
+        var method = typeof(SymmetryTests).GetMethod(specName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        var spec = (DocumentSpec)method.Invoke(null, null)!;
+
+        AssertContracted(spec);
+    }
+
+    private static void AssertContracted(DocumentSpec spec)
+    {
+        try
+        {
+            SpecCodeEmitter.Emit(spec);
+        }
+        catch (ArgumentException)
+        {
+            // Contracted.
+        }
+        catch (Exception ex)
+        {
+            Assert.Fail(
+                $"SpecCodeEmitter.Emit threw {ex.GetType().FullName} ({ex.Message}), which is outside its " +
+                "documented exception contract of ArgumentException only. Its contract promises it never throws " +
+                "InvalidOperationException, since it never decodes, parses, or executes any asset bytes, and any " +
+                "other exception type is not a documented rejection of any kind.");
+        }
+    }
+}

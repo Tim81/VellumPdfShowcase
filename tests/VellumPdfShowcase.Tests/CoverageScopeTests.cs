@@ -120,7 +120,7 @@ public class CoverageScopeTests
             .Select(type => type.FullName!)
             .ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(declared, RosterFromGateScript());
+        RosterAssertions.AssertSameRoster(declared, RosterFromGateScript());
     }
 
     /// <summary>

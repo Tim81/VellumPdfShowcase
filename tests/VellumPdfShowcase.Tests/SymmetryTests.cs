@@ -730,9 +730,24 @@ public class AdversarialCorpusTests
     /// the original discovery-by-suffix rule. A factory renamed off the
     /// <c>Specification</c> suffix (with its own <see langword="nameof"/>
     /// reference updated to match, so the fixed roster still compiles) drops
-    /// out of the suffix-based side and fails here; a new factory added to
-    /// this file but never added to the fixed roster does the same, from the
-    /// other side.
+    /// out of the suffix-based side and fails here.
+    /// <para>
+    /// NOTE: this does NOT catch every new factory left off the fixed
+    /// roster, despite what an earlier version of this remark claimed. The
+    /// two sides compared here are the fixed <see langword="nameof"/> list
+    /// and the suffix rule; a new factory enrols in the suffix-based side
+    /// only if its OWN name happens to end in <c>Specification</c>. A new
+    /// factory added with that suffix but omitted from the fixed roster is
+    /// caught here, from the suffix side. A new factory added WITHOUT that
+    /// suffix appears on neither side and is caught by neither this test nor
+    /// the suffix rule at all: the fixed roster is a list an author must
+    /// remember to extend, and nothing enforces that reminder for a factory
+    /// the suffix rule was never going to discover either. The residual
+    /// exposure this leaves is narrower than the one the fixed roster itself
+    /// replaced, since an EXISTING member can no longer be silently dropped
+    /// by a rename, only a brand NEW one can fail to enrol, but it is a
+    /// residual, not a closed case.
+    /// </para>
     /// </summary>
     [Fact]
     public void Corpus_ContainsExactlyTheExpectedRoster() =>
