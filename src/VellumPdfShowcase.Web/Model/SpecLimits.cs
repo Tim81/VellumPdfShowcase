@@ -479,6 +479,42 @@ public static class SpecLimits
                 paramName);
 
     /// <summary>
+    /// Throws unless <paramref name="value"/> is one of <typeparamref name="TEnum"/>'s
+    /// own named members; returns it otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Every non-flags enum a specification carries reaches
+    /// <see cref="Generation.SpecCodeEmitter"/>, which writes it into the
+    /// displayed C# by name. A value outside the enumeration emits text such as
+    /// <c>ListStyle.99</c>, which does not compile, while
+    /// <see cref="Generation.SpecRenderer"/> renders the same specification
+    /// without complaint. That is the divergence the round trip exists to
+    /// prevent, and it is invisible to a guard that only compares whether the
+    /// two consumers agree, because they both succeed.
+    /// <para>
+    /// Measured directly before this check existed: <c>(ListStyle)99</c> and
+    /// <c>(HorizontalAlignment)99</c> both rendered, and <c>(Standard14)99</c>
+    /// made <see cref="Generation.SpecRenderer.Render"/> throw a raw
+    /// <see cref="IndexOutOfRangeException"/>, outside its own documented
+    /// exception contract.
+    /// </para>
+    /// <para>
+    /// NOTE: this is for NON-FLAGS enumerations only.
+    /// <see cref="PdfPermissions"/> keeps <see cref="ValidatePermissions"/>,
+    /// because a legitimate union of two flags is not itself a named member and
+    /// <see cref="Enum.IsDefined{TEnum}(TEnum)"/> would reject it. Do not
+    /// unify the two.
+    /// </para>
+    /// </remarks>
+    public static TEnum ValidateEnum<TEnum>(TEnum value, string paramName)
+        where TEnum : struct, Enum =>
+        Enum.IsDefined(value)
+            ? value
+            : throw new ArgumentException(
+                $"{paramName} must be one of {typeof(TEnum).Name}'s named members; got {(object)value}.",
+                paramName);
+
+    /// <summary>
     /// The bitwise union of every named <see cref="PdfPermissions"/> flag other
     /// than <see cref="PdfPermissions.None"/> and <see cref="PdfPermissions.All"/>.
     /// Verified by test to equal <see cref="PdfPermissions.All"/> exactly, which

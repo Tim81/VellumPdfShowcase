@@ -2,6 +2,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using VellumPdf.Encryption;
+using VellumPdf.Fonts;
+using VellumPdf.Images;
 using VellumPdf.Layout.Core;
 using VellumPdf.Layout.Elements;
 using VellumPdfShowcase.Web.Model;
@@ -1411,6 +1413,155 @@ public class UncountedTextBearingMemberTests
         };
 
         Assert.NotNull(spec);
+    }
+}
+
+/// <summary>
+/// Every non-flags enumeration a specification carries must be rejected at
+/// construction when it holds a value outside its own named members, because
+/// <see cref="VellumPdfShowcase.Web.Generation.SpecCodeEmitter"/> writes each of
+/// them into the displayed C# BY NAME. An undefined value emits text such as
+/// <c>ListStyle.99</c>, which does not compile, while
+/// <see cref="VellumPdfShowcase.Web.Generation.SpecRenderer"/> renders the same
+/// specification successfully.
+/// </summary>
+/// <remarks>
+/// This divergence is invisible to the symmetry guard, which compares whether
+/// the two consumers AGREE about rejecting a specification: here they agreed,
+/// because neither rejected anything. It is invisible to the round trip too,
+/// whose corpus is hand-built and contains no such value. Measured directly
+/// before this fix: <c>(ListStyle)99</c> and <c>(HorizontalAlignment)99</c>
+/// both rendered, and <c>(Standard14)99</c> made <c>Render</c> throw a raw
+/// <see cref="IndexOutOfRangeException"/>, outside its documented contract.
+/// <para>
+/// NOTE: one case per member, not one per enumeration. The members are what
+/// the emitter interpolates, and each carries its own <c>init</c> accessor
+/// that can be dropped independently of the others. A theory over the six
+/// <see cref="HorizontalAlignment"/> members catches the removal of any one of
+/// them; a single case over the enumeration would not.
+/// </para>
+/// </remarks>
+public class EnumMemberValidationTests
+{
+    private const int Undefined = 99;
+
+    private static TextStyleSpec Style() => new() { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+
+    public static TheoryData<string, Action> UndefinedEnumMembers() => new()
+    {
+        { "FontSpec.Kind", () => _ = new FontSpec { Kind = (FontKind)Undefined } },
+        { "FontSpec.Standard14Face", () => _ = new FontSpec { Kind = FontKind.Standard14, Standard14Face = (Standard14)Undefined } },
+        { "ListSpec.Style", () => _ = new ListSpec { Style = (ListStyle)Undefined, Items = [new ListItemSpec { Text = "x" }] } },
+        { "ImageSpec.Format", () => _ = new ImageSpec { Format = (ImageFormat)Undefined, Bytes = [1, 2, 3, 4] } },
+        { "DocumentSpec.Conformance", () => _ = new DocumentSpec { Page = new PageSizeSpec(200, 200), DefaultTextStyle = Style(), Content = [new PlainTextSpec { Text = "x" }], Conformance = (VellumPdf.Document.PdfConformance)Undefined } },
+        { "HeadingSpec.Alignment", () => _ = new HeadingSpec { Text = "x", Level = 0, Alignment = (HorizontalAlignment)Undefined } },
+        { "ParagraphSpec.Alignment", () => _ = new ParagraphSpec { Runs = [new TextRunSpec("x", Style())], Alignment = (HorizontalAlignment)Undefined } },
+        { "TableCellSpec.Alignment", () => _ = new TableCellSpec { Content = "x", Alignment = (HorizontalAlignment)Undefined } },
+        { "ImageSpec.Alignment", () => _ = new ImageSpec { Format = ImageFormat.Png, Bytes = [1, 2, 3, 4], Alignment = (HorizontalAlignment)Undefined } },
+        { "PieChartSpec.Alignment", () => _ = new PieChartSpec { Diameter = 100, Slices = [new PieSlice { Label = "x", Value = 1 }], Alignment = (HorizontalAlignment)Undefined } },
+        { "RunningBandSpec.Alignment", () => _ = new RunningBandSpec { Template = "x", Style = Style(), Alignment = (HorizontalAlignment)Undefined } },
+    };
+
+    [Theory]
+    [MemberData(nameof(UndefinedEnumMembers))]
+    public void UndefinedEnumMember_ThrowsAtConstruction(string member, Action construct)
+    {
+        var exception = Assert.Throws<ArgumentException>(construct);
+
+        var memberName = member.Split('.')[1];
+        Assert.Contains(memberName, exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The counterpart that stops the check above from over-rejecting: every
+    /// named member of every one of those enumerations must still construct.
+    /// </summary>
+    [Fact]
+    public void EveryNamedMember_Constructs()
+    {
+        foreach (var face in Enum.GetValues<Standard14>())
+        {
+            Assert.Equal(face, new FontSpec { Kind = FontKind.Standard14, Standard14Face = face }.Standard14Face);
+        }
+
+        foreach (var style in Enum.GetValues<ListStyle>())
+        {
+            Assert.Equal(style, new ListSpec { Style = style, Items = [new ListItemSpec { Text = "x" }] }.Style);
+        }
+
+        foreach (var alignment in Enum.GetValues<HorizontalAlignment>())
+        {
+            Assert.Equal(alignment, new HeadingSpec { Text = "x", Level = 0, Alignment = alignment }.Alignment);
+        }
+
+        foreach (var conformance in Enum.GetValues<VellumPdf.Document.PdfConformance>())
+        {
+            var spec = new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [new PlainTextSpec { Text = "x" }],
+                Conformance = conformance,
+            };
+
+            Assert.Equal(conformance, spec.Conformance);
+        }
+    }
+
+    /// <summary>
+    /// A <see langword="null"/> item in <see cref="DocumentSpec.Content"/>,
+    /// which is the same shape of gap as an undefined enumeration member and
+    /// was found by the same reasoning. Before the fix that closed it, a
+    /// switch on a <see langword="null"/> value matched no
+    /// <c>case ContentItemSpec-subtype</c> pattern and fell through, so the
+    /// item passed construction, was skipped silently by
+    /// <see cref="VellumPdfShowcase.Web.Generation.SpecRenderer.Render"/>, and
+    /// surfaced only later and unhelpfully as "The document has no pages" once
+    /// every other item had ALSO been skipped.
+    /// </summary>
+    /// <remarks>
+    /// NOTE: this case moved here when <c>SpecCodeEmitterDefensiveThrowsTests</c>
+    /// was folded away. That file had stopped calling the emitter it was named
+    /// for, and its other two cases duplicated <c>SymmetryTests</c>' own
+    /// construction proofs verbatim. This one had no duplicate anywhere, so it
+    /// moved rather than being deleted with the file.
+    /// </remarks>
+    [Fact]
+    public void NullContentItem_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                DefaultTextStyle = Style(),
+                Content = [null!],
+            });
+
+        Assert.Contains("Content", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <see cref="EncryptionSpec.Permissions"/> is deliberately NOT routed
+    /// through <see cref="SpecLimits.ValidateEnum{TEnum}"/>: a union of two
+    /// named flags is not itself a named member, so
+    /// <see cref="Enum.IsDefined{TEnum}(TEnum)"/> would reject a legitimate
+    /// permission set. This pins that difference, so that unifying the two
+    /// checks fails here rather than in a visitor's document.
+    /// </summary>
+    [Fact]
+    public void PermissionsUnionOfNamedFlags_IsAccepted()
+    {
+        var union = PdfPermissions.Print | PdfPermissions.Copy;
+        Assert.False(Enum.IsDefined(union));
+
+        var spec = new EncryptionSpec
+        {
+            UserPassword = "user",
+            OwnerPassword = "owner",
+            Permissions = union,
+        };
+
+        Assert.Equal(union, spec.Permissions);
     }
 }
 

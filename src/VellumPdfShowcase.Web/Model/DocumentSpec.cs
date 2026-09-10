@@ -195,7 +195,11 @@ public sealed record DocumentSpec
     public RunningBandSpec? Footer { get; init; }
 
     /// <summary>The conformance profile the document claims, or <see cref="DocumentConformance.None"/>.</summary>
-    public DocumentConformance Conformance { get; init; } = DocumentConformance.None;
+    public DocumentConformance Conformance
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Conformance));
+    } = DocumentConformance.None;
 
     /// <summary>Whether the document carries a tagged structure tree.</summary>
     public bool Tagged { get; init; }
@@ -855,12 +859,21 @@ public sealed record FontSpec
     public required FontKind Kind
     {
         get;
-        init => field = value is FontKind.Standard14 or FontKind.Embedded
-            ? value
-            : throw new ArgumentException($"Kind must be one of FontKind's named members; got {value}.", nameof(Kind));
+        init => field = SpecLimits.ValidateEnum(value, nameof(Kind));
     }
 
-    public Standard14 Standard14Face { get; init; }
+    /// <summary>
+    /// Validated unconditionally, not only when <see cref="Kind"/> selects a
+    /// standard face. The two are independent members of the same record and an
+    /// object initializer may set them in either order, so an accessor that
+    /// consulted <see cref="Kind"/> here would pass or fail by the order the
+    /// caller happened to write.
+    /// </summary>
+    public Standard14 Standard14Face
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Standard14Face));
+    }
 
     /// <summary>
     /// Rejected here when negative, which is meaningless regardless of how
@@ -1062,7 +1075,11 @@ public sealed record HeadingSpec : ContentItemSpec
     }
 
     public TextStyleSpec? Style { get; init; }
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Left;
 
     public EdgeInsets? Margins
     {
@@ -1104,7 +1121,11 @@ public sealed record ParagraphSpec : ContentItemSpec
         init => field = ValidateRuns(value);
     }
 
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Left;
 
     public EdgeInsets? Margins
     {
@@ -1167,7 +1188,11 @@ public sealed record PlainTextSpec : ContentItemSpec
 /// <summary>A <c>ListElement</c>, unordered or one of the three ordered forms.</summary>
 public sealed record ListSpec : ContentItemSpec
 {
-    public required ListStyle Style { get; init; }
+    public required ListStyle Style
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Style));
+    }
 
     /// <summary>
     /// Capped at <see cref="SpecLimits.MaxListItems"/> and snapshotted with a
@@ -1433,7 +1458,11 @@ public sealed record TableCellSpec
         init => field = SpecLimits.ValidateOptionalColor(value, nameof(Background));
     }
 
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Left;
 
     public string? Language
     {
@@ -1465,7 +1494,11 @@ public enum ImageFormat
 /// </remarks>
 public sealed record ImageSpec : ContentItemSpec
 {
-    public required ImageFormat Format { get; init; }
+    public required ImageFormat Format
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Format));
+    }
 
     public required byte[] Bytes
     {
@@ -1485,7 +1518,11 @@ public sealed record ImageSpec : ContentItemSpec
         init => field = value is null ? null : SpecLimits.ValidateRange(value.Value, 0, SpecLimits.MaxImageDimensionPoints, nameof(Height));
     }
 
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Left;
 
     public EdgeInsets? Margins
     {
@@ -1541,7 +1578,11 @@ public sealed record PieChartSpec : ContentItemSpec
         init => field = SpecLimits.ValidateRange(value, 0, SpecLimits.MaxStrokeWidthPoints, nameof(StrokeWidth));
     } = 0.5;
 
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Center;
 
     /// <summary>
     /// Defaults to <c>π/2</c> (12 o'clock), matching <c>PieChart</c>'s own
@@ -1654,7 +1695,11 @@ public sealed record RunningBandSpec
         init => field = value ?? throw new ArgumentNullException(nameof(Style));
     }
 
-    public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Center;
+    public HorizontalAlignment Alignment
+    {
+        get;
+        init => field = SpecLimits.ValidateEnum(value, nameof(Alignment));
+    } = HorizontalAlignment.Center;
 
     public double? Height
     {
