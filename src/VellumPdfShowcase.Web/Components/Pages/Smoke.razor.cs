@@ -77,8 +77,9 @@ public partial class Smoke
     /// fetch of this module, and neither could caching the resolved reference
     /// instead. Only a full page load, which builds a new module map, does
     /// that. The eviction is worth keeping for a fault that never reached the
-    /// module map, and it is not worth describing as a recovery path for a
-    /// fetch that failed.
+    /// module map, which means a failure on the .NET side of the call rather
+    /// than in the fetch, and it is not worth describing as a recovery path
+    /// for a fetch that failed.
     /// </remarks>
     private Task<IJSObjectReference> GetModuleAsync() =>
         _moduleTask ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/pdfInterop.js").AsTask();

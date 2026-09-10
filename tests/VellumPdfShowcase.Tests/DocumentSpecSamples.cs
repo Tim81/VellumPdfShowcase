@@ -208,7 +208,7 @@ internal static class DocumentSpecSamples
         };
     }
 
-    /// <summary>A PDF/A-2b claim with a fully embedded face and an explicit sRGB output intent, as section 6.2 requires for any conformance sample.</summary>
+    /// <summary>A PDF/A-2b claim with a fully embedded face and an explicit sRGB output intent, as the catalogue requires for any conformance sample.</summary>
     public static DocumentSpec PdfA2bWithOutputIntent()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0), FontSize = 11 };

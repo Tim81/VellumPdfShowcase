@@ -197,8 +197,8 @@
     added to either is as invisible to this gate as one in a closure is.
     Widening --coverlet-include to VellumPdfShowcase.Web.Model.* was tried
     directly, and RE-MEASURED against the tree as it now stands rather than
-    left at an older figure: the suite reaches 96.68% line and 87.09% branch
-    coverage there, 48 of 372 branches untaken, across 13 types. Two types
+    left at an older figure: the suite reaches 96.69% line and 87.16% branch
+    coverage there, 48 of 374 branches untaken, across 13 types. Two types
     hold more than half of them. ImageSignature accounts for 17, and
     DocumentSpec.ContentWalkState for 11.
 

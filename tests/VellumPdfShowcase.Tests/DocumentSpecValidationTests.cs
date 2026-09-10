@@ -1696,6 +1696,13 @@ public class SpecSizeLimitTests
     /// <summary>
     /// The negative control for the check above: a total that is merely large
     /// stays acceptable, so the new rule rejects overflow rather than size.
+    ///
+    /// NOTE the two slices. A single-slice chart adds nothing, so it cannot
+    /// tell the rule under test from several wrong rules that would also pass
+    /// it, among them one keyed on slice count and one comparing the total
+    /// against half of <see cref="double.MaxValue"/>. These two values are
+    /// each enormous, sum without overflowing, and exceed that half, so a
+    /// rule of either shape turns this control red.
     /// </summary>
     [Fact]
     public void PieChartSpec_SliceValuesSummingToALargeFiniteTotal_Constructs()
@@ -1703,10 +1710,15 @@ public class SpecSizeLimitTests
         var chart = new PieChartSpec
         {
             Diameter = 10,
-            Slices = [new PieSlice(double.MaxValue, ColorRgb.Black)],
+            Slices =
+            [
+                new PieSlice(double.MaxValue / 2, ColorRgb.Black),
+                new PieSlice(double.MaxValue / 4, ColorRgb.Black),
+            ],
         };
 
-        Assert.Single(chart.Slices);
+        Assert.Equal(2, chart.Slices.Count);
+        Assert.True(double.IsFinite(chart.Slices.Sum(slice => slice.Value)));
     }
 
     [Fact]

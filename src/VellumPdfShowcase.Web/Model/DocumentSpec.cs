@@ -1349,14 +1349,14 @@ public sealed record ListItemSpec
     }
 
     /// <summary>
-    /// Snapshotted with a collection expression at construction, per plan
-    /// section 5.4. Capped in two independent dimensions: breadth, at
+    /// Snapshotted with a collection expression at construction. Capped in
+    /// two independent dimensions: breadth, at
     /// <see cref="SpecLimits.MaxListItemChildren"/> direct children, and
     /// depth, at <see cref="SpecLimits.MaxListNestingDepth"/> levels reachable
     /// through this item. Unbounded nesting recurses without a bound in both
     /// the renderer and the emitter and overflows the CLR stack; a stack
-    /// overflow cannot be caught, so the depth cap is the one control in
-    /// section 5.4 that a wrapped parser call cannot rescue.
+    /// overflow cannot be caught, so the depth cap is the one control here
+    /// that a wrapped parser call cannot rescue.
     /// </summary>
     public IReadOnlyList<ListItemSpec> Children
     {
