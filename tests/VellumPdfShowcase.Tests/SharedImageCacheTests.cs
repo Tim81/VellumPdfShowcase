@@ -34,6 +34,13 @@ namespace VellumPdfShowcase.Tests;
 /// <see cref="ImageSpec"/>'s own record equality; <see cref="Model.SpecLimits.MaxTotalAssetBytes"/>
 /// is the cap this measurement justifies, bounding the sum of every such
 /// distinct instance's bytes rather than relying on the cache to shrink it.
+/// NOTE: that test measures the OUTCOME (distinct instances are not
+/// deduplicated) but, on its own, cannot distinguish reference-identity
+/// keying from <see cref="ImageSpec"/>'s own record equality as the reason,
+/// because <see cref="ImageSpec.Bytes"/> is defensively cloned at
+/// construction; see the remark on <see cref="ImageSpec"/> itself, and
+/// <see cref="ImageSpecReferenceIdentityKeyingTests"/> for the guard that
+/// does discriminate the two.
 /// </remarks>
 public class SharedImageCacheTests
 {
@@ -92,11 +99,28 @@ public class SharedImageCacheTests
     /// (see the remark on <see cref="Generation.SpecRenderer"/>'s <c>BuildImage</c>
     /// for why), so it cannot and does not help here: each instance is
     /// decoded and embedded separately, exactly as every occurrence was
-    /// before this fix. This pins that this test suite would notice a change
-    /// that widened the cache to value equality (which would silently start
-    /// deduplicating these too, changing the displayed byte count here) as
-    /// much as it would notice the cache being removed.
+    /// before this fix.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this test does NOT, on its own, distinguish reference-identity
+    /// keying from value (record) equality keying as the reason distinct
+    /// instances go undeduplicated. <see cref="ImageSpec.Bytes"/> is
+    /// defensively cloned at construction (<see cref="Model.SpecLimits.ValidateAssetBytes"/>),
+    /// so two <see cref="ImageSpec"/> instances built from identical content
+    /// are ALSO never record-equal: the compiler-generated per-field
+    /// comparison a record performs for an array-typed field falls back to
+    /// reference equality on the two now-distinct cloned arrays. Reference
+    /// identity and record equality therefore agree on every outcome
+    /// reachable through <see cref="ImageSpec"/>'s own public constructor, so
+    /// this test would read identically (larger, undeduplicated output) if
+    /// the cache were silently widened to value equality; it cannot notice
+    /// that change the way its own remark previously claimed. The guard that
+    /// genuinely discriminates the two is
+    /// <see cref="ImageSpecReferenceIdentityKeyingTests"/>, which bypasses
+    /// the constructor's clone to construct two instances that ARE
+    /// record-equal while remaining distinct references, the one condition
+    /// under which the two rules can disagree for this type.
+    /// </remarks>
     [Fact]
     public void DistinctInstances_IdenticalBytes_CacheDoesNotHelp()
     {

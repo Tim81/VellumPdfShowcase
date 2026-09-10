@@ -271,6 +271,25 @@ public class DocumentSpecValidationTests
     /// which is exactly what this check catches and a presence-only check
     /// on the override cannot.
     /// </para>
+    /// <para>
+    /// The identical two blank instances are ALSO required to agree on
+    /// <c>GetHashCode()</c>, not merely on <c>Equals(object?)</c>: a type can
+    /// have a genuinely structural <c>Equals</c> paired with an
+    /// IDENTITY-based <c>GetHashCode</c> (for instance
+    /// <c>RuntimeHelpers.GetHashCode(this)</c>, or simply omitting the
+    /// override so it falls back to identity while <c>Equals</c> was
+    /// overridden on its own), which is a genuine Equals/GetHashCode
+    /// contract violation invisible to a check that only ever calls
+    /// <c>Equals</c>. Measured directly: adding such a member to
+    /// <see cref="TextStyleSpec"/> left every other test in this suite green,
+    /// because <see cref="Generation.SpecRenderer"/>'s style cache and
+    /// <see cref="Generation.SpecCodeEmitter"/>'s style hoisting are both
+    /// keyed on a <see cref="Dictionary{TKey,TValue}"/>, and a broken hash
+    /// degrades BOTH of them together, in the same direction (the renderer
+    /// stops reusing a cached style instance and the emitter stops hoisting
+    /// it), so the two sides' rendered bytes still agree and the round-trip
+    /// symmetry guard never sees the divergence.
+    /// </para>
     /// </summary>
     private static bool HasValueEquality(Type type, HashSet<Type>? visiting = null) =>
         HasValueEquality(type, visiting, out _);
@@ -441,6 +460,51 @@ public class DocumentSpecValidationTests
                     reason = $"{underlyingType}'s Equals override threw {ex.GetType().Name} ({ex.Message}) while " +
                         "comparing two blank (all-default-field) instances, rather than completing a genuine " +
                         "structural comparison.";
+                    return false;
+                }
+
+                // The two checks above establish only that Equals(object?)
+                // is structural. Nothing yet has looked at GetHashCode() at
+                // all, and a type can have a genuinely structural Equals
+                // paired with an IDENTITY-based GetHashCode (RuntimeHelpers.
+                // GetHashCode(this), or the inherited object.GetHashCode()
+                // default for a class whose override recomputes Equals but
+                // never overrides GetHashCode to match): blankA and blankB
+                // are two SEPARATELY ALLOCATED instances that the check above
+                // just proved Equal, so the Equals/GetHashCode contract
+                // requires their hash codes to agree too. A guard that never
+                // makes this comparison cannot see the hazard: SpecRenderer's
+                // style cache and SpecCodeEmitter's style hoisting are both
+                // Dictionary<TextStyleSpec, _> instances, so a broken hash
+                // degrades both consumers TOGETHER, in the same direction
+                // (the renderer stops reusing a cached style instance and the
+                // emitter stops hoisting it), and the rendered bytes on both
+                // sides still agree; the round-trip symmetry guard cannot see
+                // a divergence that never happens.
+                try
+                {
+                    if (blankA.GetHashCode() != blankB.GetHashCode())
+                    {
+                        reason = $"{underlyingType}'s GetHashCode() disagrees for two blank (all-default-field) " +
+                            "instances that its own Equals(object?) reports equal one line above, so GetHashCode is " +
+                            "not consistent with Equals. A Dictionary or HashSet keyed on this type can then fail " +
+                            "to find an entry stored under a different, value-equal instance, exactly what " +
+                            "SpecRenderer's style cache and SpecCodeEmitter's style hoisting both rely on never " +
+                            "happening.";
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Symmetric with the Equals blank-instance catch above,
+                    // for the identical reason: an override that DEREFERENCES
+                    // a field rather than merely reading it can throw on an
+                    // all-default blank instance even though it might behave
+                    // perfectly well on a real one. Not proven safe, so
+                    // unsafe.
+                    reason = $"{underlyingType}'s GetHashCode() threw {ex.GetType().Name} ({ex.Message}) while " +
+                        "hashing a blank (all-default-field) instance, rather than completing a genuine structural " +
+                        "hash.";
                     return false;
                 }
 
@@ -817,6 +881,80 @@ public class DocumentSpecValidationTests
         [Fact]
         public void StructuralEqualityOverride_IsAccepted() =>
             Assert.True(HasValueEquality(typeof(StructuralEqualityOverride)));
+
+        /// <summary>
+        /// The MEDIUM this guard closes: a genuinely structural
+        /// <c>Equals</c> (fields compared correctly, in both polarities, like
+        /// <see cref="StructuralEqualityOverride"/> above) paired with an
+        /// IDENTITY-based <c>GetHashCode</c>. Two separately allocated
+        /// instances holding the identical <see cref="Value"/> compare
+        /// Equal, exactly as a well-behaved override should, yet hash
+        /// differently, because each has its own object identity. Before the
+        /// fix, nothing in this guard ever called <c>GetHashCode</c> at all,
+        /// so this type passed unchallenged.
+        /// </summary>
+        /// <remarks>
+        /// Measured directly: adding a member of exactly this shape to
+        /// <see cref="TextStyleSpec"/> left all 406 pre-existing tests green.
+        /// <see cref="Generation.SpecRenderer"/>'s style cache and
+        /// <see cref="Generation.SpecCodeEmitter"/>'s style hoisting are both
+        /// <see cref="Dictionary{TKey,TValue}"/> instances keyed on
+        /// <see cref="TextStyleSpec"/>; a broken hash degrades both of them
+        /// TOGETHER, in the same direction (the renderer stops reusing a
+        /// cached style instance and the emitter stops hoisting it), so the
+        /// rendered bytes on both sides still agree and the round-trip
+        /// symmetry guard cannot see the divergence.
+        /// </remarks>
+        private sealed class StructuralEqualsIdentityHashCodeHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) =>
+                obj is StructuralEqualsIdentityHashCodeHazard other && Value.Equals(other.Value);
+
+            public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
+        }
+
+        [Fact]
+        public void StructuralEqualsIdentityHashCodeHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(StructuralEqualsIdentityHashCodeHazard)));
+
+        [Fact]
+        public void StructuralEqualsIdentityHashCodeHazard_RejectionReasonNamesHashDisagreement()
+        {
+            var isSafe = HasValueEquality(typeof(StructuralEqualsIdentityHashCodeHazard), visiting: null, out var reason);
+
+            Assert.False(isSafe);
+            Assert.NotNull(reason);
+            Assert.Contains("GetHashCode", reason, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The identical hazard one level down: a VALUE type (a struct, not
+        /// a class) with the same structural-Equals/identity-hash shape.
+        /// <see cref="RuntimeHelpers.GetHashCode(object)"/> boxes its
+        /// argument, so even calling it twice on the SAME logical struct
+        /// value through two separate boxing conversions yields two
+        /// different hashes; this is the struct counterpart to
+        /// <see cref="StructuralEqualsIdentityHashCodeHazard"/>, included
+        /// because the blank-instance behavioural check runs identically for
+        /// a struct with a custom override and a class with one (see the
+        /// remark on <see cref="AlwaysUnequalStructHazard"/> for why that
+        /// unification exists).
+        /// </summary>
+        private readonly struct StructuralEqualsIdentityHashCodeStructHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj) =>
+                obj is StructuralEqualsIdentityHashCodeStructHazard other && Value.Equals(other.Value);
+
+            public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
+        }
+
+        [Fact]
+        public void StructuralEqualsIdentityHashCodeStructHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(StructuralEqualsIdentityHashCodeStructHazard)));
 
         /// <summary>
         /// Plan section 3.4.0.1's own named example, verbatim: "a dash
@@ -1745,11 +1883,24 @@ public class AggregateAssetByteBudgetTests
     /// <summary>
     /// The companion negative case, matching <see cref="SharedImageCacheTests.DistinctInstances_IdenticalBytes_CacheDoesNotHelp"/>'s
     /// own pairing: the SAME byte-for-byte content as three DISTINCT
-    /// <see cref="ImageSpec"/> instances rather than one shared instance. This
-    /// must be rejected, proving the dedup is genuinely keyed by reference
-    /// identity rather than by content or by <see cref="ImageSpec"/>'s own
-    /// record equality.
+    /// <see cref="ImageSpec"/> instances rather than one shared instance.
+    /// This must be rejected: each of the three counts separately toward
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/>.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this does NOT, on its own, prove the dedup is keyed by
+    /// reference identity rather than by content or by <see cref="ImageSpec"/>'s
+    /// own record equality; it cannot, because <see cref="ImageSpec.Bytes"/>
+    /// is cloned at construction, so byte-for-byte identical content across
+    /// three separately constructed instances is ALSO never record-equal
+    /// (the array-typed <c>Bytes</c> field falls back to reference equality
+    /// on the three distinct clones). Every outcome reachable through
+    /// <see cref="ImageSpec"/>'s own public constructor is identical whether
+    /// the dedup rule is reference identity or record equality; this test
+    /// would read the same either way. See
+    /// <see cref="ImageSpecReferenceIdentityKeyingTests"/> for the guard that
+    /// genuinely discriminates the two rules.
+    /// </remarks>
     [Fact]
     public void DistinctImageInstances_IdenticalBytes_EachCountedSeparately_ExceedsLimit()
     {
@@ -1799,6 +1950,129 @@ public class AggregateAssetByteBudgetTests
 
         var exception = Assert.Throws<ArgumentException>(() => SpecRenderer.Render(spec));
         Assert.Contains("aggregate limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// Closes the LOW the review found: neither
+/// <see cref="AggregateAssetByteBudgetTests.DistinctImageInstances_IdenticalBytes_EachCountedSeparately_ExceedsLimit"/>
+/// nor <see cref="SharedImageCacheTests.DistinctInstances_IdenticalBytes_CacheDoesNotHelp"/> can actually prove
+/// that the dedup and the cache are keyed by REFERENCE IDENTITY rather than by <see cref="ImageSpec"/>'s own
+/// record equality, because <see cref="ImageSpec.Bytes"/> is cloned at construction
+/// (<see cref="SpecLimits.ValidateAssetBytes"/>): two <see cref="ImageSpec"/> instances built from byte-for-byte
+/// identical content are ALSO never record-equal, since the compiler-generated per-field comparison a record
+/// performs for an array-typed field falls back to reference equality on the two now-distinct cloned arrays.
+/// Reference identity and record equality therefore agree on every outcome reachable through
+/// <see cref="ImageSpec"/>'s own public constructor, and a reviewer measured this directly: replacing every
+/// <see cref="ReferenceEqualityComparer.Instance"/> the production code uses with the default comparer left all
+/// 406 tests green.
+/// </summary>
+/// <remarks>
+/// This is the one shape of test that CAN discriminate the two rules for <see cref="ImageSpec"/>: two instances
+/// that genuinely ARE record-equal (built by copying every field, including the identical <see cref="ImageSpec.Bytes"/>
+/// ARRAY REFERENCE, from a real instance into a second, separately allocated one via reflection, bypassing the
+/// constructor's clone entirely) while remaining two distinct objects. Record equality and reference-identity
+/// keying disagree on exactly this pair, which is the only condition under which they ever can for this type.
+/// <para>
+/// NOTE why closing this is worth the reflection rather than merely reannotating the two claims above: the
+/// aggregate asset cap (<see cref="DocumentSpec.ValidateAggregateAssetBytes"/>) deduplicates through the same
+/// <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/> helper the production comparer
+/// swap above targeted. If <see cref="ImageSpec.Bytes"/> ever stopped cloning, reference identity and record
+/// equality would stop agreeing on every reachable outcome, and a production change from
+/// <see cref="ReferenceEqualityComparer.Instance"/> to the default comparer would then silently start
+/// deduplicating BY CONTENT: two visitor-supplied images with identical bytes would count once instead of
+/// twice, widening the cap with every existing test still green, since none of the tests reachable through
+/// <see cref="ImageSpec"/>'s own constructor can see the difference. This guard is the one place that can.
+/// </para>
+/// </remarks>
+public class ImageSpecReferenceIdentityKeyingTests
+{
+    /// <summary>
+    /// Every one of <see cref="ImageSpec"/>'s own instance fields, walked the same way
+    /// <see cref="DocumentSpecValidationTests"/>'s own reflective equality guard does (declared fields at every
+    /// level of the inheritance chain, not merely <see cref="ImageSpec"/>'s own), since <see cref="ContentItemSpec"/>
+    /// is a non-sealed base and a future field it gains should be copied here too rather than silently left at
+    /// its zero-initialised default on the copy.
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetFields cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.BaseType losing DynamicallyAccessedMembers annotations across the walk cannot observe a member " +
+            "removed by the linker.")]
+    private static List<FieldInfo> AllInstanceFields(Type type)
+    {
+        List<FieldInfo> fields = [];
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            fields.AddRange(current.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// The one pair of <see cref="ImageSpec"/> instances that record equality and reference-identity keying can
+    /// disagree about: two SEPARATELY ALLOCATED instances sharing the identical <see cref="ImageSpec.Bytes"/>
+    /// ARRAY REFERENCE (not merely equal content), built by copying <paramref name="source"/>'s own field values,
+    /// verbatim, into a second instance constructed through <see cref="RuntimeHelpers.GetUninitializedObject"/>,
+    /// which runs no constructor and so performs no clone. <see cref="ImageSpec"/>'s own public constructor,
+    /// through <see cref="SpecLimits.ValidateAssetBytes"/>, can never produce this pair: every construction call
+    /// clones its own <c>Bytes</c> argument independently, so two instances built from the SAME source array
+    /// still end up holding two DIFFERENT stored arrays.
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "Type.GetFields cannot observe a member removed by the linker.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "Test-only reflection over this assembly's own types; never trimmed or published, so " +
+            "RuntimeHelpers.GetUninitializedObject cannot observe a member removed by the linker.")]
+    private static ImageSpec CloneAsDistinctButFieldIdenticalInstance(ImageSpec source)
+    {
+        var target = (ImageSpec)RuntimeHelpers.GetUninitializedObject(typeof(ImageSpec));
+
+        foreach (var field in AllInstanceFields(typeof(ImageSpec)))
+        {
+            field.SetValue(target, field.GetValue(source));
+        }
+
+        return target;
+    }
+
+    [Fact]
+    public void TwoInstancesSharingOneBytesArray_AreRecordEqual_ButKeyDistinctlyByReference()
+    {
+        var first = new ImageSpec { Format = ImageFormat.Png, Bytes = [1, 2, 3], Width = 10, Height = 10 };
+        var second = CloneAsDistinctButFieldIdenticalInstance(first);
+
+        Assert.NotSame(first, second);
+        Assert.Same(first.Bytes, second.Bytes);
+
+        // Precondition this test depends on: the two are genuinely record-equal, the one pairing
+        // ImageSpec's own constructor (which always clones Bytes) can never itself produce.
+        Assert.Equal(first, second);
+
+        // The production comparer (Generation.SpecCodeEmitter.DistinctContentImagesByReference and
+        // DocumentSpec.ValidateAggregateAssetBytes both key on this exact comparer): two distinct
+        // instances stay two distinct entries, even though they are record-equal.
+        var referenceKeyed = new HashSet<ImageSpec>(ReferenceEqualityComparer.Instance) { first, second };
+        Assert.Equal(2, referenceKeyed.Count);
+
+        // The counterfactual this guard exists to catch: the default comparer, which is ImageSpec's own
+        // record equality, WOULD collapse this exact pair into one entry. If production code were ever
+        // changed to use it, this assertion is what would turn red; the two tests referenced in this
+        // class's own summary would not.
+        var valueKeyed = new HashSet<ImageSpec> { first, second };
+        Assert.Single(valueKeyed);
     }
 }
 
