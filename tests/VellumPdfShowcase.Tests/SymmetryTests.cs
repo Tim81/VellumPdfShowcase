@@ -542,35 +542,44 @@ public class SymmetryGuardRuleTests
 /// </summary>
 public class AdversarialCorpusTests
 {
-    private static (bool RenderRejected, bool EmitRejected) Verdicts(DocumentSpec spec)
+    /// <summary>
+    /// The three outcomes a consumer can produce for a specification that
+    /// itself constructed successfully. Collapsing "accepted" and "refused at
+    /// run time" into one bucket is exactly what let this corpus's original
+    /// verdict helper pass on a specification neither consumer rejected,
+    /// while claiming to have found the documented asymmetry.
+    /// </summary>
+    private enum ConsumerVerdict
     {
-        var renderRejected = false;
-        var emitRejected = false;
+        /// <summary>The consumer produced output for this specification.</summary>
+        Accepted,
 
+        /// <summary>The consumer's own per-content-type or per-feature dispatch refused this specification as malformed, with an <see cref="ArgumentException"/>.</summary>
+        RejectedAsMalformed,
+
+        /// <summary>The specification constructed and passed dispatch, but the library itself refused it only at execution time, with some other exception.</summary>
+        RefusedAtRuntime,
+    }
+
+    private static ConsumerVerdict Verdict(Action action)
+    {
         try
         {
-            SpecRenderer.Render(spec);
+            action();
+            return ConsumerVerdict.Accepted;
         }
         catch (ArgumentException)
         {
-            renderRejected = true;
+            return ConsumerVerdict.RejectedAsMalformed;
         }
         catch (Exception)
         {
-            // Any other exception is not a rejection AS MALFORMED.
+            return ConsumerVerdict.RefusedAtRuntime;
         }
-
-        try
-        {
-            SpecCodeEmitter.Emit(spec);
-        }
-        catch (ArgumentException)
-        {
-            emitRejected = true;
-        }
-
-        return (renderRejected, emitRejected);
     }
+
+    private static (ConsumerVerdict Render, ConsumerVerdict Emit) Verdicts(DocumentSpec spec) =>
+        (Verdict(() => SpecRenderer.Render(spec)), Verdict(() => SpecCodeEmitter.Emit(spec)));
 
     private static IEnumerable<DocumentSpec> Corpus()
     {
@@ -588,13 +597,24 @@ public class AdversarialCorpusTests
     /// </summary>
     [Fact]
     public void Corpus_ContainsASpecificationBothConsumersReject() =>
-        Assert.Contains(Corpus().Select(Verdicts), verdict => verdict is (true, true));
+        Assert.Contains(Corpus().Select(Verdicts), verdict => verdict is (ConsumerVerdict.RejectedAsMalformed, ConsumerVerdict.RejectedAsMalformed));
 
     /// <summary>
-    /// And at least one must be the documented asymmetry, so that the guard is
-    /// also known not to misfire on the case it explicitly carves out.
+    /// And at least one must be the documented asymmetry NAMED in this file's
+    /// class remark: <see cref="SpecRenderer.Render"/> refusing at run time
+    /// something only execution can discover, while
+    /// <see cref="SpecCodeEmitter.Emit"/> succeeds. Neither outcome is a
+    /// rejection AS MALFORMED, so the previous two-state verdict (did either
+    /// consumer throw an <see cref="ArgumentException"/>) could not tell this
+    /// apart from a specification both consumers simply accept; it is
+    /// satisfied by <see cref="SharedStyleAcrossNestedStructureSpecification"/>
+    /// today, which is not an asymmetry at all. This assertion names the
+    /// exact three-way shape instead: Render refused at run time, Emit
+    /// accepted.
     /// </summary>
     [Fact]
     public void Corpus_ContainsADocumentedAsymmetry() =>
-        Assert.Contains(Corpus().Select(Verdicts), verdict => verdict is (false, false));
+        Assert.Contains(
+            Corpus().Select(Verdicts),
+            verdict => verdict is (ConsumerVerdict.RefusedAtRuntime, ConsumerVerdict.Accepted));
 }

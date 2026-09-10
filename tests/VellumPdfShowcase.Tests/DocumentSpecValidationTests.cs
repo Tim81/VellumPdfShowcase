@@ -401,7 +401,7 @@ public class DocumentSpecValidationTests
     private static bool ReportsInequalityOnSomeField(Type type)
     {
         var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var perturbable = 0;
+        var attempted = false;
 
         foreach (var field in fields)
         {
@@ -410,14 +410,30 @@ public class DocumentSpecValidationTests
                 continue;
             }
 
-            perturbable++;
+            object baseline;
+            object perturbed;
 
             try
             {
-                var baseline = RuntimeHelpers.GetUninitializedObject(type);
-                var perturbed = RuntimeHelpers.GetUninitializedObject(type);
+                baseline = RuntimeHelpers.GetUninitializedObject(type);
+                perturbed = RuntimeHelpers.GetUninitializedObject(type);
                 field.SetValue(perturbed, perturbedValue);
+            }
+            catch
+            {
+                // A field this technique cannot even construct or set
+                // proves nothing either way: keep looking.
+                continue;
+            }
 
+            // This field WAS perturbed. Whatever the override does with it
+            // from here counts toward the verdict, so a type with only this
+            // one perturbable field can no longer be waved through as
+            // "nothing was perturbable" below.
+            attempted = true;
+
+            try
+            {
                 if (!Equals(baseline, perturbed))
                 {
                     return true;
@@ -425,13 +441,21 @@ public class DocumentSpecValidationTests
             }
             catch
             {
-                // A field this technique cannot set, or an override that
-                // throws on these instances, proves nothing either way.
-                perturbable--;
+                // An override that THROWS while comparing a perturbed
+                // instance has not demonstrably noticed this field either:
+                // it is exactly as unsafe as one that silently returns
+                // true for it. Symmetric with the blank-instance check
+                // above, which treats a throw as "not proven safe, so
+                // unsafe" rather than as evidence of nothing. Previously
+                // this was caught by decrementing a shared counter back to
+                // the value it held before this field was tried, which let
+                // a type whose ONLY perturbable field throws here read as
+                // "nothing was perturbable" and be accepted; `attempted`
+                // stays true instead, so that outcome is now rejected.
             }
         }
 
-        return perturbable == 0;
+        return !attempted;
     }
 
     /// <summary>A value distinguishable from <paramref name="fieldType"/>'s default, when one can be produced.</summary>
@@ -498,6 +522,42 @@ public class DocumentSpecValidationTests
             {
                 value = null;
                 return false;
+            }
+        }
+
+        if (underlying.IsValueType)
+        {
+            // A non-primitive value type: ColorRgb and EdgeInsets, already
+            // members of this model, are exactly this shape, and neither
+            // was reachable by any arm above. Build a blank instance and
+            // perturb every one of ITS OWN fields it is possible to
+            // perturb, recursively, so a hazard type with a field of this
+            // shape can no longer hide behind "this technique produced no
+            // perturbed value" the way it could when this arm was missing.
+            try
+            {
+                var candidate = RuntimeHelpers.GetUninitializedObject(underlying);
+                var innerFields = underlying.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var perturbedAnyInnerField = false;
+
+                foreach (var innerField in innerFields)
+                {
+                    if (TryPerturbedValue(innerField.FieldType, out var innerValue))
+                    {
+                        innerField.SetValue(candidate, innerValue);
+                        perturbedAnyInnerField = true;
+                    }
+                }
+
+                if (perturbedAnyInnerField)
+                {
+                    value = candidate;
+                    return true;
+                }
+            }
+            catch
+            {
+                // Falls through to the "no perturbed value" result below.
             }
         }
 
@@ -693,6 +753,93 @@ public class DocumentSpecValidationTests
         [Fact]
         public void DereferencingEqualityOverrideHazard_IsRejectedRatherThanThrowing() =>
             Assert.False(HasValueEquality(typeof(DereferencingEqualityOverrideHazard)));
+
+        /// <summary>
+        /// A value type, not a class: the exact shape <see cref="ColorRgb"/>
+        /// and <see cref="EdgeInsets"/> already have, and that this codebase's
+        /// two existing model members of that shape share with any future
+        /// one. Its own <see langword="record struct"/> equality is genuinely
+        /// structural, included as the counterpart proof alongside the hazard
+        /// below: the guard must accept a well-behaved non-primitive value
+        /// type field, not merely tolerate one.
+        /// </summary>
+        private readonly record struct NonPrimitiveValueTypeField(double X, double Y);
+
+        /// <summary>
+        /// The hazard <see cref="ReportsInequalityOnSomeField"/>'s missing
+        /// arm for a non-primitive value type let through: a class with one
+        /// field of exactly <see cref="NonPrimitiveValueTypeField"/>'s shape,
+        /// and an override that reports every instance of its own type equal
+        /// regardless of that field's contents.
+        /// </summary>
+        /// <remarks>
+        /// Before <see cref="TryPerturbedValue"/> gained its non-primitive
+        /// value type arm, this field could not be perturbed at all: the
+        /// blank-instance check passed (the override always returns
+        /// <see langword="true"/> for its own type), and
+        /// <see cref="ReportsInequalityOnSomeField"/> then found no
+        /// perturbable field and returned <see langword="true"/> vacuously,
+        /// accepting this hazard. <see cref="ColorRgb"/> and
+        /// <see cref="EdgeInsets"/> are already members of this model and
+        /// have exactly this shape, so a hazard type built from one was
+        /// accepted unchallenged, which is precisely the divergence this
+        /// guard exists to catch: the renderer's style cache and the
+        /// emitter's hoisting would collapse two DIFFERENT styles into one.
+        /// </remarks>
+        private sealed class NonPrimitiveValueTypeFieldAlwaysEqualHazard
+        {
+            public NonPrimitiveValueTypeField Value { get; init; }
+
+            public override bool Equals(object? obj) => obj is NonPrimitiveValueTypeFieldAlwaysEqualHazard;
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void NonPrimitiveValueTypeField_IsAccepted() =>
+            Assert.True(HasValueEquality(typeof(NonPrimitiveValueTypeField)));
+
+        [Fact]
+        public void NonPrimitiveValueTypeFieldAlwaysEqualHazard_IsRejected() =>
+            Assert.False(HasValueEquality(typeof(NonPrimitiveValueTypeFieldAlwaysEqualHazard)));
+
+        /// <summary>
+        /// The second gap in <see cref="ReportsInequalityOnSomeField"/>: an
+        /// override that THROWS while comparing a perturbed instance, for
+        /// its only perturbable field. The blank-instance check above this
+        /// one, comparing two untouched instances where <see cref="Value"/>
+        /// is <see langword="0"/> on both, does not throw and does not
+        /// disagree, so it passes that check and reaches the perturbation
+        /// check.
+        /// </summary>
+        /// <remarks>
+        /// Before the fix, the perturbation check's <c>catch</c> block
+        /// decremented a shared "how many fields are perturbable" counter
+        /// back to the value it held before this field was tried, so a type
+        /// whose only perturbable field throws here read as "nothing was
+        /// perturbable" and was accepted vacuously: precisely the polarity
+        /// the blank-instance check's own <c>catch</c> rejects one line
+        /// above it, for the identical reason (an override that cannot even
+        /// be evaluated on these instances is not proven safe).
+        /// </remarks>
+        private sealed class EqualsThrowsOnPerturbedFieldHazard
+        {
+            public double Value { get; init; }
+
+            public override bool Equals(object? obj)
+            {
+                var other = (EqualsThrowsOnPerturbedFieldHazard)obj!;
+                return Value != 0 || other.Value != 0
+                    ? throw new InvalidOperationException("Equals cannot compare a perturbed instance.")
+                    : true;
+            }
+
+            public override int GetHashCode() => 0;
+        }
+
+        [Fact]
+        public void EqualsThrowsOnPerturbedFieldHazard_IsRejectedRatherThanAccepted() =>
+            Assert.False(HasValueEquality(typeof(EqualsThrowsOnPerturbedFieldHazard)));
     }
 }
 
@@ -1681,6 +1828,18 @@ public class EnumMemberValidationTests
             };
 
             Assert.Equal(conformance, spec.Conformance);
+        }
+
+        foreach (var kind in Enum.GetValues<FontKind>())
+        {
+            var fontSpec = new FontSpec { Kind = kind, Standard14Face = Standard14.Helvetica, EmbeddedFontIndex = 0 };
+            Assert.Equal(kind, fontSpec.Kind);
+        }
+
+        foreach (var format in Enum.GetValues<ImageFormat>())
+        {
+            var imageSpec = new ImageSpec { Format = format, Bytes = [1, 2, 3, 4] };
+            Assert.Equal(format, imageSpec.Format);
         }
     }
 

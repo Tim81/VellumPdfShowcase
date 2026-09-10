@@ -28,6 +28,16 @@ namespace VellumPdfShowcase.Tests;
 /// that silently stops covering the code it exists for is worth a test of its
 /// own.
 /// </para>
+/// <para>
+/// NOTE: <see cref="EveryApplicationType_LivesInAKnownNamespace"/> below does
+/// NOT close the whole case its own summary once claimed. It catches a type
+/// extracted into a namespace NONE of the known namespaces name; it does not
+/// catch one extracted into a DIFFERENT known namespace, such as
+/// <c>VellumPdfShowcase.Web.Model</c>, which is the likeliest destination for
+/// a helper pulled out of <see cref="SpecRenderer"/>'s own namespace and
+/// leaves both that test and the gate green. See that test's own remark for
+/// what closes the rest of the gap, and what does not.
+/// </para>
 /// </remarks>
 public class CoverageScopeTests
 {
@@ -114,10 +124,35 @@ public class CoverageScopeTests
     }
 
     /// <summary>
-    /// And the case the script cannot see at all: a type in the application
-    /// assembly that belongs to no namespace the gate or this test knows about,
-    /// which is what an extraction OUT of the instrumented namespace produces.
+    /// Catches a type in the application assembly that belongs to no
+    /// namespace the gate or this test knows about, which is what an
+    /// extraction OUT of every known namespace produces.
     /// </summary>
+    /// <remarks>
+    /// NOTE: this closes only PART of "extracted out of the instrumented
+    /// namespace", not the whole of it, despite what this method's summary
+    /// once claimed. <see cref="KnownNamespaces"/> lists several namespaces,
+    /// not only <c>VellumPdfShowcase.Web.Generation</c>, so a type moved (or
+    /// newly written) directly into another one of them, most plausibly
+    /// <c>VellumPdfShowcase.Web.Model</c>, still lives in a KNOWN namespace
+    /// and passes this check even though it now lives outside the one the
+    /// branch-coverage gate instruments. Demonstrated directly: adding a
+    /// public helper to <c>VellumPdfShowcase.Web.Model</c> leaves both this
+    /// test and the gate green.
+    /// <para>
+    /// Relocating an EXISTING <c>VellumPdfShowcase.Web.Generation</c> type
+    /// elsewhere is still caught, but by
+    /// <see cref="GateRoster_MatchesTheInstrumentedNamespace"/> above, not by
+    /// this test: that type disappears from the roster comparison's
+    /// "declared" side the moment its namespace changes, regardless of where
+    /// it goes. What neither test catches is a helper authored directly in
+    /// another known namespace, never having lived in
+    /// <c>VellumPdfShowcase.Web.Generation</c> at all. Closing that would
+    /// require knowing, for a given type, whether its logic BELONGS to the
+    /// generation path, which is a judgement this reflection-based pair of
+    /// tests has no way to make.
+    /// </para>
+    /// </remarks>
     [Fact]
     [UnconditionalSuppressMessage(
         "Trimming",

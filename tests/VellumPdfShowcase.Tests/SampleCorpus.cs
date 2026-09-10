@@ -109,4 +109,62 @@ public class SampleCorpusTests
 
         Assert.Equal(declared.ToHashSet(StringComparer.Ordinal), SampleCorpus.Names().ToHashSet(StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// The fixed roster of every sample <see cref="DocumentSpecSamples"/> is
+    /// expected to declare, named explicitly with <see langword="nameof"/>
+    /// rather than derived by the same reflection rule
+    /// <see cref="SampleCorpus"/> itself uses. This is the floor
+    /// <see cref="EveryPublicSampleFactory_IsDiscovered"/> cannot be, because
+    /// both of that test's sides filter with <see cref="BindingFlags.Public"/>
+    /// and so move together: demoting a factory to <see langword="internal"/>
+    /// removes it from BOTH sides at once, and the equality still holds.
+    /// </summary>
+    /// <remarks>
+    /// A demotion to <see langword="internal"/> is caught here because
+    /// <see langword="nameof"/> only requires the member to be accessible from
+    /// THIS type, which is in the same assembly as
+    /// <see cref="DocumentSpecSamples"/> and so can still name an internal
+    /// member; <see cref="SampleCorpus.Names"/> filters with
+    /// <see cref="BindingFlags.Public"/> and so drops it, and the two sets
+    /// stop matching. A rename or deletion is caught even earlier, as a BUILD
+    /// failure: <see langword="nameof"/> stops compiling the moment the name
+    /// it names no longer exists, exactly the discipline the nineteen
+    /// hand-written call sites this corpus replaced once provided.
+    /// <para>
+    /// NOTE: adding a legitimate new sample to <see cref="DocumentSpecSamples"/>
+    /// means adding its name here too. That is deliberate, not an oversight:
+    /// naming every member explicitly, rather than deriving the roster from
+    /// any predicate, is the only way this list can notice one going missing
+    /// without also being blind to it going missing for the same reason.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Corpus_ContainsExactlyTheExpectedRoster()
+    {
+        string[] expected =
+        [
+            nameof(DocumentSpecSamples.EveryContentItemTypeFullyCustomised),
+            nameof(DocumentSpecSamples.EveryContentItemTypeAtDefault),
+            nameof(DocumentSpecSamples.PdfA2bWithOutputIntent),
+            nameof(DocumentSpecSamples.Encrypted),
+            nameof(DocumentSpecSamples.MultipleListsTablesAndParagraphs),
+            nameof(DocumentSpecSamples.PdfA2uWithOutputIntent),
+            nameof(DocumentSpecSamples.ControlCharactersAndLineSeparators),
+            nameof(DocumentSpecSamples.SharedAndValueEqualRunStyles),
+            nameof(DocumentSpecSamples.AdditionalCoverage),
+            nameof(DocumentSpecSamples.PdfA2aWithOutputIntent),
+            nameof(DocumentSpecSamples.PdfUA1WithOutputIntent),
+            nameof(DocumentSpecSamples.EncryptedNoPermissions),
+            nameof(DocumentSpecSamples.EncryptedOwnerPasswordOnly),
+            nameof(DocumentSpecSamples.EncryptedNoOwnerPasswordUnrestricted),
+            nameof(DocumentSpecSamples.PlainTextUsesDocumentDefault),
+            nameof(DocumentSpecSamples.CmykOutputIntent),
+            nameof(DocumentSpecSamples.RemainingBranchCoverage),
+            nameof(DocumentSpecSamples.RemainingEmitterBranchCoverage),
+            nameof(DocumentSpecSamples.FinalEmitterBranchCoverage),
+        ];
+
+        Assert.Equal(expected.ToHashSet(StringComparer.Ordinal), SampleCorpus.Names().ToHashSet(StringComparer.Ordinal));
+    }
 }
