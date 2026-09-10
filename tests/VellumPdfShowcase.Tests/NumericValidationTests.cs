@@ -1105,7 +1105,7 @@ public class SpecRendererExceptionUniformityTests
 }
 
 /// <summary>
-/// Guards round ten Finding 1: a running band is laid out once per page, so
+/// A running band is laid out once per page, so
 /// <see cref="RunningBandSpec.Template"/>'s length is multiplied by page
 /// count, a multiplication <see cref="SpecLimits.MaxTotalTextLength"/> and
 /// <see cref="SpecLimits.MaxWalkedNodes"/> cannot see because
@@ -1148,7 +1148,7 @@ public class RunningBandTemplateCapTests
     }
 
     /// <summary>
-    /// The exact shape the coordinator measured Finding 1 against: a 20,000
+    /// The exact shape used to measure the running band template cap's cost: a 20,000
     /// by 260 point page, 55-point margins, the 36-point/50-point-leading
     /// style, one list of 1,650 items each with two children, and both a
     /// header and a footer with <see cref="RunningBandSpec.Height"/> set to
@@ -1203,5 +1203,97 @@ public class RunningBandTemplateCapTests
             $"Rendering took {sw.ElapsedMilliseconds} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
             "about 226 ms; a template anywhere near MaxTextLength (100,000) on this same shape takes about " +
             "5,518 ms, so a budget of 2,000 ms catches a removed or substantially widened cap.");
+    }
+
+    /// <summary>
+    /// No test elsewhere in this repository sets <see cref="TextStyleSpec.LinkUri"/>
+    /// on a <see cref="RunningBandSpec.Style"/> at all, yet the remark on
+    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> depends entirely
+    /// on the library never turning such a link into a per-page annotation.
+    /// If it ever did, a maximal <see cref="TextStyleSpec.LinkUri"/>
+    /// (<see cref="SpecLimits.MaxUriLength"/>, 2,048 characters) on a header
+    /// or footer style would be multiplied by page count exactly as an
+    /// unbounded <see cref="RunningBandSpec.Template"/> once was, admitting
+    /// up to 2,048 characters times roughly eleven thousand pages with
+    /// nothing in this file positioned to catch it.
+    /// </summary>
+    /// <remarks>
+    /// This renders the same multi-page document with and without a maximal
+    /// <see cref="TextStyleSpec.LinkUri"/> on the footer style and asserts
+    /// the two outputs normalize to identical text. A raw byte comparison
+    /// cannot be used: two renders are never byte-identical, because the
+    /// library writes a random document identifier on every render (see
+    /// <see cref="PdfNormalization"/>), so the comparison below goes through
+    /// that normalization rather than through the raw bytes. If the library
+    /// ever starts emitting a per-page link annotation, the two normalized
+    /// outputs stop matching and this turns red, rather than the exemption
+    /// remaining an untested assumption.
+    /// </remarks>
+    [Fact]
+    public void MaximalLinkUriOnFooterStyle_AddsNothingAcrossManyPages()
+    {
+        var bodyStyle = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), FontSize = 36, Leading = 50 };
+
+        List<ListItemSpec> items = [];
+        for (var i = 0; i < 80; i++)
+        {
+            items.Add(new ListItemSpec { Text = "W" });
+        }
+
+        var linkUri = "https://example.com/" + new string('a', SpecLimits.MaxUriLength - "https://example.com/".Length);
+        Assert.Equal(SpecLimits.MaxUriLength, linkUri.Length);
+
+        DocumentSpec Build(string? footerLinkUri)
+        {
+            var footerStyle = new TextStyleSpec
+            {
+                Font = FontSpec.FromStandard14(Standard14.Helvetica),
+                FontSize = 36,
+                Leading = 50,
+                LinkUri = footerLinkUri,
+            };
+
+            return new DocumentSpec
+            {
+                Page = new PageSizeSpec(200, 200),
+                Margins = new EdgeInsets(20),
+                DefaultTextStyle = bodyStyle,
+                Content = [new ListSpec { Style = ListStyle.Unordered, DefaultStyle = bodyStyle, Items = items }],
+                Footer = new RunningBandSpec
+                {
+                    Template = "Page {page} of {pages}",
+                    Style = footerStyle,
+                    Height = 30,
+                },
+            };
+        }
+
+        var withoutLink = PdfNormalization.Normalize(SpecRenderer.Render(Build(null)));
+        var withLink = PdfNormalization.Normalize(SpecRenderer.Render(Build(linkUri)));
+
+        Assert.Equal(withoutLink, withLink);
+    }
+}
+
+/// <summary>
+/// <see cref="ImageSignature.Matches"/>'s defensive default arm is
+/// unreachable through any <see cref="DocumentSpec"/>, because
+/// <see cref="ImageSpec.Format"/> validates against the same
+/// <see cref="ImageFormat"/> enumeration at construction, so no
+/// specification this model admits can carry an undefined value there. That
+/// also puts it outside the branch coverage gate in
+/// <c>eng/check-emitter-branch-coverage.ps1</c>, which instruments only the
+/// <c>VellumPdfShowcase.Web.Generation</c> namespace, while
+/// <see cref="ImageSignature"/> lives in <c>VellumPdfShowcase.Web.Model</c>.
+/// <see cref="ImageSignature.Matches"/> is public, so it can be, and is,
+/// exercised directly here rather than left as the one branch in the
+/// repository that no test reaches and no gate measures.
+/// </summary>
+public class ImageSignatureTests
+{
+    [Fact]
+    public void UndefinedFormat_ThrowsArgumentOutOfRangeException()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => ImageSignature.Matches((ImageFormat)99, [0x00]));
     }
 }

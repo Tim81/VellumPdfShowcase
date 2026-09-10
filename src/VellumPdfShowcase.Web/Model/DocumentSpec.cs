@@ -185,10 +185,15 @@ public sealed record DocumentSpec
     /// per page either. For the link specifically this was verified rather
     /// than assumed: a running band whose style carries a maximal-length
     /// (<see cref="SpecLimits.MaxUriLength"/>, 2,048)
-    /// <see cref="TextStyleSpec.LinkUri"/> renders byte-for-byte identical
-    /// output to the same band with none, across the same 4,950-page
-    /// specification, because the library does not turn it into a per-page
-    /// link annotation. <see cref="SpecLimits.MaxTextLength"/> (or
+    /// <see cref="TextStyleSpec.LinkUri"/> renders output of IDENTICAL
+    /// LENGTH to the same band with none, across a footer-only specification
+    /// that renders 2,475 pages, because the library does not turn it into a
+    /// per-page link annotation. NOTE: this is a length comparison, not a
+    /// byte-for-byte one; two renders of the same specification are never
+    /// byte-identical, because the library writes a random document
+    /// identifier on every render. See the remark on
+    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the figure
+    /// and the test that guards it. <see cref="SpecLimits.MaxTextLength"/> (or
     /// <see cref="SpecLimits.MaxUriLength"/>, for a link) alone already
     /// bounds each of these individually, and that bound cannot be
     /// out-multiplied by anything reachable from a single occurrence or by
