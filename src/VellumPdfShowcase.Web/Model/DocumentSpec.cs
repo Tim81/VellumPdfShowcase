@@ -1763,6 +1763,15 @@ public sealed record PieChartSpec : ContentItemSpec
             throw new ArgumentException("The sum of pie slice values must be positive; a chart whose slices sum to zero renders nothing.", nameof(Slices));
         }
 
+        // Each slice is individually finite, which does not make the total
+        // finite: the per-slice ceiling is double.MaxValue, so two slices are
+        // already enough to overflow to positive infinity, and infinity passes
+        // the positivity check above. Every consumer divides by this total.
+        if (!double.IsFinite(sum))
+        {
+            throw new ArgumentException("The sum of pie slice values must be finite; these slices overflow when added together.", nameof(Slices));
+        }
+
         return [.. value];
     }
 }

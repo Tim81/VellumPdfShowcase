@@ -1671,6 +1671,44 @@ public class SpecSizeLimitTests
         Assert.Contains("slice", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Each slice value is validated against a ceiling of
+    /// <see cref="double.MaxValue"/>, so every slice here is individually
+    /// legal, and yet their total is not a number any consumer can divide by.
+    /// The positivity check alone admits this, since positive infinity is
+    /// greater than zero.
+    /// </summary>
+    [Fact]
+    public void PieChartSpec_SliceValuesSummingToInfinity_ThrowsAtConstruction()
+    {
+        List<PieSlice> slices =
+        [
+            new PieSlice(double.MaxValue, ColorRgb.Black),
+            new PieSlice(double.MaxValue, ColorRgb.Black),
+        ];
+
+        Assert.All(slices, slice => Assert.True(double.IsFinite(slice.Value)));
+
+        var exception = Assert.Throws<ArgumentException>(() => new PieChartSpec { Diameter = 10, Slices = slices });
+        Assert.Contains("finite", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The negative control for the check above: a total that is merely large
+    /// stays acceptable, so the new rule rejects overflow rather than size.
+    /// </summary>
+    [Fact]
+    public void PieChartSpec_SliceValuesSummingToALargeFiniteTotal_Constructs()
+    {
+        var chart = new PieChartSpec
+        {
+            Diameter = 10,
+            Slices = [new PieSlice(double.MaxValue, ColorRgb.Black)],
+        };
+
+        Assert.Single(chart.Slices);
+    }
+
     [Fact]
     public void HeadingSpec_TextBeyondLimit_ThrowsAtConstruction()
     {
