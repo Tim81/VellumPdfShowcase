@@ -847,7 +847,7 @@ public static class SpecCodeEmitter
                 initializers.Add($"LineWidth = {Num(lineSeparatorSpec.LineWidth)}");
             }
 
-            if (!lineSeparatorSpec.Color.Equals(ColorRgb.Black))
+            if (!IsColorBitwiseIdentical(lineSeparatorSpec.Color, ColorRgb.Black))
             {
                 initializers.Add($"Color = {EmitColor(lineSeparatorSpec.Color)}");
             }
@@ -1383,7 +1383,7 @@ public static class SpecCodeEmitter
             properties.Add($"Leading = {Num(leading)}");
         }
 
-        if (!spec.Color.Equals(ColorRgb.Black))
+        if (!IsColorBitwiseIdentical(spec.Color, ColorRgb.Black))
         {
             properties.Add($"Color = {EmitColor(spec.Color)}");
         }
@@ -1397,14 +1397,58 @@ public static class SpecCodeEmitter
     }
 
     private static string EmitEdgeInsets(EdgeInsets insets) =>
-        insets.Top.Equals(insets.Right) && insets.Right.Equals(insets.Bottom) && insets.Bottom.Equals(insets.Left)
+        IsBitwiseIdentical(insets.Top, insets.Right) && IsBitwiseIdentical(insets.Right, insets.Bottom) && IsBitwiseIdentical(insets.Bottom, insets.Left)
             ? $"new EdgeInsets({Num(insets.Top)})"
             : $"new EdgeInsets({Num(insets.Top)}, {Num(insets.Right)}, {Num(insets.Bottom)}, {Num(insets.Left)})";
 
     private static string EmitColor(ColorRgb color) =>
         $"new ColorRgb({Num(color.R)}, {Num(color.G)}, {Num(color.B)})";
 
-    private static string Num(double value) => value.ToString(CultureInfo.InvariantCulture);
+    /// <summary>
+    /// True when <paramref name="a"/> and <paramref name="b"/> are BIT-IDENTICAL,
+    /// distinguishing positive from negative zero where <see cref="double.Equals(double)"/>,
+    /// and the <c>==</c> operator it defers to for a non-NaN operand, do not:
+    /// <c>(-0.0).Equals(0.0)</c> and <c>-0.0 == 0.0</c> are both <see langword="true"/>.
+    /// Deciding what to OMIT or COLLAPSE in the emitted C# on that equality would
+    /// let a stored negative zero be treated as identical to a positive-zero
+    /// default it is not, which is exactly the omission half of the divergence
+    /// <see cref="Num"/>'s own remark describes; the formatting half is fixed
+    /// there. No NaN case is needed here: every double this method compares has
+    /// already passed <see cref="SpecLimits.ValidateFinite"/> or one of its
+    /// callers, so NaN never reaches it.
+    /// </summary>
+    private static bool IsBitwiseIdentical(double a, double b) =>
+        BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
+
+    /// <summary>Component-wise <see cref="IsBitwiseIdentical(double, double)"/> for a <see cref="ColorRgb"/>, used wherever a colour is compared against a default to decide whether to omit it from the emitted C#.</summary>
+    private static bool IsColorBitwiseIdentical(ColorRgb a, ColorRgb b) =>
+        IsBitwiseIdentical(a.R, b.R) && IsBitwiseIdentical(a.G, b.G) && IsBitwiseIdentical(a.B, b.B);
+
+    /// <summary>
+    /// Renders <paramref name="value"/> as a C# <see langword="double"/>
+    /// literal. <see cref="double.ToString(IFormatProvider?)"/> writes an
+    /// integer-valued double with no decimal point or exponent, for instance
+    /// <c>5</c> for <c>5.0</c>; that text is read back as the INTEGER literal
+    /// <c>5</c>, which implicitly converts to <c>5.0</c> without incident,
+    /// because a positive (or ordinarily negative) integer has only one
+    /// floating-point value to become. Negative zero does not: <c>value.ToString()</c>
+    /// on <c>-0.0</c> is the text <c>-0</c>, which C# parses as unary minus
+    /// applied to the INTEGER literal <c>0</c>, and negating the integer zero
+    /// stays the integer zero, so the implicit conversion that follows produces
+    /// POSITIVE zero, silently losing the sign <see cref="double.IsNegative(double)"/>
+    /// reports on the stored value. MEASURED: before this fix, a
+    /// <see cref="Model.LineSeparatorSpec.LineWidth"/> of <c>-0.0</c> emitted
+    /// the text <c>LineWidth = -0,</c>, which evaluates to <c>+0.0</c>. This is
+    /// avoided by writing negative zero as the explicit double literal
+    /// <c>-0.0</c> instead, which negates the double literal <c>0.0</c> rather
+    /// than an integer one, and so evaluates to <c>-0.0</c> under IEEE 754
+    /// arithmetic; <c>NegativeZeroFormattingTests</c> in the test project
+    /// proves this via Roslyn rather than assuming it. Every other double this
+    /// model stores is unaffected: no other value's <see cref="double.ToString(IFormatProvider?)"/>
+    /// text is ambiguous between an integer and a floating-point literal.
+    /// </summary>
+    private static string Num(double value) =>
+        value == 0 && double.IsNegative(value) ? "-0.0" : value.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Renders <paramref name="value"/> as a C# string literal. Beyond the

@@ -1711,6 +1711,21 @@ public sealed record PieChartSpec : ContentItemSpec
 
     public bool Decorative { get; init; }
 
+    /// <summary>
+    /// Per-slice checks are cross-checkable against <see cref="Slices"/> alone,
+    /// with none of the ordering problem that forces the embedded-font and
+    /// aggregate-asset checks to be deferred to <see cref="DocumentSpec"/>'s own
+    /// validation, so the sum is checked here too, at THIS record's own
+    /// construction. Without it, a chart whose slice values sum to zero
+    /// constructs successfully and then always fails at render, with the
+    /// library's own message, "The sum of pie slice values must be positive.",
+    /// measured directly against the shipped <c>VellumPdf.Layout</c> package.
+    /// NOTE: the library carries its own version of this same rejection for a
+    /// future major release, deferred there because rejecting a value that
+    /// currently renders would turn a working document into an exception; that
+    /// reasoning does not apply here, because a chart summing to zero renders
+    /// nothing today, it throws.
+    /// </summary>
     private static IReadOnlyList<PieSlice> ValidateSlices(IReadOnlyList<PieSlice> value)
     {
         ArgumentNullException.ThrowIfNull(value, nameof(Slices));
@@ -1725,6 +1740,7 @@ public sealed record PieChartSpec : ContentItemSpec
             throw new ArgumentException($"A pie chart must not have more than {SpecLimits.MaxChartSlices} slices; got {value.Count}.", nameof(Slices));
         }
 
+        var sum = 0.0;
         foreach (var slice in value)
         {
             // Matches the library's own contract on PieSlice.Value ("must be
@@ -1738,6 +1754,13 @@ public sealed record PieChartSpec : ContentItemSpec
             {
                 SpecLimits.ValidateString(slice.Label, SpecLimits.MaxTextLength, nameof(Slices));
             }
+
+            sum += slice.Value;
+        }
+
+        if (sum <= 0)
+        {
+            throw new ArgumentException("The sum of pie slice values must be positive; a chart whose slices sum to zero renders nothing.", nameof(Slices));
         }
 
         return [.. value];

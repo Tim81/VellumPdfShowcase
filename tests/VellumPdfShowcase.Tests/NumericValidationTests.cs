@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis.CSharp.Scripting;
 using VellumPdf.Encryption;
 using VellumPdf.Fonts;
 using VellumPdf.Layout.Core;
@@ -679,6 +680,36 @@ public class PieChartNumericValidationTests
         Assert.Throws<ArgumentException>(() =>
             new PieChartSpec { Diameter = 100, Slices = [new PieSlice(1, ColorRgb.Black, new string('a', SpecLimits.MaxTextLength + 1))] });
     }
+
+    /// <summary>
+    /// Measured directly against the shipped <c>VellumPdf.Layout</c> 2.3.1
+    /// package: a <see cref="PieChartSpec"/> whose slice values sum to zero
+    /// constructed successfully before this fix and then always failed at
+    /// <see cref="SpecRenderer.Render"/> with the library's own message, "The
+    /// sum of pie slice values must be positive.". Two zero-value slices are
+    /// each individually legal (<see cref="PieSlice.Value"/> only requires
+    /// non-negative), so only the SUM check below catches this.
+    /// </summary>
+    [Fact]
+    public void SliceValuesSumToZero_ThrowsAtConstruction()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new PieChartSpec { Diameter = 100, Slices = [new PieSlice(0, ColorRgb.Black), new PieSlice(0, ColorRgb.Black)] });
+
+        Assert.Contains("positive", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The floor this check must not go below: one slice at zero beside one
+    /// slice carrying a positive value sums to a positive number and must
+    /// still construct.
+    /// </summary>
+    [Fact]
+    public void SliceValuesSumToPositive_WithOneZeroSlice_Constructs()
+    {
+        var spec = new PieChartSpec { Diameter = 100, Slices = [new PieSlice(0, ColorRgb.Black), new PieSlice(1, ColorRgb.Black)] };
+        Assert.Equal(2, spec.Slices.Count);
+    }
 }
 
 public class TableCellSpanValidationTests
@@ -1314,5 +1345,207 @@ public class ImageSignatureTests
     public void NullBytes_ThrowsArgumentNullException(ImageFormat format)
     {
         Assert.Throws<ArgumentNullException>(() => ImageSignature.Matches(format, null!));
+    }
+}
+
+/// <summary>
+/// Guards the MEDIUM fix: <see cref="SpecLimits.ValidateRange(double, double, double, string)"/>
+/// admits <c>-0.0</c> wherever the lower bound is <c>0</c>, because
+/// <c>-0.0 &lt; 0</c> is <see langword="false"/>, and the STORED value keeps
+/// its sign (<see cref="double.IsNegative(double)"/> on it returns
+/// <see langword="true"/>). Before this fix, <c>SpecCodeEmitter</c>'s number
+/// formatter wrote that stored value as the bare text <c>-0</c>, which C#
+/// reads as unary minus on the INTEGER literal <c>0</c> and so evaluates to
+/// POSITIVE zero once implicitly converted to <see langword="double"/>: the
+/// emitted snippet built a document that differed from the one
+/// <see cref="SpecRenderer"/> rendered from the identical
+/// <see cref="DocumentSpec"/>, for every member below. Two further paths hid
+/// the same value entirely, both by using ordinary double equality
+/// (<c>-0.0 == 0.0</c>) to decide what to omit or collapse: <see cref="ColorRgb"/>
+/// equality, so an all-negative-zero colour equal to a positive-zero default
+/// was dropped from the snippet outright; and the <see cref="EdgeInsets"/>
+/// uniform-component check, so a margin mixing positive and negative zero
+/// collapsed to the single-argument constructor form, losing every
+/// component's sign but the first. Each assertion below names the exact text
+/// the fix requires, so it fails immediately, and specifically, if any of
+/// these regresses.
+/// </summary>
+public class NegativeZeroFormattingTests
+{
+    private static TextStyleSpec Style() => new() { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+
+    private static byte[] OnePixelPng { get; } = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+
+    /// <summary>
+    /// The language-level claim the emitter's number formatter depends on,
+    /// proven with Roslyn rather than assumed: the bare text <c>-0</c>
+    /// evaluates to positive zero, and the explicit double literal <c>-0.0</c>
+    /// evaluates to negative zero.
+    /// </summary>
+    [Fact]
+    public async Task BareMinusZeroLiteral_EvaluatesToPositiveZero() =>
+        Assert.False(double.IsNegative(await CSharpScript.EvaluateAsync<double>("-0", cancellationToken: TestContext.Current.CancellationToken)));
+
+    [Fact]
+    public async Task ExplicitDoubleMinusZeroLiteral_EvaluatesToNegativeZero() =>
+        Assert.True(double.IsNegative(await CSharpScript.EvaluateAsync<double>("-0.0", cancellationToken: TestContext.Current.CancellationToken)));
+
+    [Fact]
+    public void LineSeparatorLineWidth_NegativeZero_EmitsExplicitDoubleLiteral()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new LineSeparatorSpec { LineWidth = -0.0 }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("LineWidth = -0.0,", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("LineWidth = -0,", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LineSeparatorColor_AllChannelsNegativeZero_IsNotOmitted()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new LineSeparatorSpec { Color = new ColorRgb(-0.0, -0.0, -0.0) }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("Color = new ColorRgb(-0.0, -0.0, -0.0)", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TextStyleColor_AllChannelsNegativeZero_IsNotOmitted()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica), Color = new ColorRgb(-0.0, -0.0, -0.0) };
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new PlainTextSpec { Text = "x", Style = style }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("Color = new ColorRgb(-0.0, -0.0, -0.0)", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TableCellBackground_AllChannelsNegativeZero_IsNotOmitted()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new TableSpec { Rows = [new TableRowSpec { Cells = [new TableCellSpec { Content = "x", Background = new ColorRgb(-0.0, -0.0, -0.0) }] }] }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("Background = new ColorRgb(-0.0, -0.0, -0.0)", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TableBorderColorAndWidth_NegativeZero_EmitCorrectly()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content =
+            [
+                new TableSpec
+                {
+                    Rows = [new TableRowSpec { Cells = [new TableCellSpec { Content = "x" }] }],
+                    BorderColor = new ColorRgb(-0.0, -0.0, -0.0),
+                    BorderWidth = -0.0,
+                },
+            ],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("BorderColor = new ColorRgb(-0.0, -0.0, -0.0)", code, StringComparison.Ordinal);
+        Assert.Contains("BorderWidth = -0.0,", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("BorderWidth = -0,", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PieSliceColor_AllChannelsNegativeZero_EmitsExplicitDoubleLiteral()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new PieChartSpec { Diameter = 100, Slices = [new PieSlice(1, new ColorRgb(-0.0, -0.0, -0.0))] }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("new PieSlice(1, new ColorRgb(-0.0, -0.0, -0.0))", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PieChartStrokeWidth_NegativeZero_EmitsExplicitDoubleLiteral()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new PieChartSpec { Diameter = 100, StrokeWidth = -0.0, Slices = [new PieSlice(1, ColorRgb.Black)] }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("StrokeWidth = -0.0,", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("StrokeWidth = -0,", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ImageWidthAndHeight_NegativeZero_EmitExplicitDoubleLiterals()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [new ImageSpec { Format = ImageFormat.Png, Bytes = OnePixelPng, Width = -0.0, Height = -0.0 }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("Width = -0.0,", code, StringComparison.Ordinal);
+        Assert.Contains("Height = -0.0,", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Guards the <see cref="EdgeInsets"/> uniform-component check alongside
+    /// the number formatter: a margin whose components mix positive and
+    /// negative zero (<see cref="double.Equals(double)"/> treats <c>-0.0</c>
+    /// and <c>0.0</c> as equal, exactly like <c>==</c>) must still emit all
+    /// four components explicitly, not collapse to the single-value
+    /// constructor form using only the first component's sign.
+    /// </summary>
+    [Fact]
+    public void DocumentMargins_MixedZeroSigns_EmitsAllFourComponents()
+    {
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            Margins = new EdgeInsets(-0.0, 0.0, -0.0, 0.0),
+            DefaultTextStyle = Style(),
+            Content = [new PlainTextSpec { Text = "x" }],
+        };
+
+        var code = SpecCodeEmitter.Emit(spec);
+
+        Assert.Contains("new EdgeInsets(-0.0, 0, -0.0, 0)", code, StringComparison.Ordinal);
     }
 }
