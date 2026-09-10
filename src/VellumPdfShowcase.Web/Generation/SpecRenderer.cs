@@ -39,16 +39,18 @@ public static class SpecRenderer
     /// <summary>Builds the document described by <paramref name="spec"/> and returns its PDF bytes.</summary>
     /// <remarks>
     /// Exception contract: every failure this method can produce, other than
-    /// an uncatchable <see cref="StackOverflowException"/> or
-    /// <see cref="OutOfMemoryException"/>, surfaces as <see cref="ArgumentException"/>
+    /// an <see cref="OutOfMemoryException"/>, surfaces as
+    /// <see cref="ArgumentException"/>
     /// (including its <see cref="ArgumentOutOfRangeException"/> and
     /// <see cref="ArgumentNullException"/> subtypes, for a malformed <paramref name="spec"/>
     /// the model failed to reject) or <see cref="InvalidOperationException"/>
     /// (for everything the library itself refuses only once construction is
     /// under way: a malformed image or font, an inconsistent ICC profile, an
     /// object-streams-plus-encryption or PDF/A-plus-encryption combination,
-    /// or a page geometry that cannot be laid out). A caller that wants one
-    /// catch clause to be complete can therefore catch <see cref="ArgumentException"/>.
+    /// a page too small to lay one line out on, or a single element demanding
+    /// more than the library's ceiling of 50,000 page continuations). A caller
+    /// that wants one catch clause to be complete can therefore catch
+    /// <see cref="ArgumentException"/>.
     /// Before this contract was made uniform, <c>Document.Encrypt</c> and
     /// <c>Document.Save</c> were called unwrapped: measured directly, a bad
     /// combination of settings could throw <see cref="NotSupportedException"/>,
@@ -90,7 +92,6 @@ public static class SpecRenderer
     public static byte[] Render(DocumentSpec spec)
     {
         spec.ValidateEmbeddedFontReferences();
-        spec.ValidateContentFitsPageArea();
 
         using var document = new Document
         {

@@ -1443,10 +1443,10 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
         Assert.Equal(20_000, SpecLimits.MaxTotalTextLength);
-        Assert.Equal(200, SpecLimits.MinPageDimensionPoints);
+        Assert.Equal(1, SpecLimits.MinPageDimensionPoints);
         Assert.Equal(20_000, SpecLimits.MaxPageDimensionPoints);
-        Assert.Equal(36, SpecLimits.MaxFontSize);
-        Assert.Equal(50, SpecLimits.MaxLeadingPoints);
+        Assert.Equal(1_000, SpecLimits.MaxFontSize);
+        Assert.Equal(1_000, SpecLimits.MaxLeadingPoints);
         Assert.Equal(0, SpecLimits.MinHeadingLevel);
         Assert.Equal(5, SpecLimits.MaxHeadingLevel);
         Assert.Equal(10_000, SpecLimits.MaxEdgeInsetPoints);
@@ -1455,7 +1455,6 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(10_000, SpecLimits.MaxIndentPoints);
         Assert.Equal(10_000, SpecLimits.MaxImageDimensionPoints);
         Assert.Equal(1_000, SpecLimits.MaxAngleMagnitudeRadians);
-        Assert.Equal(2_000, SpecLimits.MaxSafePageContinuations);
         Assert.Equal(15, SpecLimits.MaxIccComponentCount);
         Assert.Equal(1, SpecLimits.MinIccComponentCount);
     }

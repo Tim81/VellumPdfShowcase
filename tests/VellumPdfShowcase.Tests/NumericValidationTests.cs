@@ -10,19 +10,23 @@ namespace VellumPdfShowcase.Tests;
 /// <summary>
 /// Cycle 6 review, part 1: every collection and every string in the model was
 /// capped, but not one number was, except <see cref="TableSpec.ColumnWidths"/>.
-/// That single gap let a <see cref="PageSizeSpec"/> of (36, 36) with one
-/// maximal-length run overflow the CLR stack: recursion depth in the library
-/// tracks page count, page count is content divided by page area, and
-/// <see cref="PageSizeSpec"/> had no validation at all. These tests cover the
-/// numeric caps that close that gap, and pin the worst specification the new
-/// caps still permit as a regression guard: without it, a future change could
-/// silently reopen the same crash.
+/// These tests cover the numeric caps that closed that gap.
 /// </summary>
+/// <remarks>
+/// NOTE: the page, font-size and leading caps were once derived from a defect
+/// in <c>VellumPdf.Layout</c> 2.3.0, whose <c>DocumentRenderer</c> recursed
+/// once per page continuation and overflowed the CLR stack past roughly 4,250
+/// of them. 2.3.1 converts both of its pagination passes to loops, so those
+/// three caps are now sanity ceilings rather than measured boundaries, and the
+/// reproductions that once had to be REJECTED are pinned in
+/// <see cref="DeepPaginationTests"/> as documents that must RENDER.
+/// </remarks>
 public class PageSizeValidationTests
 {
     [Theory]
-    [InlineData(199, 300)]
-    [InlineData(300, 199)]
+    [InlineData(0, 300)]
+    [InlineData(300, 0)]
+    [InlineData(-1, 300)]
     [InlineData(double.NaN, 300)]
     [InlineData(300, double.NaN)]
     [InlineData(double.PositiveInfinity, 300)]
@@ -45,62 +49,102 @@ public class PageSizeValidationTests
     }
 
     /// <summary>
-    /// The exact scenario measured against the shipped library: a 36 x 36
-    /// point page, zero margins, and one run of exactly <c>MaxTextLength</c>
-    /// characters overflowed the CLR stack with exit code 127, "Stack
-    /// overflow.", roughly 3,659 <c>DocumentRenderer.PlaceRenderer</c> frames.
-    /// A <see cref="StackOverflowException"/> cannot be caught, so the only
-    /// available fix is making the specification impossible to construct in
-    /// the first place. This is that regression guard: it must keep throwing
-    /// even if every other cap in this file is loosened.
+    /// A 36 by 36 point page is a legal PDF page and the library accepts it.
+    /// The model rejected it while <see cref="SpecLimits.MinPageDimensionPoints"/>
+    /// stood at 200, which made the catalogue understate what the library does.
+    /// It now constructs and renders.
     /// </summary>
     [Fact]
-    public void OriginalStackOverflowRepro_PageSize_IsRejectedAtConstruction()
+    public void TinyPage_ConstructsAndRenders()
     {
-        var exception = Assert.Throws<ArgumentException>(() => new PageSizeSpec(36, 36));
-        Assert.Contains("WidthPoints", exception.Message, StringComparison.Ordinal);
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(36, 36),
+            Margins = new EdgeInsets(0),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText("W", style)],
+        };
+
+        Assert.NotEmpty(SpecRenderer.Render(spec));
+    }
+
+    /// <summary>
+    /// The replacement for the deleted geometry bound, and the reason relaxing
+    /// <see cref="SpecLimits.MinPageDimensionPoints"/> to 1 is safe rather than
+    /// merely permissive. A content box too short to hold one line is refused
+    /// by the library, not by this model, and refused with a CATCHABLE
+    /// exception rather than a hang, a crash, or fifty thousand wasted
+    /// iterations. Measured directly against 2.3.1: about 10 ms, on this
+    /// geometry and on a 1 by 1 point page alike.
+    /// </summary>
+    [Fact]
+    public void PageTooSmallToHoldOneLine_RenderThrowsCatchably()
+    {
+        var style = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.Helvetica),
+            FontSize = 36,
+            Leading = 50,
+        };
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 40),
+            Margins = new EdgeInsets(0),
+            DefaultTextStyle = style,
+            Content = [ParagraphSpec.FromText(new string('a', 500), style)],
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("too tall", exception.Message, StringComparison.Ordinal);
     }
 }
 
 /// <summary>
-/// The worst specifications every cap in this file together still permits:
-/// the smallest allowed page, zero margins, the largest allowed font size,
-/// and exactly <see cref="SpecLimits.MaxTotalTextLength"/> characters in one
-/// run. Measured directly against the shipped library: both render
-/// successfully, comfortably below the roughly 4,348-frame depth at which
-/// this exact geometry overflowed the stack on this machine. This is the
-/// regression guard plan section 3.4.0.2 calls a vacuous test if it is
-/// missing: without it, the caps above could be verified only by construction
-/// succeeding, never by the worst case they still allow actually rendering.
+/// The worst specification the caps in <see cref="SpecLimits"/> together
+/// permitted while <see cref="SpecLimits.MinPageDimensionPoints"/> was 200 and
+/// <see cref="SpecLimits.MaxFontSize"/> was 36: that page, zero margins, that
+/// font size, and exactly <see cref="SpecLimits.MaxTotalTextLength"/>
+/// characters in one run. Both configurations must render.
 /// </summary>
 /// <remarks>
-/// There are TWO tests below, not one, because at the current
-/// <see cref="SpecLimits.MaxFontSize"/> of 36 there is no single answer to
+/// NOTE: 200 and 36 are written here as LITERALS on purpose. They were read
+/// from the constants until those constants were relaxed, at which point this
+/// test silently became a different test: a 1 by 1 point page at 1,000-point
+/// type holds no line at all, so it would assert the library's refusal rather
+/// than the render it exists to guard. A test whose subject moves when an
+/// unrelated constant moves is not a regression guard. The genuinely worst
+/// case the relaxed model admits is measured and recorded on
+/// <see cref="SpecLimits.MaxTotalTextLength"/> instead.
+/// <para>
+/// There are TWO tests below, not one, because there is no single answer to
 /// which of "<see cref="TextStyleSpec.Leading"/> left unset" and
-/// "<see cref="TextStyleSpec.Leading"/> set explicitly to
-/// <see cref="SpecLimits.MaxLeadingPoints"/>" is the worse configuration:
-/// re-measured at 36 points, the two were found within roughly one percent of
-/// each other, unlike at a previous <see cref="SpecLimits.MaxFontSize"/> of
-/// 72 points, where leaving it unset was substantially more dangerous. See
-/// the remark on <see cref="SpecLimits.MaxLeadingPoints"/>. Collapsing this
-/// back to one test would silently drop coverage of whichever configuration
-/// turns out, at some future <see cref="SpecLimits.MaxFontSize"/>, to be the
-/// more dangerous one.
+/// "<see cref="TextStyleSpec.Leading"/> set explicitly" is the worse
+/// configuration: an unset leading reaches the library as a literal zero,
+/// which it reads as a request to compute a line height from the font. See the
+/// remark on <see cref="SpecLimits.MaxLeadingPoints"/>.
+/// </para>
 /// </remarks>
 public class WorstPermittedSpecificationTests
 {
+    private const double PageSide = 200;
+    private const double WorstFontSize = 36;
+    private const double WorstLeading = 50;
+
     [Fact]
     public void SmallestPageLargestFontAndMaxTotalTextWithLeadingUnset_RendersSuccessfully()
     {
         var style = new TextStyleSpec
         {
             Font = FontSpec.FromStandard14(Standard14.Helvetica),
-            FontSize = SpecLimits.MaxFontSize,
+            FontSize = WorstFontSize,
         };
 
         var spec = new DocumentSpec
         {
-            Page = new PageSizeSpec(SpecLimits.MinPageDimensionPoints, SpecLimits.MinPageDimensionPoints),
+            Page = new PageSizeSpec(PageSide, PageSide),
             Margins = new EdgeInsets(0),
             DefaultTextStyle = style,
             Content = [ParagraphSpec.FromText(new string('a', SpecLimits.MaxTotalTextLength), style)],
@@ -117,13 +161,13 @@ public class WorstPermittedSpecificationTests
         var style = new TextStyleSpec
         {
             Font = FontSpec.FromStandard14(Standard14.Helvetica),
-            FontSize = SpecLimits.MaxFontSize,
-            Leading = SpecLimits.MaxLeadingPoints,
+            FontSize = WorstFontSize,
+            Leading = WorstLeading,
         };
 
         var spec = new DocumentSpec
         {
-            Page = new PageSizeSpec(SpecLimits.MinPageDimensionPoints, SpecLimits.MinPageDimensionPoints),
+            Page = new PageSizeSpec(PageSide, PageSide),
             Margins = new EdgeInsets(0),
             DefaultTextStyle = style,
             Content = [ParagraphSpec.FromText(new string('a', SpecLimits.MaxTotalTextLength), style)],
@@ -136,45 +180,64 @@ public class WorstPermittedSpecificationTests
 }
 
 /// <summary>
-/// Cycle 7 review: <see cref="WorstPermittedSpecificationTests"/> pins a
-/// specification that is safe but, contrary to its own name, was never the
-/// worst one every cap in <see cref="SpecLimits"/> together still permits.
-/// It measures at ZERO <see cref="DocumentSpec.Margins"/>, which MAXIMISES
-/// content area and so MINIMISES page count; the worst case is the LARGEST
-/// margins the model still allows a caller to leave in place (its own
-/// DEFAULT, 72 points a side, requires no override at all), together with a
-/// wide glyph rather than a narrow one. These tests pin that actual worst
-/// case: it must still be rejected before either real consumer performs any
-/// work, and it must be rejected through <see cref="DocumentSpec.ValidateContentFitsPageArea"/>
-/// specifically, not through some other, unrelated cap.
+/// The documents that killed the process on <c>VellumPdf.Layout</c> 2.3.0,
+/// kept as evidence that 2.3.1 paginates them instead. Each was measured
+/// directly against both packages, as its own process with the exit code read
+/// unpiped: every one exits 127 with "Stack overflow." on 2.3.0, and renders
+/// on 2.3.1 in the page count asserted below.
 /// </summary>
-public class ContentAreaValidationTests
+/// <remarks>
+/// These shapes are here because they are DIFFERENT mechanisms, and the model
+/// bounded each with a separate estimate before that bound came out. The first
+/// is driven by wrapped text in a content box the document's own default
+/// margins shrink; a caller who never touches <see cref="DocumentSpec.Margins"/>
+/// reaches it. The second is driven by NODE count rather than character count:
+/// 4,950 list items carrying 4,950 characters between them, which every
+/// character-based estimate in this repository waved through while the library
+/// still needed one rendered line per item. The third adds a running band,
+/// which makes the library count pages in a separate pass before it draws
+/// them; that pass carried its own copy of the recursion, so a document with a
+/// band reached the crash one pass earlier than the original report's figures
+/// suggested, and no measurement in that report covered it.
+/// <para>
+/// NOTE: every geometry here is written as literals rather than read from
+/// <see cref="SpecLimits"/>, for the reason given on
+/// <see cref="WorstPermittedSpecificationTests"/>: a reproduction whose shape
+/// follows a constant stops being the document that was measured. The font
+/// size and leading matter as much as the page does. At the model's default
+/// 12-point style the list below occupies six lines per page and only 825
+/// continuations, which 2.3.0 rendered without complaint; at 36 points with
+/// 50-point leading it occupies one line per page and 4,950, which killed it.
+/// </para>
+/// <para>
+/// NOTE: the page counts are asserted as lower bounds, not exact figures. What
+/// these tests guard is that the documents remain DEEP, since a shallow one
+/// would pass an emptiness check while proving nothing. An exact count would
+/// pin the library's line-breaking decisions, which are not this repository's
+/// to fix.
+/// </para>
+/// </remarks>
+public class DeepPaginationTests
 {
-    private static TextStyleSpec WorstStyle() => new()
+    private static TextStyleSpec OneLinePerPageStyle() => new()
     {
         Font = FontSpec.FromStandard14(Standard14.Helvetica),
-        FontSize = SpecLimits.MaxFontSize,
+        FontSize = 36,
+        Leading = 50,
     };
 
     /// <summary>
-    /// The exact scenario reproduced against the shipped library: a 200 x 200
-    /// page, DEFAULT margins (left unset, per <see cref="DocumentSpec.Margins"/>'s
-    /// own 72-point default), the maximum font size, and 20,000 characters of
-    /// the repeating text "WWW " (a wide glyph, not the narrow 'a' the
-    /// superseded measurement used) in one run. Measured directly: this dies
-    /// with exit code 127, "Stack overflow.", roughly 4,353
-    /// <c>DocumentRenderer.PlaceRenderer</c> frames, reproduced three times
-    /// out of three, before this fix. <see cref="DocumentSpec"/>'s own
-    /// construction succeeds (no single property's own validation can see
-    /// <see cref="DocumentSpec.Page"/>, <see cref="DocumentSpec.Margins"/> and
-    /// <see cref="DocumentSpec.Content"/> all at their final values; see the
-    /// remark on <see cref="DocumentSpec.ValidateContentFitsPageArea"/>), so
-    /// the regression guard is that BOTH real consumers reject it before
-    /// doing any work, not that the constructor call above throws.
+    /// Measured: 15,000 pages on 2.3.1, exit 127 on 2.3.0 at roughly 4,353
+    /// <c>DocumentRenderer.PlaceRenderer</c> frames.
     /// </summary>
-    private static DocumentSpec Repro()
+    private static DocumentSpec DefaultMarginsWideGlyphRepro()
     {
-        var style = WorstStyle();
+        var style = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(Standard14.Helvetica),
+            FontSize = 36,
+        };
+
         var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
         Assert.Equal(SpecLimits.MaxTotalTextLength, text.Length);
 
@@ -186,106 +249,92 @@ public class ContentAreaValidationTests
         };
     }
 
-    [Fact]
-    public void DefaultMarginsWideGlyphRepro_ConstructsSuccessfully()
+    /// <summary>
+    /// Measured: 4,950 pages on 2.3.1, exit 127 on 2.3.0. The walk sees 4,951
+    /// nodes and 4,950 characters, comfortably inside
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> and
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>, which is the whole point:
+    /// no cap on volume can see this document coming.
+    /// </summary>
+    private static DocumentSpec ManyShortListItemsRepro()
     {
-        // DocumentSpec construction has no way to see Page, Margins and
-        // Content all at their final values at once; see the remark on
-        // ValidateContentFitsPageArea. This is the proof that the crash
-        // genuinely requires the deferred, explicit check below, not a
-        // per-property one.
-        var spec = Repro();
-        Assert.NotNull(spec);
-    }
+        var style = OneLinePerPageStyle();
 
-    [Fact]
-    public void DefaultMarginsWideGlyphRepro_ValidateContentFitsPageArea_Throws()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => Repro().ValidateContentFitsPageArea());
-        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
-    }
+        List<ListItemSpec> topLevelItems = [];
+        for (var i = 0; i < 1_650; i++)
+        {
+            topLevelItems.Add(new ListItemSpec
+            {
+                Text = "W",
+                Children = [new ListItemSpec { Text = "W" }, new ListItemSpec { Text = "W" }],
+            });
+        }
 
-    [Fact]
-    public void DefaultMarginsWideGlyphRepro_Render_ThrowsInsteadOfCrashing()
-    {
-        Assert.Throws<ArgumentException>(() => SpecRenderer.Render(Repro()));
-    }
-
-    [Fact]
-    public void DefaultMarginsWideGlyphRepro_Emit_ThrowsInsteadOfCrashing()
-    {
-        Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(Repro()));
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(20_000, 200),
+            Margins = new EdgeInsets(55),
+            DefaultTextStyle = style,
+            Content = [new ListSpec { Style = ListStyle.Unordered, DefaultStyle = style, Items = topLevelItems }],
+        };
     }
 
     /// <summary>
-    /// Confirms the rejection is specifically about the content BOX, not the
-    /// text volume: the identical text at ZERO margins on the identical page
-    /// is exactly <see cref="WorstPermittedSpecificationTests"/>'s own
-    /// pinned-safe configuration.
+    /// Counts page objects by scanning for the <c>/Type /Page</c> key the
+    /// library writes, rejecting the <c>/Type /Pages</c> tree nodes that share
+    /// its prefix. <c>VellumPdf.Reader</c> 2.3.1 exposes no page collection of
+    /// its own, and these documents leave <see cref="DocumentSpec.UseObjectStreams"/>
+    /// unset, so every page dictionary appears in the file uncompressed.
     /// </summary>
-    [Fact]
-    public void SameTextAtZeroMargins_DoesNotThrow()
+    private static int PageCount(byte[] pdf)
     {
-        var style = WorstStyle();
-        var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
+        const string Key = "/Type /Page";
+        var text = System.Text.Encoding.Latin1.GetString(pdf);
 
-        var spec = new DocumentSpec
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(Key, index, StringComparison.Ordinal)) >= 0)
         {
-            Page = new PageSizeSpec(200, 200),
-            Margins = new EdgeInsets(0),
-            DefaultTextStyle = style,
-            Content = [ParagraphSpec.FromText(text, style)],
-        };
+            index += Key.Length;
+            if (index >= text.Length || text[index] != 's')
+            {
+                count++;
+            }
+        }
 
-        spec.ValidateContentFitsPageArea();
+        return count;
     }
 
-    /// <summary>
-    /// A running header COMBINED with a moderate margin reproduces the same
-    /// crash even though neither alone, at these particular values, would:
-    /// measured directly, a 200 x 200 page with 40-point margins on every
-    /// edge and a 60-point header dies with "Stack overflow." at
-    /// <c>DocumentRenderer.CountPlaceRenderer</c>. A <see cref="RunningBandSpec.Height"/>
-    /// is therefore not a hazard this check may ignore just because it is not
-    /// itself a margin.
-    /// </summary>
     [Fact]
-    public void MarginsAndRunningBandCombined_ValidateContentFitsPageArea_Throws()
-    {
-        var style = WorstStyle();
-        var text = string.Concat(Enumerable.Repeat("WWW ", SpecLimits.MaxTotalTextLength / 4));
+    public void DefaultMarginsWideGlyphRepro_RendersDeeply() =>
+        Assert.True(PageCount(SpecRenderer.Render(DefaultMarginsWideGlyphRepro())) > 10_000);
 
-        var spec = new DocumentSpec
-        {
-            Page = new PageSizeSpec(200, 200),
-            Margins = new EdgeInsets(40),
-            DefaultTextStyle = style,
-            Content = [ParagraphSpec.FromText(text, style)],
-            Header = new RunningBandSpec { Template = "{page}", Style = style, Height = 60 },
-        };
-
-        Assert.Throws<ArgumentException>(() => spec.ValidateContentFitsPageArea());
-    }
+    [Fact]
+    public void ManyShortListItemsRepro_RendersDeeply() =>
+        Assert.True(PageCount(SpecRenderer.Render(ManyShortListItemsRepro())) > 4_000);
 
     /// <summary>
-    /// A small amount of text on the same shrunken content box must not be
-    /// rejected: the hazard scales with how much text there is to place, not
-    /// merely with the geometry, so this proves the check is not simply
-    /// rejecting every small content box outright.
+    /// The same list document carrying a footer, which exercises the library's
+    /// page-counting pass. The band's <see cref="RunningBandSpec.Height"/> is
+    /// set explicitly to 30 points: an unset band reserves enough of this
+    /// 200-point page that no line fits beneath it at all, and the library
+    /// then refuses the element as too tall rather than paginating it, which
+    /// would test nothing. Measured: 4,950 pages on 2.3.1, exit 127 on 2.3.0.
     /// </summary>
     [Fact]
-    public void SmallAmountOfTextAtDefaultMargins_DoesNotThrow()
+    public void ManyShortListItemsWithFooter_RendersDeeply()
     {
-        var style = WorstStyle();
-
-        var spec = new DocumentSpec
+        var withFooter = ManyShortListItemsRepro() with
         {
-            Page = new PageSizeSpec(200, 200),
-            DefaultTextStyle = style,
-            Content = [ParagraphSpec.FromText("WWW", style)],
+            Footer = new RunningBandSpec
+            {
+                Template = "Page {page} of {pages}",
+                Style = OneLinePerPageStyle(),
+                Height = 30,
+            },
         };
 
-        spec.ValidateContentFitsPageArea();
+        Assert.True(PageCount(SpecRenderer.Render(withFooter)) > 4_000);
     }
 }
 
@@ -391,161 +440,6 @@ public class TotalTextLengthLimitTests
             });
 
         Assert.Contains("characters", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-}
-
-/// <summary>
-/// Round nine, HIGH 3: the page-area bound assumed characters pack densely
-/// onto a line, but rendered LINE COUNT is driven by NODE count, not
-/// character count. A list item, a table row, or any other block-level
-/// element starts a new rendered line regardless of how few characters it
-/// carries, so a specification with very little text but very many
-/// line-forcing nodes could pass a character-only estimate and still force
-/// far more page continuations than <see cref="SpecLimits.MaxSafePageContinuations"/>
-/// permits. <see cref="DocumentSpec.ValidateContentFitsPageArea"/> now takes,
-/// per element of <see cref="DocumentSpec.Content"/>, the greater of an
-/// estimated text-wrap line count and a node-forced line count (list items at
-/// every depth, table rows), and compares the WORST single element against
-/// the continuation limit, never a sum across every element (recursion
-/// unwinds between top-level elements; see that method's own remark).
-/// </summary>
-public class LineBasedPageAreaTests
-{
-    private static TextStyleSpec Style() =>
-        new() { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
-
-    /// <summary>
-    /// The reproduction independently measured for this finding: a
-    /// 20,000 x 200 point page, 55-point margins, and one list of 1,650 items
-    /// each carrying two children (4,950 <see cref="ListItemSpec"/> instances
-    /// in total, matching the walk's own node count of 4,951 once the one
-    /// <see cref="ListSpec"/> itself is included), each holding the single
-    /// character <c>"W"</c>. Characters used: 4,950 of
-    /// <see cref="SpecLimits.MaxTotalTextLength"/> (20,000). Content items
-    /// used: 1 of <see cref="SpecLimits.MaxContentItems"/> (2,000). Before
-    /// this fix, a character-only estimate saw almost no text (roughly 9 page
-    /// continuations at this geometry) and passed both
-    /// <see cref="DocumentSpec.ValidateContentFitsPageArea"/> and, downstream,
-    /// <c>DocumentRenderer.PlaceRenderer</c>'s own recursion, which recurses
-    /// once per RENDERED LINE and so once per list item here: 4,950 of them,
-    /// far more than <see cref="SpecLimits.MaxSafePageContinuations"/> permits
-    /// at this geometry's roughly one line per page.
-    /// </summary>
-    private static DocumentSpec ManyShortListItemsRepro()
-    {
-        List<ListItemSpec> topLevelItems = [];
-        for (var i = 0; i < 1_650; i++)
-        {
-            topLevelItems.Add(new ListItemSpec
-            {
-                Text = "W",
-                Children = [new ListItemSpec { Text = "W" }, new ListItemSpec { Text = "W" }],
-            });
-        }
-
-        return new DocumentSpec
-        {
-            Page = new PageSizeSpec(20_000, 200),
-            Margins = new EdgeInsets(55),
-            DefaultTextStyle = Style(),
-            Content = [new ListSpec { Style = ListStyle.Unordered, Items = topLevelItems }],
-        };
-    }
-
-    [Fact]
-    public void ManyShortListItemsRepro_ConstructsSuccessfully()
-    {
-        // DocumentSpec construction bounds node COUNT (MaxWalkedNodes, 5,000)
-        // and total characters (MaxTotalTextLength, 20,000) independently of
-        // page geometry; 4,951 nodes and 4,950 characters sit comfortably
-        // under both, so construction alone cannot catch this specification.
-        // This is the proof that the crash genuinely requires the deferred,
-        // geometry-aware check below, not a per-property or per-collection one.
-        var spec = ManyShortListItemsRepro();
-        Assert.NotNull(spec);
-    }
-
-    [Fact]
-    public void ManyShortListItemsRepro_ValidateContentFitsPageArea_Throws()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => ManyShortListItemsRepro().ValidateContentFitsPageArea());
-        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ManyShortListItemsRepro_Render_ThrowsInsteadOfRiskingAnUncatchableOverflow() =>
-        Assert.Throws<ArgumentException>(() => SpecRenderer.Render(ManyShortListItemsRepro()));
-
-    [Fact]
-    public void ManyShortListItemsRepro_Emit_ThrowsInsteadOfRiskingAnUncatchableOverflow() =>
-        Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(ManyShortListItemsRepro()));
-
-    /// <summary>
-    /// The counterpart the OLD, sum-across-the-document design would have
-    /// gotten wrong in the other direction: many small, INDEPENDENT top-level
-    /// elements, each individually trivial, must not be rejected merely
-    /// because their line counts would exceed the continuation limit if
-    /// summed. Measured directly against the shipped library: twenty
-    /// thousand pages built from twenty thousand separate top-level elements
-    /// renders cleanly, because <c>DocumentRenderer</c>'s recursion unwinds
-    /// between top-level elements; only the worst SINGLE element's own line
-    /// count may be compared against <see cref="SpecLimits.MaxSafePageContinuations"/>.
-    /// This document has <see cref="SpecLimits.MaxContentItems"/> (2,000)
-    /// separate one-line paragraphs; a sum-based bound at this geometry would
-    /// reject it (2,000 lines summed against a one-line-per-page geometry is
-    /// exactly at the continuation ceiling, and any larger document would
-    /// exceed it, despite MaxContentItems alone permitting many more separate,
-    /// individually trivial elements than that).
-    /// </summary>
-    [Fact]
-    public void ManySeparateTrivialElements_DoesNotThrow()
-    {
-        // Every item is a single character, so each contributes exactly one
-        // line at this geometry, regardless of index.
-        List<ContentItemSpec> content = [.. Enumerable.Range(0, SpecLimits.MaxContentItems).Select(_ => (ContentItemSpec)new PlainTextSpec { Text = "x" })];
-
-        var spec = new DocumentSpec
-        {
-            Page = new PageSizeSpec(200, 200),
-            DefaultTextStyle = Style(),
-            Content = content,
-        };
-
-        spec.ValidateContentFitsPageArea();
-    }
-
-    /// <summary>
-    /// A table whose rows carry negligible text but many of them, the same
-    /// hazard shape as <see cref="ManyShortListItemsRepro"/> but for
-    /// <see cref="TableRowSpec"/> rather than <see cref="ListItemSpec"/>: a
-    /// row starts a new rendered line regardless of how few characters its
-    /// cells carry. The page is narrow (200 points wide, 10-point side
-    /// margins, leaving a content box only 5 characters wide at
-    /// <see cref="SpecLimits.MaxFontSize"/>), so a 6-character cell already
-    /// needs two wrapped lines; <see cref="SpecLimits.MaxTableRows"/> rows
-    /// (2,000, the model's own ceiling) of that cell reach 4,000 total lines
-    /// while staying at 12,000 characters, comfortably under
-    /// <see cref="SpecLimits.MaxTotalTextLength"/>. At one line per row alone,
-    /// 2,000 rows would land EXACTLY at the continuation limit rather than
-    /// past it, since the row cap and the continuation cap happen to share
-    /// the same value, which is why this uses two lines per row instead.
-    /// </summary>
-    [Fact]
-    public void ManyShortTableRows_ValidateContentFitsPageArea_Throws()
-    {
-        var cellContent = new string('x', 6);
-        List<TableRowSpec> rows = [.. Enumerable.Range(0, SpecLimits.MaxTableRows).Select(_ => new TableRowSpec { Cells = [new TableCellSpec { Content = cellContent }] })];
-
-        var spec = new DocumentSpec
-        {
-            Page = new PageSizeSpec(200, 200),
-            Margins = new EdgeInsets(60, 10, 60, 10),
-            DefaultTextStyle = Style(),
-            Content = [new TableSpec { Rows = rows }],
-        };
-
-        var exception = Assert.Throws<ArgumentException>(() => spec.ValidateContentFitsPageArea());
-        Assert.Contains("page continuations", exception.Message, StringComparison.Ordinal);
     }
 }
 

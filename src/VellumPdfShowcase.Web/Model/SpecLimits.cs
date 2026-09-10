@@ -199,247 +199,108 @@ public static class SpecLimits
     /// string-heavy work of exactly this kind, which is the entire reason the
     /// two figures differ so sharply from the desktop measurement above.
     /// <para>
-    /// Text volume is not only a CPU-time hazard. Measured directly:
-    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c> recurses once per page continuation, so a
-    /// specification that forces enough pages overflows the CLR stack, which
-    /// cannot be caught. <see cref="MinPageDimensionPoints"/>, <see cref="MaxFontSize"/>
-    /// and <see cref="MaxLeadingPoints"/> bound how few characters one page can
-    /// hold; this bounds how many characters there are to place.
+    /// This value was originally derived from a stack boundary, because
+    /// <c>VellumPdf.Layout</c> 2.3.0 recursed once per page continuation and a
+    /// specification forcing enough pages overflowed the CLR stack, which
+    /// cannot be caught. 2.3.1 converts both of that library's pagination
+    /// passes to loops, so no text volume this file admits can crash a caller
+    /// any longer, and that derivation is gone. What remains is a bound on
+    /// generation time and on output size, which is what the browser figures
+    /// above measure. Measured directly against 2.3.1: the worst
+    /// specification every cap in this file together still permits, this many
+    /// characters of the widest glyph at <see cref="MaxFontSize"/> on a
+    /// <see cref="MinPageDimensionPoints"/>-scale page, renders 20,000 pages
+    /// and 7.5 MB in 1,578 ms on desktop x64.
     /// </para>
     /// <para>
-    /// The worst specification every cap in this file together still permits
-    /// is the smallest permitted page, the largest permitted font, and exactly
-    /// this many characters in one run. At 72-point font (this value's
-    /// previous ceiling), <see cref="Model.TextStyleSpec.Leading"/> left UNSET
-    /// was found to be substantially more dangerous than
-    /// <see cref="Model.TextStyleSpec.Leading"/> set explicitly to
-    /// <see cref="MaxLeadingPoints"/>: an unset <see cref="Model.TextStyleSpec.Leading"/>
-    /// reaches the library as a literal <c>0</c> (see the remark on
-    /// <see cref="MaxLeadingPoints"/>), which the library treats as a request
-    /// to compute its own line height from the font, and at 72 points that
-    /// computed leading exceeded <see cref="MaxLeadingPoints"/> itself. At
-    /// <see cref="MaxFontSize"/>'s CURRENT value of 36, re-measuring both
-    /// configurations found them within roughly one percent of each other,
-    /// not the roughly twofold gap seen at 72 points; the auto-computed
-    /// leading at 36 points evidently sits close to, rather than well above,
-    /// the 50-point cap. NEITHER configuration is safely ignorable: both were
-    /// measured, and the smaller of the two boundaries found was used below.
-    /// This is stated explicitly because it does not hold in general and must
-    /// be re-checked, not assumed, whenever <see cref="MaxFontSize"/> or
-    /// <see cref="MaxLeadingPoints"/> changes again.
-    /// </para>
-    /// <para>
-    /// Measured directly at that exact geometry (200 &#215; 200 points, zero
-    /// margins, 36-point font, one run), under both
-    /// <see cref="Model.TextStyleSpec.Leading"/> left unset and
-    /// <see cref="Model.TextStyleSpec.Leading"/> set explicitly to
-    /// <see cref="MaxLeadingPoints"/>: rendering succeeded reliably (repeated
-    /// trials, no failures) up to at least 156,000 characters under both
-    /// configurations, and overflowed the CLR stack reliably (repeated
-    /// trials, no successes) from 170,000 characters onward, at roughly 4,348
-    /// <c>DocumentRenderer.PlaceRenderer</c> frames, consistent with the
-    /// roughly 3,659 to 4,354-frame depth measured elsewhere at this geometry
-    /// on this machine. Single trials in the 156,000 to 170,000 range were
-    /// inconsistent from one process launch to the next, by as much as a few
-    /// thousand characters either side, which reads as ordinary run-to-run
-    /// stack-layout variance this close to the true boundary rather than as a
-    /// property of the content itself; this is itself a reason to keep the
-    /// margin wide rather than shave it to the exact figure. 20,000 was chosen
-    /// from the reliably-safe figure of 150,000 with roughly a sevenfold
-    /// margin below it; WebAssembly's stack is smaller still, which is why the
-    /// margin is wide rather than exact.
-    /// </para>
-    /// <para>
-    /// NOTE: the measurement above holds <see cref="Model.DocumentSpec.Margins"/>
-    /// at ZERO and uses a NARROW glyph, both of which minimise page count and
-    /// so understate the danger; this value alone does not bound the crash for
-    /// a specification whose margins or running-band heights shrink the
-    /// content box below what this measurement assumed. <see cref="MaxSafePageContinuations"/>
-    /// is the companion cap that bounds THAT case, measured with margins and
-    /// glyph width at their actual worst permitted values; see its own remark
-    /// for the geometry-dependent figures. This value remains the correct
-    /// bound for the geometry it was measured at; it was never a bound on
-    /// every geometry a specification may declare.
+    /// This value is also what keeps a single element clear of the library's
+    /// OWN ceiling of 50,000 page continuations per top-level element, without
+    /// this file needing a cap of its own for it. A rendered line comes from
+    /// either a line-producing node or a character, so one element cannot
+    /// exceed <see cref="MaxWalkedNodes"/> plus this value in lines, about
+    /// 25,000, and cannot demand more continuations than it has lines.
+    /// Measured directly at the boundary: 49,999 continuations render, and
+    /// 50,002 raise a catchable <see cref="InvalidOperationException"/> naming
+    /// the limit.
     /// </para>
     /// </remarks>
     public const int MaxTotalTextLength = 20_000;
 
     /// <summary>
-    /// The maximum number of page continuations
-    /// <see cref="Model.DocumentSpec.ValidateContentFitsPageArea"/> permits a
-    /// specification's own page geometry to require for placing the WORST
-    /// SINGLE element of <see cref="Model.DocumentSpec.Content"/>, never a sum
-    /// across every element (see that method's own remark for why: recursion
-    /// unwinds between top-level elements, so a document-wide total would
-    /// both wrongly admit one oversized element sitting beside many trivial
-    /// ones and wrongly reject many small, independently safe elements).
-    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
-    /// recurses once per page continuation and that recursion cannot be
-    /// caught, so this is a second, independent bound on the same hazard
-    /// <see cref="MaxTotalTextLength"/> bounds, needed because
-    /// <see cref="MaxTotalTextLength"/> alone assumes a content box large
-    /// enough to place many characters per page; a specification with large
-    /// <see cref="Model.DocumentSpec.Margins"/>, a tall <see cref="Model.RunningBandSpec"/>,
-    /// or both, can shrink that box far below what <see cref="MaxTotalTextLength"/>'s
-    /// own measurement assumed without violating any other cap in this file.
+    /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
+    /// <see cref="Model.PageSizeSpec.HeightPoints"/>. A dimension must be a
+    /// positive, finite number of points; this bound exists to reject zero and
+    /// negative values with a legible message at construction, and to do so
+    /// where every other numeric member of this model is bounded.
     /// </summary>
     /// <remarks>
-    /// Measured directly against the shipped library, holding <see cref="MaxFontSize"/>
-    /// fixed and varying the three levers the ORIGINAL <see cref="MaxTotalTextLength"/>
-    /// measurement held fixed at their least dangerous values: margins (0, not
-    /// the 72-point default), glyph width (the narrow character <c>'a'</c>,
-    /// not a wide one), and running-band height (no header or footer at all).
-    /// Re-measured with each lever moved toward its actual worst case:
-    /// <list type="bullet">
-    /// <item><description>
-    /// At a 200 x 200 page with ZERO margins, 36-point Helvetica, and the wide
-    /// character <c>'W'</c>: rendering succeeded up to 85,000 characters and
-    /// overflowed the stack at 90,000, roughly half of the 156,000/170,000
-    /// boundary <see cref="MaxTotalTextLength"/>'s own remark records for the
-    /// narrow character 'a' at the same geometry, confirming glyph width alone
-    /// roughly doubles the danger.
-    /// </description></item>
-    /// <item><description>
-    /// At the SAME page with its DEFAULT 72-point margins on every edge
-    /// (leaving a 56 x 56 content box) and the wide character, 20,000
-    /// characters, the exact figure <see cref="MaxTotalTextLength"/> permits,
-    /// overflowed the stack reliably (reproduced three times out of three,
-    /// exit code 127, "Stack overflow.", roughly 4,353
-    /// <c>DocumentRenderer.PlaceRenderer</c> frames), and the same failure
-    /// reproduced with margins of 60, 72 and 77 points, and separately with a
-    /// <see cref="Model.RunningBandSpec.Height"/> of 77 on an otherwise
-    /// zero-margin page. <see cref="MaxTotalTextLength"/>'s own 20,000-character
-    /// figure is therefore NOT safe in general: it is safe only at content
-    /// boxes at or above roughly the one this cap's own worst-permitted
-    /// regression test uses (200 x 200, zero margins), which a caller-supplied
-    /// <see cref="Model.DocumentSpec.Margins"/> or <see cref="Model.RunningBandSpec.Height"/>
-    /// is free to shrink far below.
-    /// </description></item>
-    /// <item><description>
-    /// Across every geometry tried, the page count at which the stack
-    /// overflowed stayed within a narrow band (roughly 4,250 to 4,500 pages),
-    /// consistent with the stack overflowing at a roughly fixed RECURSION
-    /// DEPTH regardless of how that depth was reached; this is what makes a
-    /// PER-CONTINUATION ceiling, rather than a per-character one, the correct
-    /// quantity to bound. NOTE: every reproduction that established this
-    /// figure used a single dense-text element, where that element's own
-    /// continuation count and the document's whole page count are the same
-    /// number; an earlier version of this remark generalised that coincidence
-    /// into "a single page-count ceiling... is the correct bound to add",
-    /// which reads as a document-wide total and is not what this cap is. The
-    /// bound this cap feeds is per ELEMENT (see the summary above and
-    /// <see cref="Model.DocumentSpec.ValidateContentFitsPageArea"/>'s own
-    /// remark), and re-measuring at that same geometry with the corrected,
-    /// node-aware line estimate reproduces the identical 4,200-to-4,350-page
-    /// boundary, confirming the VALUE below did not need to change, only the
-    /// arithmetic that compares a specification against it.
-    /// </description></item>
-    /// </list>
-    /// 2,000 is chosen with headroom below that measured 4,250-to-4,500-page
-    /// boundary: it comfortably passes the existing worst-permitted-specification
-    /// regression tests (a 200 x 200, zero-margin page at <see cref="MaxFontSize"/>
-    /// and exactly <see cref="MaxTotalTextLength"/> characters computes to
-    /// roughly 1,000 page continuations under this cap's own, deliberately
-    /// generous, glyph-width assumption), while rejecting every reproduction
-    /// above, each of which computes to several thousand. WebAssembly's
-    /// smaller stack is not assumed to raise this boundary; the margin is kept
-    /// wide rather than tuned tight for the same reason <see cref="MaxTotalTextLength"/>'s
-    /// own margin is.
+    /// This figure was 200 while <c>VellumPdf.Layout</c> 2.3.0 recursed once
+    /// per page continuation, because a page small enough forced enough
+    /// continuations to overflow the CLR stack. 2.3.1 removed that recursion,
+    /// and with it the only reason to refuse a page the library itself
+    /// accepts. NOTE: a page too small to hold one line is now answered by the
+    /// library rather than by this model, and answered well. Measured directly
+    /// against 2.3.1: a 1 by 1 point page, and a 3 by 3 one, each raise a
+    /// catchable <see cref="InvalidOperationException"/> reading "An element is
+    /// too tall to fit on a single page" within about 10 ms. Neither hangs,
+    /// neither iterates to the library's continuation ceiling, and neither
+    /// crashes. That measurement is what makes a bound of 1 defensible rather
+    /// than merely permissive.
     /// </remarks>
-    public const int MaxSafePageContinuations = 2_000;
-
-    /// <summary>
-    /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
-    /// <see cref="Model.PageSizeSpec.HeightPoints"/>. Measured directly: a
-    /// <see cref="Model.PageSizeSpec"/> of (36, 36), zero margins, and a single
-    /// run of exactly <see cref="MaxTextLength"/> characters overflows the CLR
-    /// stack, because <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>
-    /// recurses once per page continuation and page count is content volume
-    /// divided by page area. The same content at 200 x 200 renders successfully
-    /// with a wide margin below the point measurement found the stack to
-    /// overflow at this font size and text volume; see <see cref="MaxFontSize"/>
-    /// and <see cref="MaxTotalTextLength"/> for the other two levers this
-    /// figure was chosen together with. 200 is also small enough that no
-    /// existing specification in this repository, several of which use a
-    /// 200 x 200 page for a minimal test document, needed to change.
-    /// NOTE: when <see cref="MaxFontSize"/> was later raised and then lowered
-    /// again, this figure was not re-derived on its own each time; it was
-    /// re-verified as part of the same combined measurement described on
-    /// <see cref="MaxTotalTextLength"/>. NOTE: this figure also cannot rise
-    /// above 297.64 (A6's OWN shorter edge in points, 105 mm; an earlier
-    /// version of this remark wrongly attributed that figure to A4, whose
-    /// shorter edge is 595.28 points) without excluding A6, which one shipped
-    /// sample uses; that ceiling was not tested against, since every
-    /// measurement here has only ever found reason to keep this figure at 200
-    /// or lower it, never to raise it.
-    /// </summary>
-    public const double MinPageDimensionPoints = 200;
+    public const double MinPageDimensionPoints = 1;
 
     /// <summary>
     /// The upper bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
     /// <see cref="Model.PageSizeSpec.HeightPoints"/>. A generous sanity ceiling
-    /// (about 278 inches) rather than a measured one: an oversized page is not
-    /// part of the stack-overflow mechanism <see cref="MinPageDimensionPoints"/>
-    /// guards against, since more area means fewer pages, not more.
+    /// of about 278 inches rather than a measured one. A larger page means
+    /// fewer pages, so nothing about output size or generation time argues for
+    /// a tighter figure.
     /// </summary>
     public const double MaxPageDimensionPoints = 20_000;
 
     /// <summary>
-    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. 36 points is
-    /// unambiguously a display size, twice the largest font size any shipped
-    /// sample in this repository uses today (18 points), chosen so the site
-    /// can demonstrate typography at display scale per plan section 6.2
-    /// without narrowing <see cref="MaxTotalTextLength"/> so far that plan
-    /// section 6.2's OTHER requirement, demonstrating automatic pagination by
-    /// letting a table and a list visibly divide across pages, becomes only
-    /// barely possible.
+    /// Caps <see cref="Model.TextStyleSpec.FontSize"/>. A generous sanity
+    /// ceiling, in the same register as <see cref="MaxStrokeWidthPoints"/> and
+    /// <see cref="MaxIndentPoints"/>: its job is to reject a value no
+    /// typography could intend, with a legible message, alongside the NaN and
+    /// non-positive checks beside it.
     /// </summary>
     /// <remarks>
-    /// A large font size shrinks how much text fits on one page as sharply as
-    /// a small page does, and the two compound; this is why this value is not
-    /// chosen freely. Rather than finding a font-size ceiling that is itself
-    /// safe at a fixed text volume, the ceiling is fixed here for typographic
-    /// purpose and <see cref="MaxTotalTextLength"/> is chosen to compensate.
-    /// This value was previously 72; it was measured, together with
-    /// <see cref="MaxTotalTextLength"/>, and lowered to 36 to buy back text
-    /// budget, since 72 forced <see cref="MaxTotalTextLength"/> down to 5,000
-    /// characters for an entire document, too little to demonstrate the
-    /// pagination requirement above. See <see cref="MaxTotalTextLength"/> for
-    /// the measurement performed at this exact font size, which is what makes
-    /// 36 safe together with <see cref="MinPageDimensionPoints"/> and
-    /// <see cref="MaxLeadingPoints"/>.
+    /// This figure was 36, and 72 before that, while a large font size was a
+    /// route to the stack overflow described on
+    /// <see cref="MinPageDimensionPoints"/>: fewer characters per page meant
+    /// more pages, and enough pages killed the tab. That is no longer true of
+    /// <c>VellumPdf.Layout</c> 2.3.1. NOTE: font size no longer changes the
+    /// worst case this file admits at all. A rendered line holds at least one
+    /// character however large the type, so the worst case is bounded by
+    /// <see cref="MaxTotalTextLength"/> and <see cref="MaxWalkedNodes"/>
+    /// whatever this value is; a larger font makes that worst case easier to
+    /// reach and no larger. The showcase must demonstrate typography at
+    /// display scale, per plan section 6.2, and a ceiling derived from a
+    /// defect the library has fixed would make the catalogue understate what
+    /// the library does.
     /// </remarks>
-    public const double MaxFontSize = 36;
+    public const double MaxFontSize = 1_000;
 
     /// <summary>
-    /// Caps <see cref="Model.TextStyleSpec.Leading"/> when set. Leading
-    /// enlarges each line's height exactly as a larger font does, so it was
-    /// measured against the same worst-case page and font-size combination as
-    /// <see cref="MaxFontSize"/>; 50 points left a wide margin below the point
-    /// measurement found dangerous there.
+    /// Caps <see cref="Model.TextStyleSpec.Leading"/> when set. A generous
+    /// sanity ceiling on the same footing as <see cref="MaxFontSize"/>, and
+    /// for the same reason: leading enlarges a line's height exactly as a
+    /// larger font does, and neither changes the worst case this file admits.
     /// </summary>
     /// <remarks>
-    /// NOTE: this cap does not necessarily bound the most dangerous leading a
-    /// specification can carry. <see cref="Generation.SpecRenderer"/> passes an
-    /// UNSET <see cref="Model.TextStyleSpec.Leading"/> to the library as a
-    /// literal <c>0</c>, and <see cref="Generation.SpecCodeEmitter"/> emits no
-    /// <c>Leading</c> property at all in that case, which leaves the library's
-    /// own <c>TextStyle.Leading</c> at its own default of <c>0</c>; both paths
-    /// agree, so the round trip does not diverge. The library treats a <c>0</c>
-    /// leading as a request to compute its own line height from the font
-    /// rather than as a literal zero, and WHETHER that computed value is larger
-    /// or smaller than this cap depends on <see cref="MaxFontSize"/>: measured
-    /// at a previous <see cref="MaxFontSize"/> of 72, the computed value was
-    /// substantially larger than this cap, making an unset
-    /// <see cref="Model.TextStyleSpec.Leading"/> the more dangerous
-    /// configuration; re-measured at the current <see cref="MaxFontSize"/> of
-    /// 36, an unset <see cref="Model.TextStyleSpec.Leading"/> and one set
-    /// explicitly to this maximum were found within roughly one percent of
-    /// each other. Both configurations must be measured together whenever
-    /// <see cref="MaxFontSize"/> or this cap changes; see the remark on
-    /// <see cref="MaxTotalTextLength"/> for the current measurement.
+    /// NOTE: this cap does not bound the most dangerous leading a
+    /// specification can carry, and never did. <see cref="Generation.SpecRenderer"/>
+    /// passes an UNSET <see cref="Model.TextStyleSpec.Leading"/> to the library
+    /// as a literal <c>0</c>, and <see cref="Generation.SpecCodeEmitter"/>
+    /// emits no <c>Leading</c> property at all in that case, which leaves the
+    /// library's own <c>TextStyle.Leading</c> at its own default of <c>0</c>.
+    /// Both paths agree, so the round trip does not diverge. The library reads
+    /// a <c>0</c> leading as a request to compute its own line height from the
+    /// font, and that computed value may exceed this cap. It remains bounded
+    /// by the font size that produces it.
     /// </remarks>
-    public const double MaxLeadingPoints = 50;
+    public const double MaxLeadingPoints = 1_000;
 
     /// <summary>
     /// The lowest value <see cref="Model.HeadingSpec.Level"/> accepts. Zero is

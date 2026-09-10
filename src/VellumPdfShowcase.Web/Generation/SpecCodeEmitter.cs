@@ -78,7 +78,16 @@ public static class SpecCodeEmitter
     /// decode failure <see cref="Generation.SpecRenderer.Render"/> already
     /// hit, unwrapped, in their own environment, which is the expected
     /// outcome of copying code that references bad bytes, not a defect in
-    /// what this method produced. A caller wanting one catch clause complete
+    /// what this method produced. A SECOND case joins it now that the model no
+    /// longer bounds page geometry itself: a page too small to lay one line
+    /// out on, or an element demanding more page continuations than the
+    /// library permits, makes <see cref="Generation.SpecRenderer.Render"/>
+    /// throw while this method returns successfully. The emitted code is
+    /// correct in that case too, for the same reason: a visitor who runs it
+    /// meets the identical refusal from the identical library call. Both
+    /// consumers still agree about every rejection the MODEL performs, which
+    /// is what <c>SymmetryTests</c> guards.
+    /// A caller wanting one catch clause complete
     /// for THIS method alone can therefore catch <see cref="ArgumentException"/>;
     /// a caller wanting completeness across both this method and
     /// <see cref="Generation.SpecRenderer.Render"/> together still needs
@@ -89,7 +98,6 @@ public static class SpecCodeEmitter
     public static string Emit(DocumentSpec spec)
     {
         spec.ValidateEmbeddedFontReferences();
-        spec.ValidateContentFitsPageArea();
 
         var writer = new CodeWriter();
         new Emitter(spec, writer).EmitDocument();

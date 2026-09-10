@@ -189,13 +189,13 @@
 
 .KNOWN LIMITATION: SCOPE DOES NOT YET COVER MODEL OR COMPONENTS.PAGES
     This gate instruments VellumPdfShowcase.Web.Generation only.
-    VellumPdfShowcase.Web.Model carries ValidateContentFitsPageArea and the
-    whole content walk both real consumers call before doing anything else,
+    VellumPdfShowcase.Web.Model carries the content walk and every member
+    validator both real consumers depend on before doing anything else,
     and VellumPdfShowcase.Web.Components.Pages will carry whatever UI steps
     6 and 8 of the plan add; neither is instrumented today, so a branch
     added to either is as invisible to this gate as one in a closure is.
     Widening --coverlet-include to VellumPdfShowcase.Web.Model.* was tried
-    directly while fixing this: measured, the suite as it stands reaches
+    directly while fixing this: measured at the time, the suite reached
     98.58% line and 93.45% branch coverage there, roughly forty untested
     branches spread across some fifteen types, the large majority a
     `value ?? throw ArgumentNullException` or `value is null ? null :

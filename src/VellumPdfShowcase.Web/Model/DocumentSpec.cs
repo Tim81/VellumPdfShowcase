@@ -402,10 +402,7 @@ public sealed record DocumentSpec
         /// <summary>
         /// The running character total, checked against
         /// <see cref="SpecLimits.MaxTotalTextLength"/> below. Used only by
-        /// this class itself: <see cref="ValidateContentFitsPageArea"/> no
-        /// longer re-reads it, or reuses this walk at all, since the page-area
-        /// bound now needs per-ELEMENT line counts (see
-        /// <see cref="EstimateElementLines"/>), not one document-wide total.
+        /// this class itself.
         /// </summary>
         private long CharacterCount { get; set; }
 
@@ -747,273 +744,6 @@ public sealed record DocumentSpec
         }
     }
 
-    /// <summary>
-    /// Confirms this specification's PAGE GEOMETRY cannot force
-    /// <c>VellumPdf.Layout.Rendering.DocumentRenderer.PlaceRenderer</c>, which
-    /// recurses once per page continuation, past
-    /// <see cref="SpecLimits.MaxSafePageContinuations"/> continuations while
-    /// placing any ONE element of <see cref="Content"/>; that recursion
-    /// overflows the CLR stack, which cannot be caught, so this must run
-    /// before either real consumer does any work.
-    /// </summary>
-    /// <remarks>
-    /// Like <see cref="ValidateEmbeddedFontReferences"/>, this cannot be
-    /// enforced inside any one property's own <see langword="init"/>: it reads
-    /// <see cref="Page"/>, <see cref="Margins"/>, <see cref="Header"/>,
-    /// <see cref="Footer"/> and <see cref="Content"/>, five independent
-    /// top-level properties of this same record that a caller's object
-    /// initializer may set in any order, so no single one of their own
-    /// <see langword="init"/> accessors can see all five already at their
-    /// final values. <see cref="Generation.SpecRenderer.Render"/> and
-    /// <see cref="Generation.SpecCodeEmitter.Emit"/> both call this,
-    /// alongside <see cref="ValidateEmbeddedFontReferences"/>, before doing
-    /// anything else, for the identical reason.
-    /// <para>
-    /// TWO corrections were needed to a previous version of this bound, both
-    /// found only once a reproduction was measured directly rather than
-    /// assumed from first principles.
-    /// </para>
-    /// <para>
-    /// FIRST: what overflows the stack is the number of continuations placing
-    /// a SINGLE element of <see cref="Content"/> requires, not the document's
-    /// own total page count. Measured directly: twenty thousand pages built
-    /// from twenty thousand separate top-level elements renders cleanly in
-    /// about half a second, because <c>DocumentRenderer</c>'s recursion
-    /// unwinds between top-level elements; what does not unwind is placing
-    /// ONE element (a list, in particular) whose own rendered lines span many
-    /// pages. A bound that sums every element's own line count and compares
-    /// the TOTAL against <see cref="SpecLimits.MaxSafePageContinuations"/>
-    /// would therefore both under- and over-protect: it would admit a single
-    /// oversized element sitting beside many trivial ones (the sum stays
-    /// under the ceiling; the one dangerous element does not), and it would
-    /// reject many small, individually safe elements for no reason (each
-    /// unwinds independently; summing them anyway invents a hazard that is
-    /// not there). This bound therefore takes the WORST single element's own
-    /// estimated line count, never a sum across <see cref="Content"/>.
-    /// </para>
-    /// <para>
-    /// SECOND: line count is driven by NODE count, not character count. A
-    /// list item, a table row, or any other block-level element starts a new
-    /// rendered line regardless of how few characters it carries, so an
-    /// estimate built only from total characters divided by an assumed
-    /// characters-per-page figure can pass a specification whose NODE count
-    /// alone already demands more lines than the page can hold. Measured
-    /// directly: a 20,000 x 200 point page, 55-point margins, and one list of
-    /// 1,650 items each carrying two children (4,950 <see cref="ListItemSpec"/>
-    /// instances, each holding a single-character <see cref="ListItemSpec.Text"/>
-    /// of <c>"W"</c>) carries only 4,950 characters, far under
-    /// <see cref="SpecLimits.MaxTotalTextLength"/>, and only 4,951 walked
-    /// nodes, under <see cref="SpecLimits.MaxWalkedNodes"/>; a character-only
-    /// estimate saw almost no text and computed roughly 9 page continuations,
-    /// comfortably passing, while the library still recurses once per
-    /// RENDERED LINE and this list alone requires 4,950 of them. This bound
-    /// now takes, per element, the GREATER of an estimated text-wrap line
-    /// count and a node-forced line count: every <see cref="PlainTextSpec"/>,
-    /// <see cref="HeadingSpec"/>, <see cref="ParagraphSpec"/> (as a whole, its
-    /// runs' combined length), <see cref="ListItemSpec"/> (at every depth
-    /// <see cref="ListSpec.Items"/> reaches) and <see cref="TableRowSpec"/>
-    /// contributes at least one line even when its own text is empty, exactly
-    /// as the library's own line-based layout does; the walk that already
-    /// enumerates these same positions, for <see cref="SpecLimits.MaxWalkedNodes"/>,
-    /// is what this bound now also drives its line count from, rather than
-    /// only that walk's character total.
-    /// </para>
-    /// <para>
-    /// The bound deliberately does not measure this specification's ACTUAL
-    /// glyphs or ACTUAL line height: doing so would require inspecting a
-    /// visitor-supplied embedded TrueType font's own metrics, which this
-    /// validation does not parse. Instead it assumes the widest glyph any
-    /// font <see cref="TextStyleSpec.Font"/> can select measures a full em
-    /// (<see cref="SpecLimits.MaxFontSize"/> itself), comfortably wider than
-    /// the widest Standard 14 glyph measured (Times-Bold's capital W, at
-    /// 0.989 em), and the tallest line measures <see cref="SpecLimits.MaxLeadingPoints"/>,
-    /// the same bound already established, on <see cref="SpecLimits.MaxLeadingPoints"/>'s
-    /// own remark, to safely cover both an explicit maximal
-    /// <see cref="TextStyleSpec.Leading"/> and the library's own auto-computed
-    /// line height at <see cref="SpecLimits.MaxFontSize"/>. Re-measured
-    /// directly against the single dense-text reproduction this bound was
-    /// originally derived from (see <see cref="SpecLimits.MaxSafePageContinuations"/>'s
-    /// own remark): the boundary between reliable rendering and reliable
-    /// overflow there sits at roughly 4,200 and 4,350 page continuations
-    /// respectively, consistent with the 4,250-to-4,500 band already recorded
-    /// there, so <see cref="SpecLimits.MaxSafePageContinuations"/> at 2,000
-    /// keeps the same wide margin under both the old, character-only estimate
-    /// and this node-aware one.
-    /// </para>
-    /// <para>
-    /// NOTE: an <see cref="ImageSpec"/> or <see cref="PieChartSpec"/> whose
-    /// own declared dimensions are large (up to <see cref="SpecLimits.MaxImageDimensionPoints"/>
-    /// or <see cref="SpecLimits.MaxPieChartDiameterPoints"/>, both far larger
-    /// than one line) is counted as exactly one line here, the same
-    /// unconditional floor every block-level element gets; this bound does
-    /// NOT model the vertical space either actually occupies. That remains
-    /// unmeasured: whether a run of many large, page-filling images or charts
-    /// can itself force the same per-continuation recursion a run of text
-    /// lines does was not established either way while fixing the defect
-    /// above, and is called out here rather than silently assumed safe.
-    /// </para>
-    /// </remarks>
-    public void ValidateContentFitsPageArea()
-    {
-        var contentWidth = Page.WidthPoints - Margins.Left - Margins.Right;
-        var contentHeight = Page.HeightPoints - Margins.Top - Margins.Bottom
-            - ReservedBandHeight(Header) - ReservedBandHeight(Footer);
-
-        var charsPerLine = (long)Math.Max(0, Math.Floor(contentWidth / SpecLimits.MaxFontSize));
-        var linesPerPage = (long)Math.Max(0, Math.Floor(contentHeight / SpecLimits.MaxLeadingPoints));
-
-        long worstElementLines = 0;
-        foreach (var item in Content)
-        {
-            worstElementLines = Math.Max(worstElementLines, EstimateElementLines(item, charsPerLine));
-        }
-
-        if (worstElementLines <= 0)
-        {
-            return;
-        }
-
-        var pagesNeeded = linesPerPage > 0
-            ? (worstElementLines + linesPerPage - 1) / linesPerPage
-            : long.MaxValue;
-
-        if (pagesNeeded > SpecLimits.MaxSafePageContinuations)
-        {
-            throw new ArgumentException(
-                $"This specification's page ({Page.WidthPoints:0.##} x {Page.HeightPoints:0.##} points) minus " +
-                "its margins and running-band heights leaves a content box too small to place its worst single " +
-                $"element of Content within {SpecLimits.MaxSafePageContinuations} page continuations, at a " +
-                $"worst-case {SpecLimits.MaxFontSize}-point glyph width and {SpecLimits.MaxLeadingPoints}-point " +
-                "line height, counting a line forced by list-item, table-row and other block-level node " +
-                "structure alongside wrapped text. DocumentRenderer.PlaceRenderer recurses once per page " +
-                "continuation and that recursion overflows the CLR stack, which cannot be caught. Enlarge the " +
-                "page, reduce the margins or running-band heights, or reduce the amount of text or the number " +
-                "of list items and table rows in this element.",
-                nameof(Page));
-        }
-    }
-
-    /// <summary>
-    /// The estimated number of rendered lines placing <paramref name="item"/>
-    /// alone would require, at <paramref name="charsPerLine"/> characters per
-    /// line: the greater, per line-producing position, of its own wrapped
-    /// text length and the unconditional one-line floor every such position
-    /// carries regardless of how little text it holds. See
-    /// <see cref="ValidateContentFitsPageArea"/>'s own remark for why this is
-    /// computed per element, summed only WITHIN one element's own nested
-    /// structure (a list's items at every depth, a table's rows), and never
-    /// summed ACROSS the top-level elements of <see cref="Content"/>.
-    /// </summary>
-    private static long EstimateElementLines(ContentItemSpec item, long charsPerLine)
-    {
-        switch (item)
-        {
-            case PlainTextSpec plainText:
-                return LinesForCharacters(plainText.Text.Length, charsPerLine);
-
-            case HeadingSpec heading:
-                // BookmarkTitle is not laid-out text (it names a PDF outline
-                // entry, not a rendered line), so it does not contribute here,
-                // unlike heading.Text itself.
-                return LinesForCharacters(heading.Text.Length, charsPerLine);
-
-            case ParagraphSpec paragraph:
-                {
-                    long chars = 0;
-                    foreach (var run in paragraph.Runs)
-                    {
-                        chars = SaturatingAdd(chars, run.Text.Length);
-                    }
-
-                    return LinesForCharacters(chars, charsPerLine);
-                }
-
-            case ListSpec list:
-                {
-                    long lines = 0;
-                    foreach (var listItem in list.Items)
-                    {
-                        lines = SaturatingAdd(lines, EstimateListItemLines(listItem, charsPerLine));
-                    }
-
-                    return lines;
-                }
-
-            case TableSpec table:
-                {
-                    long lines = 0;
-                    foreach (var row in table.Rows)
-                    {
-                        long rowChars = 0;
-                        foreach (var cell in row.Cells)
-                        {
-                            rowChars = SaturatingAdd(rowChars, cell.Content.Length);
-                        }
-
-                        lines = SaturatingAdd(lines, LinesForCharacters(rowChars, charsPerLine));
-                    }
-
-                    return lines;
-                }
-
-            default:
-                // ImageSpec, PieChartSpec, LineSeparatorSpec: none lays out
-                // wrapped text of its own (an image's or chart's AltText, and
-                // a chart slice's Label, are accessibility metadata, never a
-                // rendered line), but each is still a block-level element
-                // that occupies at least one line; see the NOTE on
-                // ValidateContentFitsPageArea about what this floor does NOT
-                // model for either type.
-                return 1;
-        }
-    }
-
-    /// <summary>Mirrors <see cref="EstimateElementLines"/> for one <see cref="ListItemSpec"/>, recursing into <see cref="ListItemSpec.Children"/> at every depth.</summary>
-    private static long EstimateListItemLines(ListItemSpec item, long charsPerLine)
-    {
-        var lines = LinesForCharacters(item.Text.Length, charsPerLine);
-        foreach (var child in item.Children)
-        {
-            lines = SaturatingAdd(lines, EstimateListItemLines(child, charsPerLine));
-        }
-
-        return lines;
-    }
-
-    /// <summary>
-    /// The number of lines <paramref name="length"/> characters need at
-    /// <paramref name="charsPerLine"/> characters per line, floored at one:
-    /// every line-producing position occupies at least one line even when its
-    /// own text is empty, matching the library's own block layout. When
-    /// <paramref name="charsPerLine"/> is zero or negative (the content box is
-    /// too narrow for even one worst-case glyph), any non-empty text cannot
-    /// be placed at all; that is represented here as a large sentinel rather
-    /// than an unbounded value, so a caller summing several such results with
-    /// <see cref="SaturatingAdd"/> cannot overflow.
-    /// </summary>
-    private static long LinesForCharacters(long length, long charsPerLine) =>
-        charsPerLine <= 0
-            ? (length > 0 ? long.MaxValue / 4 : 1)
-            : Math.Max(1, (length + charsPerLine - 1) / charsPerLine);
-
-    /// <summary>Adds <paramref name="a"/> and <paramref name="b"/>, clamping at <see cref="long.MaxValue"/> instead of overflowing.</summary>
-    private static long SaturatingAdd(long a, long b) => a > long.MaxValue - b ? long.MaxValue : a + b;
-
-    /// <summary>
-    /// The content height a <see cref="RunningBandSpec"/> reserves for
-    /// <see cref="ValidateContentFitsPageArea"/>'s purposes: its own declared
-    /// <see cref="RunningBandSpec.Height"/> when set, or, left unset,
-    /// <see cref="SpecLimits.MaxLeadingPoints"/> as a safe upper bound on the
-    /// library's own auto-computed band height. Measured directly: an unset
-    /// header on an otherwise zero-margin 200 x 200 page pushed the crash
-    /// boundary from 90,000 characters down to between 65,000 and 68,000,
-    /// consistent with an auto-computed height of at most, not exactly,
-    /// 50 points; this assumption never UNDER-estimates the height actually
-    /// reserved, which is what keeps it safe.
-    /// </summary>
-    private static double ReservedBandHeight(RunningBandSpec? band) =>
-        band is null ? 0 : band.Height ?? SpecLimits.MaxLeadingPoints;
-
     private static EncryptionSpec? ValidateEncryption(EncryptionSpec? value)
     {
         if (value is null || value.Permissions == PdfPermissions.All)
@@ -1059,11 +789,13 @@ public sealed record DocumentSpec
 }
 
 /// <summary>
-/// A page size expressed directly in PDF points. Both dimensions are capped to
-/// <see cref="SpecLimits.MinPageDimensionPoints"/> through
-/// <see cref="SpecLimits.MaxPageDimensionPoints"/> and must be finite; see the
-/// remark on <see cref="SpecLimits.MinPageDimensionPoints"/> for why the lower
-/// bound exists.
+/// A page size expressed directly in PDF points. Both dimensions must be finite
+/// and lie between <see cref="SpecLimits.MinPageDimensionPoints"/> and
+/// <see cref="SpecLimits.MaxPageDimensionPoints"/>. NOTE: a page large enough
+/// to construct is not necessarily a page the library can lay content out on.
+/// A page too small to hold one line is refused by the library itself, with a
+/// catchable exception; see the remark on
+/// <see cref="SpecLimits.MinPageDimensionPoints"/>.
 /// </summary>
 public sealed record PageSizeSpec(double WidthPoints, double HeightPoints)
 {
@@ -1179,10 +911,12 @@ public sealed record TextStyleSpec
     /// <summary>
     /// Defaults to 12, matching <c>TextStyle</c>'s own default exactly, for the
     /// same reason given on <see cref="PieChartSpec.StartAngle"/>. Capped at
-    /// <see cref="SpecLimits.MaxFontSize"/>: measured directly, a large font
-    /// size on a small page overflows the CLR stack the same way an
-    /// unbounded page size does, by forcing an unbounded page count from a
-    /// bounded amount of text. See the remark on <see cref="SpecLimits.MaxFontSize"/>.
+    /// <see cref="SpecLimits.MaxFontSize"/>, which is a sanity ceiling rather
+    /// than a measured boundary: a larger font size fits fewer characters on a
+    /// page, but the number of pages one element can demand is bounded by
+    /// <see cref="SpecLimits.MaxTotalTextLength"/> and
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> whatever the font size is. See
+    /// the remark on <see cref="SpecLimits.MaxFontSize"/>.
     /// </summary>
     public double FontSize
     {
@@ -1193,11 +927,12 @@ public sealed record TextStyleSpec
     /// <summary>
     /// Capped at <see cref="SpecLimits.MaxLeadingPoints"/> when set, for the
     /// same reason as <see cref="FontSize"/>: a large leading enlarges every
-    /// line exactly as a large font size does. NOTE: leaving this unset is not
-    /// reliably the safe end of the range; whether it is safer or more
-    /// dangerous than <see cref="SpecLimits.MaxLeadingPoints"/> depends on
-    /// <see cref="FontSize"/>, and must be measured rather than assumed. See
-    /// the remark on <see cref="SpecLimits.MaxLeadingPoints"/>.
+    /// line exactly as a large font size does, and neither bounds the worst
+    /// case. NOTE: leaving this unset does not mean a small line height. An
+    /// unset leading reaches the library as a literal zero, which it reads as
+    /// a request to compute a line height from the font, and that computed
+    /// value may exceed this cap. See the remark on
+    /// <see cref="SpecLimits.MaxLeadingPoints"/>.
     /// </summary>
     public double? Leading
     {
