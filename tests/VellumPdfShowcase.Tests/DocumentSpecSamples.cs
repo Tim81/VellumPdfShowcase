@@ -1047,29 +1047,47 @@ internal static class DocumentSpecSamples
     }
 
     /// <summary>
-    /// HIGH finding fix (the image cache): one <see cref="ImageSpec"/>
-    /// INSTANCE placed at three positions in <see cref="DocumentSpec.Content"/>.
-    /// <see cref="Generation.SpecRenderer"/> decodes and embeds that shared
-    /// instance once and reuses it at all three positions; the matching
-    /// change in <see cref="Generation.SpecCodeEmitter"/> hoists its
+    /// One <see cref="ImageSpec"/> INSTANCE placed at three positions in
+    /// <see cref="DocumentSpec.Content"/>. <see cref="Generation.SpecRenderer"/>
+    /// decodes and embeds that shared instance once and reuses it at all
+    /// three positions; the matching behaviour in
+    /// <see cref="Generation.SpecCodeEmitter"/> hoists its
     /// <c>Loader.Load(Images[N])</c> call into one declaration, reused by
     /// every <c>document.Add</c> site, instead of decoding it three times.
     /// Without both sides agreeing on that, this sample's round trip fails on
     /// the byte comparison, rather than on anything either consumer's own
     /// exception contract documents; see CLAUDE.md's round-trip invariant.
     /// A second, value-equal but reference-DISTINCT <see cref="ImageSpec"/>
-    /// carrying byte-for-byte identical content sits alongside it, used only
-    /// once, to pin that the cache and the hoisting are keyed by REFERENCE
-    /// identity, not by <see cref="ImageSpec"/>'s own record equality: the
-    /// two must NOT collapse into a single decode or a single <c>Images[N]</c>
-    /// entry, even though every scalar member and every byte of
-    /// <see cref="ImageSpec.Bytes"/> match.
+    /// sits alongside it, used only once, to pin that the cache and the
+    /// hoisting are keyed by REFERENCE identity, not by
+    /// <see cref="ImageSpec"/>'s own record equality: the two must NOT
+    /// collapse into a single decode or a single <c>Images[N]</c> entry, even
+    /// though every member, including <see cref="ImageSpec.Bytes"/>, compares
+    /// equal. It is built with <c>shared with { }</c>, not a second
+    /// <c>new ImageSpec { ... }</c> carrying its own copy of the same source
+    /// bytes: <see cref="ImageSpec.Bytes"/>'s <see langword="init"/> accessor
+    /// clones its argument (see <see cref="Model.SpecLimits.ValidateAssetBytes"/>),
+    /// so two independently constructed instances would hold two DIFFERENT
+    /// cloned arrays and already compare record-unequal on that member alone,
+    /// which would make this sample unable to tell reference-identity keying
+    /// apart from value-equality keying at all: both would already fail to
+    /// deduplicate them, for the wrong reason. <c>with { }</c> copies the
+    /// already-cloned <see cref="ImageSpec.Bytes"/> reference from
+    /// <c>shared</c> without invoking that accessor again, so
+    /// this second instance is genuinely value-equal, including on
+    /// <see cref="ImageSpec.Bytes"/>, while remaining a distinct reference.
+    /// Perturbation, run directly against this sample and reverted: replacing
+    /// <see cref="Generation.SpecRenderer"/>'s reference-identity image cache
+    /// comparer with a default <see cref="Dictionary{TKey,TValue}"/> (value
+    /// equality) leaves all 406 baseline tests green EXCEPT this sample's own
+    /// round trip, which fails on the byte comparison, confirming the sample
+    /// now discriminates the two keyings.
     /// </summary>
     public static DocumentSpec RepeatedImageInstance()
     {
         var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
         var shared = new ImageSpec { Format = ImageFormat.Png, Bytes = OnePixelPng, Width = 20, AltText = "Shared pixel." };
-        var valueEqualButDistinct = new ImageSpec { Format = ImageFormat.Png, Bytes = OnePixelPng, Width = 20, AltText = "Shared pixel." };
+        var valueEqualButDistinct = shared with { };
 
         return new DocumentSpec
         {

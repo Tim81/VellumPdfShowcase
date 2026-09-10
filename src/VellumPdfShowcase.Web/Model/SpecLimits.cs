@@ -33,7 +33,7 @@ public static class SpecLimits
     /// <summary>
     /// Caps <see cref="Model.ImageSpec.Bytes"/>, each entry of
     /// <see cref="Model.DocumentSpec.EmbeddedFonts"/>, and
-    /// <see cref="Model.PdfAOutputIntentSpec.IccProfile"/>. 20 MB comfortably
+    /// <see cref="Model.PdfAOutputIntentSpec.IccProfile"/>. 20 MiB comfortably
     /// exceeds every asset this application ships (the one bundled font,
     /// Liberation Sans Regular, is 410,712 bytes, about 401 KiB) while
     /// keeping a single specification's byte-array footprint
@@ -153,12 +153,19 @@ public static class SpecLimits
     /// multiplication and found NOT to have it: a footer whose style carries
     /// a maximal-length (<see cref="MaxUriLength"/>, 2,048)
     /// <see cref="Model.TextStyleSpec.LinkUri"/> renders output of IDENTICAL
-    /// LENGTH, 1,027,765 bytes, to the same footer with no
+    /// LENGTH, 1,026,940 bytes, to the same footer with no
     /// <see cref="Model.TextStyleSpec.LinkUri"/> at all, across a
     /// footer-only variant of the construction above: the same 20,000 by
     /// 260 point page, 55-point margins, 36-point/50-point-leading style and
     /// 1,650-item list, with only a footer, at
-    /// <see cref="Model.RunningBandSpec.Height"/> 30, and no header. That
+    /// <see cref="Model.RunningBandSpec.Height"/> 30, and no header. Each of
+    /// the 1,650 items carries the text <c>"W"</c> and two children that also
+    /// each carry the text <c>"W"</c>, the same item shape
+    /// <c>RunningBandTemplateCapTests.MaximalTemplateOnDeepPagination_RendersWithinBudget</c>
+    /// uses; 1,650 plain items, each carrying the text <c>"W"</c> but no
+    /// children, renders far fewer pages at this geometry (measured directly:
+    /// 825 pages, 338,889 bytes), so the item shape is load-bearing for
+    /// reproducing the 2,475-page, 1,026,940-byte figure, not incidental. That
     /// specification renders 2,475 pages, half the 4,950 the same list
     /// renders under both a header and a footer, because removing one band
     /// frees that much more of each page for content. NOTE: this is a
@@ -255,16 +262,28 @@ public static class SpecLimits
     /// Nothing bounded their SUM: a specification could hold hundreds of
     /// DISTINCT images, each individually under <see cref="MaxAssetBytes"/>,
     /// or every one of <see cref="MaxEmbeddedFonts"/>'s 100 slots filled at
-    /// <see cref="MaxAssetBytes"/> each. MEASURED through
-    /// <see cref="Generation.SpecRenderer.Render"/>, every specification below
-    /// was inside every existing cap: 500 DISTINCT 4096 by 4096 PNGs, each 2.5
-    /// MB of source, rendered 1.30 GB of output in 86,859 ms on desktop; 500
-    /// DISTINCT 2048 by 2048 PNGs rendered 596 MB in 22,666 ms; the SAME 500
-    /// images as one SHARED instance, after the per-render image cache fix
-    /// (see <see cref="Generation.SpecRenderer.RenderContext"/>'s own
-    /// <c>ImageCache</c>), rendered 2.79 MB in 109 ms. <see cref="Model.SpecLimits.MaxContentItems"/>
-    /// permits 2,000 occurrences, so the first figure extrapolates to roughly
-    /// 5 GB: memory exhaustion in the visitor's own tab, not merely a freeze.
+    /// <see cref="MaxAssetBytes"/> each. WITHOUT this cap, 500 DISTINCT 4096 by
+    /// 4096 PNGs (<c>SyntheticPng.CreateVaryingRgb</c>, each 3,873,835 source
+    /// bytes) do not complete through <see cref="Generation.SpecRenderer.Render"/>:
+    /// see the remark on <see cref="Generation.SpecRenderer.BuildImage"/> for
+    /// the killed run and the scaled measurements it extrapolates from, to
+    /// roughly 1.7 GB of output and about 57 s. That remark's separate 1.30
+    /// GB, 76,147 ms figure is a different construction, a SHARED instance
+    /// measured before the per-render image cache existed, not 500 distinct
+    /// instances; the two are not the same number. 500 DISTINCT 2048 by 2048
+    /// PNGs (each 1,785,372 source bytes) DID complete: 842,066,872 bytes
+    /// (803.06 MB) in 24,031 ms, also recorded on
+    /// <see cref="Generation.SpecRenderer.BuildImage"/>. The SAME 500 images
+    /// as one SHARED instance at 4096 by 4096, after the per-render image
+    /// cache fix (see <see cref="Generation.SpecRenderer.RenderContext"/>'s
+    /// own <c>ImageCache</c>), rendered 3,788,696 bytes (3.61 MiB) in 112 ms.
+    /// <see cref="Model.SpecLimits.MaxContentItems"/> permits 2,000
+    /// occurrences, so the 1.7 GB figure extrapolates further, to roughly 6.8
+    /// GB: memory exhaustion in the visitor's own tab, not merely a freeze.
+    /// WITH this cap, a specification anywhere near that size is refused
+    /// outright, before any image is decoded: measured directly, 50 DISTINCT
+    /// 4096 by 4096 PNGs (193,691,750 source bytes) is rejected at this
+    /// method with the message this constant's own validation produces.
     /// </remarks>
     /// <remarks>
     /// COUNTED BY DISTINCT REFERENCE, deliberately the opposite rule from
@@ -281,8 +300,9 @@ public static class SpecLimits
     /// once, and <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/>
     /// hoists the identical reference into one shared decode in the emitted
     /// C#, so a shared instance genuinely costs once on both sides, measured
-    /// directly above (2.79 MB against 596 MB to 1.30 GB for the identical
-    /// pixels as distinct instances). Counting by position here would charge
+    /// directly above (3,788,696 bytes against 842,066,872 bytes to an
+    /// extrapolated 1.7 GB for the identical pixels as distinct instances).
+    /// Counting by position here would charge
     /// twice for something the cache already made free, penalising exactly
     /// the sharing pattern the caching fix exists to reward, and counting by
     /// value equality would be wrong for the same reason
@@ -303,13 +323,16 @@ public static class SpecLimits
     /// <c>Document.UseTrueTypeFont</c>, regardless of whether any
     /// <see cref="Model.TextStyleSpec"/> in the specification ever references
     /// it by index, so <see cref="MaxEmbeddedFonts"/> (100) times
-    /// <see cref="MaxAssetBytes"/> (20 MB) is 2 GB the model already admitted
-    /// before this cap. MEASURED rather than assumed: 100 DISTINCT 410,712
-    /// byte font arrays (the shipped Liberation Sans face, cloned), none
-    /// referenced by any content style, registered in 34 ms on desktop and
-    /// added nothing to the 53,444 byte output; an unreferenced embedded font
-    /// is parsed but never actually embedded into the saved bytes. This does
-    /// NOT make the 2 GB figure safe to leave uncapped: <c>Document.UseTrueTypeFont</c>
+    /// <see cref="MaxAssetBytes"/> (20 MiB) is 2 GiB the model already admitted
+    /// before this cap. MEASURED rather than assumed, at the largest legal
+    /// construction THIS cap now admits (100 would exceed it; 81 times
+    /// 410,712 is 33,267,672 bytes, under the 33,554,432 byte limit, and 82
+    /// would not be): 81 DISTINCT 410,712 byte font arrays (the shipped
+    /// Liberation Sans face, cloned), none referenced by any content style,
+    /// registered in 40 ms on desktop, cold, and added nothing to the 53,852
+    /// byte output; an unreferenced embedded font is parsed but never
+    /// actually embedded into the saved bytes. This does NOT make the 2 GiB
+    /// figure safe to leave uncapped: <c>Document.UseTrueTypeFont</c>
     /// still parses, and <see cref="Model.SpecLimits.ValidateAssetBytes"/>
     /// still clones, every one of those bytes regardless of whether the
     /// library later embeds them, which is memory pressure in the visitor's
@@ -339,13 +362,14 @@ public static class SpecLimits
     /// same roughly seventeen to fifty-nine times desktop-to-browser factor
     /// that construction and <see cref="MaxTotalTextLength"/>'s own remark
     /// both measure directly, is on the order of tens of seconds, not the
-    /// tens of MINUTES the uncapped
-    /// 1.30 GB figure above would extrapolate to at 500 occurrences. Embedded
-    /// fonts and an ICC profile were measured and found far cheaper per byte
-    /// than an image (100 fonts totalling 39.2 MB registered in 34 ms, against
-    /// 30.65 MB of images costing 737 ms), so images are the figure this value
-    /// is calibrated against; a specification that spends its whole budget on
-    /// fonts instead costs less than the figure above, not more.
+    /// tens of MINUTES the uncapped, extrapolated 1.7 GB figure above would
+    /// suggest at 500 occurrences. Embedded fonts and an ICC profile were
+    /// measured and found far cheaper per byte than an image (81 fonts
+    /// totalling 33,267,672 bytes, 31.73 MiB, registered in 40 ms, against
+    /// 32,136,696 bytes, 30.65 MiB, of images costing 737 ms), so images are
+    /// the figure this value is calibrated against; a specification that
+    /// spends its whole budget on fonts instead costs less than the figure
+    /// above, not more.
     /// </remarks>
     /// <remarks>
     /// NOTE what this cap does NOT bound. Exactly as <see cref="MaxAssetBytes"/>'s
@@ -883,7 +907,7 @@ public static class SpecLimits
         ArgumentNullException.ThrowIfNull(value, paramName);
         return value.Length > MaxAssetBytes
             ? throw new ArgumentException(
-                $"{paramName} must not exceed {MaxAssetBytes:N0} bytes ({MaxAssetBytes / (1024 * 1024)} MB); got {value.Length:N0} bytes.",
+                $"{paramName} must not exceed {MaxAssetBytes:N0} bytes ({MaxAssetBytes / (1024 * 1024)} MiB); got {value.Length:N0} bytes.",
                 paramName)
             : (byte[])value.Clone();
     }

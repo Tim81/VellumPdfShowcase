@@ -461,8 +461,8 @@ public static class SpecRenderer
     /// carrying one can ever be constructed.
     /// </summary>
     /// <remarks>
-    /// HIGH finding fix: this used to decode <paramref name="spec"/>'s bytes
-    /// afresh for every occurrence of an <see cref="ImageSpec"/> in
+    /// Before the cache below existed, this decoded <paramref name="spec"/>'s
+    /// bytes afresh for every occurrence of an <see cref="ImageSpec"/> in
     /// <see cref="DocumentSpec.Content"/>, even when every occurrence was the
     /// SAME instance. Nothing bounded the product of one image's decoded size
     /// and its occurrence count: <see cref="SpecLimits.MaxAssetBytes"/> bounds
@@ -502,10 +502,17 @@ public static class SpecRenderer
     /// figure was measured in (process killed for memory exhaustion), but
     /// scaled runs at 50, 100 and 150 occurrences (172.17 MB/5,283 ms,
     /// 344.34 MB/11,980 ms, 516.51 MB/17,047 ms) grow linearly and extrapolate
-    /// to roughly 1.7 GB and 57 s at 500, consistent with the 1.30 GB and
-    /// 76,147 ms figure above. NOTE: that residual is what
-    /// <see cref="SpecLimits.MaxTotalAssetBytes"/> was subsequently added to
-    /// bound; this fix alone deliberately did not add a cap.
+    /// to roughly 1.7 GB and 57 s at 500. NOTE: this is a different
+    /// construction from the 1.30 GB, 76,147 ms figure above, which measured
+    /// a SHARED instance before this fix's own cache existed, not 500 distinct
+    /// instances; the two figures are not directly comparable, though both
+    /// land in the same order of magnitude. NOTE further: that residual is
+    /// what <see cref="SpecLimits.MaxTotalAssetBytes"/> was subsequently
+    /// added to bound; this fix alone deliberately did not add a cap. Measured
+    /// directly against the cap that now exists, a specification far smaller
+    /// than 500 occurrences is already refused before any image is decoded:
+    /// 50 distinct 4096 by 4096 instances (193,691,750 source bytes) is
+    /// rejected at construction time by <see cref="DocumentSpec.ValidateAggregateAssetBytes"/>.
     /// </para>
     /// <see cref="Generation.SpecCodeEmitter"/> hoists the identical repeated
     /// reference into one shared decode in the emitted C#, for the same

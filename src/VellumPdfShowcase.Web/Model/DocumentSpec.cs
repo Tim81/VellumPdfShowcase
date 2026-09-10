@@ -757,7 +757,7 @@ public sealed record DocumentSpec
             throw new ArgumentException(
                 "This specification's assets (every distinct image reachable from Content, every entry of " +
                 $"EmbeddedFonts, and any output intent's IccProfile) total {total:N0} bytes, more than the " +
-                $"{SpecLimits.MaxTotalAssetBytes:N0} byte ({SpecLimits.MaxTotalAssetBytes / (1024 * 1024)} MB) " +
+                $"{SpecLimits.MaxTotalAssetBytes:N0} byte ({SpecLimits.MaxTotalAssetBytes / (1024 * 1024)} MiB) " +
                 "aggregate limit. A repeated ImageSpec INSTANCE is counted once, not once per occurrence; " +
                 "reduce the number of distinct assets or their combined size.");
         }

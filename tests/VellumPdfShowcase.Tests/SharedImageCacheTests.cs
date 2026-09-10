@@ -7,17 +7,18 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// HIGH finding fix: <see cref="Generation.SpecRenderer"/> used to decode and
-/// embed a fresh copy of an <see cref="ImageSpec"/>'s bytes for every
-/// occurrence in <see cref="DocumentSpec.Content"/>, even when every
-/// occurrence was the SAME instance. Nothing bounded the product of one
-/// image's decoded size and its occurrence count, which is memory exhaustion
-/// in a browser tab rather than a mere slowdown. Measured through
-/// <see cref="Generation.SpecRenderer.Render"/>, a shared 512 by 512
-/// PNG placed 500 times produced 138 MB of output; a shared 4096 by 4096 PNG
-/// placed 500 times produced 1.30 GB. <see cref="Generation.SpecRenderer"/>'s
-/// (private) per-render image cache closes the cheap trigger: a repeated
-/// <see cref="ImageSpec"/> INSTANCE is now decoded, and embedded, once.
+/// <see cref="Generation.SpecRenderer"/> decodes and embeds an
+/// <see cref="ImageSpec"/> INSTANCE once per <see cref="Generation.SpecRenderer.Render"/>
+/// call, however many times <see cref="DocumentSpec.Content"/> repeats that
+/// same instance, rather than decoding and embedding a fresh copy at every
+/// occurrence. Without that, nothing bounds the product of one image's
+/// decoded size and its occurrence count, which is memory exhaustion in a
+/// browser tab rather than a mere slowdown. Measured through
+/// <see cref="Generation.SpecRenderer.Render"/> before this cache existed, a
+/// shared 512 by 512 PNG placed 500 times produced 138 MB of output; a
+/// shared 4096 by 4096 PNG placed 500 times produced 1.30 GB.
+/// <see cref="Generation.SpecRenderer"/>'s (private) per-render image cache
+/// closes that trigger.
 /// </summary>
 /// <remarks>
 /// These tests assert on OUTPUT SIZE, not on elapsed time, since a timing
@@ -25,13 +26,14 @@ namespace VellumPdfShowcase.Tests;
 /// is the one that fails if the cache is removed: without it, 200 occurrences
 /// of even a tiny synthetic image push the output size well past the ceiling
 /// asserted there (measured directly, uncached: about 2.4 MB against the
-/// roughly 84 KB this test's threshold allows).
+/// 49,077 bytes this test's threshold allows for).
 /// <see cref="DistinctInstances_IdenticalBytes_CacheDoesNotHelp"/> is the
-/// companion measurement the owner asked for: distinct <see cref="ImageSpec"/>
-/// instances sharing byte-for-byte identical content are NOT deduplicated,
-/// deliberately, because the cache is keyed by reference identity; this is
-/// the number that says whether a cap on distinct images is still warranted,
-/// which this change does not add.
+/// companion measurement: distinct <see cref="ImageSpec"/> instances sharing
+/// byte-for-byte identical content are NOT deduplicated, deliberately,
+/// because the cache is keyed by reference identity, not by
+/// <see cref="ImageSpec"/>'s own record equality; <see cref="Model.SpecLimits.MaxTotalAssetBytes"/>
+/// is the cap this measurement justifies, bounding the sum of every such
+/// distinct instance's bytes rather than relying on the cache to shrink it.
 /// </remarks>
 public class SharedImageCacheTests
 {
@@ -64,7 +66,7 @@ public class SharedImageCacheTests
     /// cache in place, the decoded image is embedded once and every occurrence
     /// costs only a lightweight placement, so output stays close to the
     /// single source image's own size. Measured directly at these parameters:
-    /// about 84 KB. Remove <see cref="Generation.SpecRenderer"/>'s image cache
+    /// 49,077 bytes. Remove <see cref="Generation.SpecRenderer"/>'s image cache
     /// (decode unconditionally, on every occurrence, the way it did before
     /// the fix) and this assertion fails: measured directly, the same
     /// specification then renders about 2.4 MB.
@@ -106,8 +108,9 @@ public class SharedImageCacheTests
             distinct.Length > shared.Length * 10,
             $"Expected {Occurrences} distinct instances of an identical image to render substantially larger " +
             $"than {Occurrences} occurrences of one shared instance (shared: {shared.Length:N0} bytes, " +
-            $"distinct: {distinct.Length:N0} bytes). A cap on distinct images was deliberately NOT added by " +
-            "this fix; this figure is what the owner needs to decide whether one is still warranted.");
+            $"distinct: {distinct.Length:N0} bytes). This is the measurement that justifies " +
+            "SpecLimits.MaxTotalAssetBytes, the aggregate cap that bounds distinct instances by their summed " +
+            "byte size instead of relying on the reference-keyed cache to shrink them.");
     }
 }
 
