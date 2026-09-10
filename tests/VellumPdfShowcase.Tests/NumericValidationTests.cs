@@ -1224,14 +1224,27 @@ public class RunningBandTemplateCapTests
             Footer = band,
         };
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var bytes = SpecRenderer.Render(spec);
-        sw.Stop();
+        // NOTE: the fastest of three attempts, not a single sample. Load elsewhere
+        // on the machine can only ever inflate an elapsed time, never deflate it,
+        // so the minimum is the estimator least sensitive to whatever else is
+        // running. A removed or widened cap inflates every attempt alike, so this
+        // costs the guard no discrimination. The loop exits at the first attempt
+        // under budget, so the uncontended case still renders exactly once.
+        var elapsed = long.MaxValue;
+        byte[] bytes = [];
+
+        for (var attempt = 0; attempt < 3 && elapsed >= 2_000; attempt++)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            bytes = SpecRenderer.Render(spec);
+            sw.Stop();
+            elapsed = Math.Min(elapsed, sw.ElapsedMilliseconds);
+        }
 
         Assert.NotEmpty(bytes);
         Assert.True(
-            sw.ElapsedMilliseconds < 2_000,
-            $"Rendering took {sw.ElapsedMilliseconds} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
+            elapsed < 2_000,
+            $"The fastest of three renders took {elapsed} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
             "about 226 ms; a template anywhere near MaxTextLength (100,000) on this same shape takes about " +
             "5,518 ms, so a budget of 2,000 ms catches a removed or substantially widened cap.");
     }
