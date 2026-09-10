@@ -73,7 +73,7 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
-    /// Cycle 6 left open, cycle 7 closes: <c>Uri.TryCreate</c> accepts a C0
+    /// <c>Uri.TryCreate</c> accepts a C0
     /// control character or DEL embedded in an otherwise well-formed
     /// <c>http</c>/<c>https</c> URI (measured directly against every value
     /// below) and reports the scheme unchanged, so the scheme check alone
@@ -161,7 +161,7 @@ public class DocumentSpecValidationTests
     /// actually has, so it inspects a future member without anyone having to
     /// remember to teach it that member's name.
     /// <para>
-    /// Cycle 7 review: the ORIGINAL version of this guard enumerated
+    /// The ORIGINAL version of this guard enumerated
     /// <see cref="TextStyleSpec"/>'s own PROPERTIES and waved through every
     /// VALUE type unconditionally, on the theory that
     /// <see cref="ValueType.Equals(object?)"/> always compares every field.
@@ -328,7 +328,7 @@ public class DocumentSpecValidationTests
 
         if (underlyingType.IsInterface)
         {
-            // Round nine, HIGH 4: an interface-typed member (IReadOnlyList<T>
+            // An interface-typed member (IReadOnlyList<T>
             // is the shape plan section 3.4.0.1 names by example, a dash
             // pattern) has no instance FIELDS of its own for the recursion
             // below to find, so the original check fell through to
@@ -385,7 +385,7 @@ public class DocumentSpecValidationTests
 
             if (hasCustomOverride)
             {
-                // Low (round nine): this behavioural check was previously
+                // This behavioural check was previously
                 // inside an `if (underlyingType.IsClass)` block, so a VALUE
                 // TYPE (a struct, including a record struct) with its OWN
                 // broken custom Equals override skipped it entirely and fell
@@ -723,10 +723,12 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
-    /// Proves <see cref="HasValueEquality"/> itself rejects each of the four
-    /// shapes review has named (three from cycle 7, the interface-typed
-    /// member from round nine's own HIGH 4), none of which the shape's own
-    /// PREVIOUS guard caught. Each nested type below exists only to be fed to
+    /// Proves <see cref="HasValueEquality"/> itself rejects every shape
+    /// review has found unsafe (an array-wrapping value type, a public array
+    /// field, a reference-equality override, an always-equal or
+    /// always-unequal override, a dereferencing override, and the
+    /// interface-typed member covered separately below), none of which the
+    /// shape's own PREVIOUS guard caught. Each nested type below exists only to be fed to
     /// <see cref="HasValueEquality"/> directly; none is a member of
     /// <see cref="TextStyleSpec"/>, so this does not depend on, or risk
     /// corrupting, the model itself.
@@ -823,7 +825,8 @@ public class DocumentSpecValidationTests
         /// class, not an array, and has no fields of its own for the
         /// recursion to inspect, so <c>fields.All(...)</c> over an empty
         /// array returned <see langword="true"/>. Measured directly against
-        /// the guard as it stood in round nine: <c>HasValueEquality(typeof(IReadOnlyList&lt;int&gt;))</c>
+        /// the guard before the interface fix above:
+        /// <c>HasValueEquality(typeof(IReadOnlyList&lt;int&gt;))</c>
         /// was <see langword="true"/>.
         /// </summary>
         private sealed record DashPatternHazard
@@ -859,7 +862,7 @@ public class DocumentSpecValidationTests
         }
 
         /// <summary>
-        /// A LOW round nine found: the behavioural blank-instance check
+        /// The behavioural blank-instance check
         /// previously ran only inside an <c>IsClass</c> test, so a value
         /// type (a struct) with its own broken custom <c>Equals</c> override
         /// skipped it entirely and fell straight through to safe-looking
@@ -883,7 +886,7 @@ public class DocumentSpecValidationTests
             Assert.False(HasValueEquality(typeof(AlwaysUnequalStructHazard)));
 
         /// <summary>
-        /// A LOW round nine found: an override that DEREFERENCES a field
+        /// An override that DEREFERENCES a field
         /// (rather than merely comparing it) threw a raw, opaque
         /// <see cref="NullReferenceException"/> out of the guard itself on
         /// <see cref="RuntimeHelpers.GetUninitializedObject(Type)"/>'s
@@ -1350,7 +1353,7 @@ public class DocumentSpecCollectionAliasingTests
 }
 
 /// <summary>
-/// Cycle 7 review: <see cref="TextRunSpec"/> was the one bare positional
+/// <see cref="TextRunSpec"/> was the one bare positional
 /// record in this model, with neither <see cref="TextRunSpec.Text"/> nor
 /// <see cref="TextRunSpec.Style"/> validated at all; five different inputs
 /// reached <see cref="NullReferenceException"/> as a result, which made
@@ -1394,7 +1397,7 @@ public class TextRunSpecValidationTests
     }
 
     /// <summary>
-    /// The specific hazard cycle 7 found: a <see langword="null"/>
+    /// The specific hazard this closes: a <see langword="null"/>
     /// <see cref="TextRunSpec.Style"/> reaching <see cref="ParagraphSpec"/>
     /// untouched, because that record's own <c>ValidateRuns</c> checked only
     /// <see cref="TextRunSpec.Text"/>. Now impossible: the
@@ -1412,7 +1415,7 @@ public class TextRunSpecValidationTests
 }
 
 /// <summary>
-/// Round nine review, Medium 1: the same shape of gap
+/// The same shape of gap
 /// <see cref="TextRunSpecValidationTests"/> closed for <see cref="TextRunSpec.Style"/>
 /// survived in three further <see langword="required"/> members with no null
 /// check of their own: <see cref="RunningBandSpec.Style"/>,
@@ -1598,7 +1601,7 @@ public class SpecSizeLimitTests
     }
 
     /// <summary>
-    /// Cycle 7 review: <see cref="PdfAOutputIntentSpec.ComponentCount"/> was
+    /// <see cref="PdfAOutputIntentSpec.ComponentCount"/> was
     /// the one numeric member in the model with no cap of its own.
     /// <see cref="IccProfileHeaderTests"/> below covers the cross-check
     /// against a profile's OWN declared colour space, which only fires for
@@ -1848,6 +1851,22 @@ public class IccProfileHeaderTests
         Content = [new PlainTextSpec { Text = "x" }],
         OutputIntent = outputIntent,
     };
+
+    /// <summary>
+    /// <see cref="IccProfileHeader.Validate"/> reads <c>profile.Length</c> as
+    /// its first statement, which raised an uncaught
+    /// <see cref="NullReferenceException"/> for a null profile before the
+    /// explicit guard. It now throws <see cref="ArgumentNullException"/>,
+    /// matching <see cref="ImageSignature.Matches"/>'s own null-bytes
+    /// contract and the rest of this model's validation surface. Called
+    /// directly, because <see cref="Model.DocumentSpec.OutputIntent"/> can
+    /// never itself supply a null <see cref="PdfAOutputIntentSpec.IccProfile"/>.
+    /// </summary>
+    [Fact]
+    public void NullProfile_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => IccProfileHeader.Validate(null!, 3));
+    }
 
     [Fact]
     public void ThreeJunkBytes_ThrowsAtConstruction_RatherThanEmbeddingSilently()
@@ -2142,7 +2161,7 @@ public class WalkedNodeLimitTests
 }
 
 /// <summary>
-/// Cycle 7 review: the content walk counted a <see cref="PieChartSpec"/>'s
+/// The content walk once counted a <see cref="PieChartSpec"/>'s
 /// slices as NODES, against <see cref="SpecLimits.MaxWalkedNodes"/>, but
 /// never counted a slice's own <see cref="PieSlice.Label"/>, or an image's or
 /// chart's own <see cref="ImageSpec.AltText"/> / <see cref="PieChartSpec.AltText"/>,
@@ -2249,7 +2268,7 @@ public class UncountedTextBearingMemberTests
     /// text, far under every cap, must not be rejected.
     /// </summary>
     /// <remarks>
-    /// Round nine review (LOW): the original version of this test used
+    /// The original version of this test used
     /// three-to-four-word strings totalling roughly 30 characters, which
     /// survived <see cref="SpecLimits.MaxTotalTextLength"/> being cut from
     /// 20,000 down to 200 without failing, and so demonstrated nothing about

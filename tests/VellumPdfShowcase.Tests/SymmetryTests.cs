@@ -7,16 +7,17 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// Round nine's central change: the product's invariant is that
+/// The product's invariant is that
 /// <see cref="SpecRenderer.Render"/> and <see cref="SpecCodeEmitter.Emit"/>
 /// cannot disagree about a <see cref="DocumentSpec"/>. That invariant had been
 /// approximated by branch coverage, and the approximation actively caused
 /// defects: pressure toward 100% coverage deleted defensive arms from
 /// <see cref="SpecRenderer"/> while <see cref="SpecCodeEmitter"/>'s
 /// equivalents survived because some test happened to reach them, producing
-/// two live divergences (HIGH 1: an unrecognised <see cref="ContentItemSpec"/>
-/// rendered as though absent while <see cref="SpecCodeEmitter"/> threw; HIGH
-/// 2: an out-of-range <see cref="FontKind"/> rendered as Helvetica while
+/// two live divergences (the ContentItemSpec divergence: an unrecognised
+/// <see cref="ContentItemSpec"/> rendered as though absent while
+/// <see cref="SpecCodeEmitter"/> threw; the FontKind divergence: an
+/// out-of-range <see cref="FontKind"/> rendered as Helvetica while
 /// <see cref="SpecCodeEmitter"/> threw) with the branch-coverage gate fully
 /// green throughout. This file asserts the invariant DIRECTLY, over a corpus
 /// of every existing <see cref="DocumentSpecSamples"/> entry plus adversarial
@@ -54,8 +55,8 @@ namespace VellumPdfShowcase.Tests;
 /// consumer's own per-content-type dispatch can be surprised by it; an
 /// ArgumentException from one side and silent success (or an unrelated
 /// exception) from the other means one consumer's switch tolerates a shape
-/// the other's cannot handle, which is EXACTLY the shape of HIGH 1 and HIGH
-/// 2. This is asserted by exception FAMILY (does it derive from
+/// the other's cannot handle, which is EXACTLY the shape of the two
+/// divergences above. This is asserted by exception FAMILY (does it derive from
 /// ArgumentException), not exact subtype: both contracts only promise the
 /// family, and the two consumers are not required to throw the identical
 /// ArgumentException subtype for the identical reason.
@@ -63,9 +64,10 @@ namespace VellumPdfShowcase.Tests;
 /// <para>
 /// PROOF this guard actually protects the property, rather than passing
 /// vacuously: with <c>DocumentSpec.IsRecognisedContentItemType</c>'s call
-/// site in <c>ValidateContent</c> commented out (reintroducing HIGH 1) and,
-/// separately, with <c>FontSpec.Kind</c>'s validation reverted to a bare
-/// auto-property (reintroducing HIGH 2), each of the two shapes below
+/// site in <c>ValidateContent</c> commented out (reintroducing the
+/// ContentItemSpec divergence) and, separately, with <c>FontSpec.Kind</c>'s
+/// validation reverted to a bare auto-property (reintroducing the FontKind
+/// divergence), each of the two shapes below
 /// constructs successfully again, and feeding the result to
 /// <see cref="RenderAndEmitAgreeOnArgumentRejection"/> fails immediately,
 /// naming the exact disagreement (Render succeeds silently; Emit throws
@@ -510,7 +512,7 @@ public class SymmetryTests
     private sealed record UnrecognisedContentItemSpecForSymmetryProof : ContentItemSpec;
 
     /// <summary>
-    /// HIGH 1's exact shape, proven here rather than left implicit: an
+    /// The ContentItemSpec divergence's exact shape, proven here rather than left implicit: an
     /// unrecognised <see cref="ContentItemSpec"/> subtype cannot even be
     /// CONSTRUCTED into a <see cref="DocumentSpec"/> any more
     /// (<see cref="DocumentSpec.Content"/> rejects it), which is what
@@ -539,7 +541,7 @@ public class SymmetryTests
         Assert.Contains("neither SpecRenderer nor SpecCodeEmitter recognises", exception.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>Mirrors <see cref="UnrecognisedContentItem_CannotBeConstructed_SoRenderAndEmitCannotDisagreeAboutIt"/> for HIGH 2: an out-of-range <see cref="FontKind"/>, also now rejected at construction, for the identical reason.</summary>
+    /// <summary>Mirrors <see cref="UnrecognisedContentItem_CannotBeConstructed_SoRenderAndEmitCannotDisagreeAboutIt"/> for the FontKind divergence: an out-of-range <see cref="FontKind"/>, also now rejected at construction, for the identical reason.</summary>
     [Fact]
     public void OutOfRangeFontKind_CannotBeConstructed_SoRenderAndEmitCannotDisagreeAboutIt()
     {

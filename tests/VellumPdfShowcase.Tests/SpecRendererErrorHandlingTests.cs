@@ -36,7 +36,7 @@ public class SpecRendererErrorHandlingTests
     }
 
     /// <summary>
-    /// Cycle 7 review: proves the asymmetry <see cref="SpecCodeEmitter.Emit"/>'s
+    /// Proves the asymmetry <see cref="SpecCodeEmitter.Emit"/>'s
     /// own exception contract now documents. <see cref="SpecCodeEmitter.Emit"/>
     /// emits TEXT referencing <c>Images[0]</c> by position; it never decodes
     /// the bytes themselves, so the SAME specification that makes
@@ -79,7 +79,7 @@ public class SpecRendererErrorHandlingTests
     }
 
     /// <summary>
-    /// Cycle 7 review: <see cref="DocumentSpec.Encryption"/>'s own
+    /// <see cref="DocumentSpec.Encryption"/>'s own
     /// construction-time check only compares <see cref="EncryptionSpec.OwnerPassword"/>
     /// against <see cref="EncryptionSpec.UserPassword"/> when
     /// <see cref="EncryptionSpec.Permissions"/> restricts anything; it returns

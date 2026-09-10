@@ -3,7 +3,7 @@ using System.Text;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// Cycle 7 review: <see cref="PdfNormalization"/>'s own remark explains, at
+/// <see cref="PdfNormalization"/>'s own remark explains, at
 /// length, WHY each of its three patterns requires an actual newline
 /// immediately after the text it masks (<c>(?=\r?\n)</c>): without it, a
 /// visitor-supplied <c>LinkUri</c> spelling out text that happens to match a

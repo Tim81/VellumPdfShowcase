@@ -6,17 +6,18 @@
 
 .DESCRIPTION
     An emitter branch that no test reaches can be corrupted without turning
-    the suite red; six review cycles of this repository found such branches
-    by hand, repeatedly. This script makes that failure automatic instead of
-    depending on a reviewer noticing.
+    the suite red; repeated manual review of this repository found such
+    branches by hand, again and again. This script makes that failure
+    automatic instead of depending on a reviewer noticing.
 
     It runs the test project through coverlet.MTP, coverlet's own
     Microsoft.Testing.Platform integration (NOT coverlet.collector, which is
     a VSTest data collector and never activates under the native MTP host
     this project runs; see the "dotnet test is broken here" note in
     CLAUDE.md), instrumenting every type in the
-    VellumPdfShowcase.Web.Generation namespace (see CYCLE 7 FIX below for
-    why this is the whole namespace, not only SpecCodeEmitter itself). It
+    VellumPdfShowcase.Web.Generation namespace (see NAMESPACE-WIDE
+    INSTRUMENTATION FIX below for why this is the whole namespace, not only
+    SpecCodeEmitter itself). It
     then reads the resulting Cobertura report directly and asserts, over
     EVERY class the report contains, per line, that:
 
@@ -30,7 +31,7 @@
     branch added to a large file cannot dilute its way past this gate the
     way it could dilute a project-wide percentage.
 
-.CYCLE 7 FIX
+.NAMESPACE-WIDE INSTRUMENTATION FIX
     This gate previously instrumented by TYPE name
     ([...]SpecCodeEmitter.Web.Generation.SpecCodeEmitter*, matching every
     type whose name starts with "SpecCodeEmitter" regardless of which file
@@ -103,14 +104,14 @@
     against SpecRenderer's own output for every sample this script's runs
     exercise, which is what supplies the observability property this gate
     does not. The two are complementary, not redundant: this gate would
-    have caught the eight branches cycle 6 found with zero samples
+    have caught the eight branches an earlier review found with zero samples
     reaching them at all; it would not, by itself, have caught the seven
     that executed while nothing asserted on their output.
 
 .KNOWN EXCLUSION
-    None. As of cycle 7, no member anywhere in the
+    None. No member anywhere in the
     VellumPdfShowcase.Web.Generation namespace carries
-    [ExcludeFromCodeCoverage]; see CYCLE 7 FIX above for how the four
+    [ExcludeFromCodeCoverage]; see NAMESPACE-WIDE INSTRUMENTATION FIX above for how the four
     defensive arms that previously needed it (one of them, on
     SpecCodeEmitter.ImageLoaderName, via exactly this attribute) were
     rewritten to have no unreachable branch to exclude in the first place.
@@ -120,19 +121,20 @@
     designed away the same way, [ExcludeFromCodeCoverage] on the smallest
     possible extracted member remains the correct tool, per the failure
     message below. Do NOT treat "eliminate the branch" as the only
-    acceptable remedy for a genuinely unreachable defensive arm: round nine
-    found that incentive itself caused two live divergences between
+    acceptable remedy for a genuinely unreachable defensive arm: that
+    incentive itself once caused two live divergences between
     SpecRenderer and SpecCodeEmitter, because eliminating an arm from one
     side is not the same act as eliminating it from both, and this gate
-    could not see the difference; see ROUND NINE FIX below.
+    could not see the difference; see THE INCENTIVE THIS GATE CREATES below.
 
-.ROUND NINE FIX: THE INCENTIVE THIS GATE CREATES
-    Cycle 7's redesign correctly closed the specific branches it found, but
-    left a standing incentive: "no unreached branch" reads, to a future
-    change, as "delete whichever arm is unreached", and a defensive arm can
-    become unreached on ONE side of the SpecRenderer / SpecCodeEmitter pair
-    without the same change touching the other side at all. That is exactly
-    what produced round nine's HIGH 1 and HIGH 2: SpecRenderer's own
+.THE INCENTIVE THIS GATE CREATES
+    The namespace-wide instrumentation fix above correctly closed the
+    specific branches it found, but left a standing incentive: "no unreached
+    branch" reads, to a future change, as "delete whichever arm is
+    unreached", and a defensive arm can become unreached on ONE side of the
+    SpecRenderer / SpecCodeEmitter pair without the same change touching the
+    other side at all. That is exactly what produced the ContentItemSpec and
+    FontKind divergences: SpecRenderer's own
     defensive arms for an unrecognised ContentItemSpec and an out-of-range
     FontKind were removed (or never added) while SpecCodeEmitter's
     equivalents survived, because some test happened to reach
@@ -201,11 +203,11 @@
     `value ?? throw ArgumentNullException` or `value is null ? null :
     Validate(...)` pattern on a required or optional member whose null (or
     boundary) case has never been paired with a test, the same shape as the
-    Medium 1 fix elsewhere in this round. Turning that widened include on
-    without first closing those gaps would fail this gate outright; closing
-    forty scattered gaps was judged disproportionate to fold into this
-    round's fix, which already touches DocumentSpec.cs extensively for
-    unrelated reasons, so the include remains Generation-only and this
+    null-check gap closed elsewhere in this same fix. Turning that widened
+    include on without first closing those gaps would fail this gate
+    outright; closing forty scattered gaps was judged disproportionate to
+    fold into this fix, which already touches DocumentSpec.cs extensively
+    for unrelated reasons, so the include remains Generation-only and this
     measurement is recorded here as the reason, not silently deferred.
     Widening to Model is real, tractable follow-up work; widening to
     Components.Pages first needs a UI test harness (bUnit or equivalent)
@@ -238,8 +240,8 @@
     assertion in this script is a necessary second step, not folded into
     the test run itself.
 
-    REQUIRED, NOT YET AUTOMATED: no CI workflow exists in this repository as
-    of cycle 7 (deployment, which is when one would normally be added, is a
+    REQUIRED, NOT YET AUTOMATED: no CI workflow exists in this repository
+    yet (deployment, which is when one would normally be added, is a
     later step of the plan). Until one exists and runs this script, it is
     the CONTRIBUTOR's own responsibility to run it by hand, alongside
     `dotnet run --project tests/.../VellumPdfShowcase.Tests.csproj -c Debug`,
@@ -302,7 +304,7 @@ if (-not $reportFile) {
 
 [xml]$report = Get-Content -Raw -Path $reportFile.FullName
 
-# Cycle 7 fix: assert over EVERY class the report contains. There is no
+# Assert over EVERY class the report contains. There is no
 # second, file-name-based filter here any more: --coverlet-include above is
 # the only scope decision this script makes, so whatever it instrumented is
 # exactly what gets asserted on. A class the include pattern did not match
@@ -317,7 +319,7 @@ if ($targetClasses.Count -eq 0) {
     exit 1
 }
 
-# Medium 2 (round nine): migration out of the instrumented namespace,
+# Migration out of the instrumented namespace,
 # distinct from a namespace never being in scope, is otherwise silent. A
 # round-trip-relevant type moved out of VellumPdfShowcase.Web.Generation (to
 # a differently-named file, a nested namespace, or elsewhere entirely)
@@ -402,9 +404,9 @@ if ($findings.Count -gt 0) {
     Write-Host ''
     Write-Host 'The expected remedy is a DocumentSpecSamples case that reaches the missing outcome; add one.'
     Write-Host ''
-    Write-Host 'Round nine review: "eliminate the branch" is NOT the only acceptable remedy, and treating it as'
+    Write-Host '"Eliminate the branch" is NOT the only acceptable remedy, and treating it as'
     Write-Host 'the default one is what deleted a live defensive arm from SpecRenderer while SpecCodeEmitter kept'
-    Write-Host 'its own equivalent, with this gate green on both sides throughout (HIGH 1 and HIGH 2). A branch'
+    Write-Host 'its own equivalent, with this gate green on both sides throughout (the ContentItemSpec and FontKind divergences). A branch'
     Write-Host 'that is a genuine, symmetric defensive arm on BOTH SpecRenderer and SpecCodeEmitter, and that is'
     Write-Host 'covered by VellumPdfShowcase.Tests.SymmetryTests asserting the two agree about the input that'
     Write-Host 'reaches it, is an ACCEPTABLE outcome for this gate to flag, not a defect to design away; add the'

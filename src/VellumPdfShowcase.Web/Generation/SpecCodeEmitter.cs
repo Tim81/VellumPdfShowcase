@@ -1311,16 +1311,16 @@ public static class SpecCodeEmitter
     /// model recognises.
     /// </summary>
     /// <remarks>
-    /// COVERAGE: cycle 6 wrote <see cref="ImageLoaderName"/> as a
+    /// COVERAGE: <see cref="ImageLoaderName"/> was once written as a
     /// <c>switch</c> expression with a <c>default</c> arm throwing
     /// <see cref="ArgumentOutOfRangeException"/>, unreachable from the public
     /// API (see below) but required by the compiler because
     /// <see cref="ImageFormat"/> is a public enumeration C# cannot prove
     /// exhaustive from its five named members alone. A branch-coverage gate
-    /// cannot see that arm taken, and cycle 6 marked the WHOLE METHOD
-    /// <c>[ExcludeFromCodeCoverage]</c> to accommodate it, which also hid the
-    /// five REACHABLE arms from the gate; a cycle 7 attempt to extract just
-    /// the throw into its own excluded method did not help, because the
+    /// cannot see that arm taken, and marking the WHOLE METHOD
+    /// <c>[ExcludeFromCodeCoverage]</c> to accommodate it also hid the
+    /// five REACHABLE arms from the gate; a later attempt to extract just
+    /// the throw into its own excluded method did not help either, because the
     /// switch's own branch outcome ("which arm matched") is attributed to
     /// the enclosing, non-excluded method regardless of where the THROWN
     /// exception is constructed. A lookup table has no such branch at all:
@@ -1329,8 +1329,8 @@ public static class SpecCodeEmitter
     /// unreached here, and no <c>[ExcludeFromCodeCoverage]</c> is needed on
     /// this member or on <see cref="ImageLoaderName"/> itself.
     /// <see cref="ImageLoaderNames"/> not containing <paramref name="format"/>
-    /// remains unreachable from the public API for the reason cycle 6's
-    /// throw arm was: <see cref="DocumentSpec.Content"/> rejects any
+    /// remains unreachable from the public API for the same reason the
+    /// original throw arm was: <see cref="DocumentSpec.Content"/> rejects any
     /// <see cref="ImageSpec"/> whose declared <see cref="ImageSpec.Format"/>
     /// does not match its own byte signature, and <see cref="ImageSignature.Matches"/>,
     /// which performs that check, itself throws on any <see cref="ImageFormat"/>

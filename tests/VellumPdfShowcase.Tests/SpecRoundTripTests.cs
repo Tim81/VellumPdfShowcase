@@ -124,7 +124,7 @@ public class SpecRoundTripTests
     }
 
     /// <summary>
-    /// Cycle 7 review: extracted so the rule itself can be exercised directly
+    /// Extracted so the rule itself can be exercised directly
     /// against a crafted level sequence, independently of whether any
     /// SAMPLE happens to contain one. Before this fix, every conformance-
     /// claiming sample had at most one heading (four had exactly one, one
@@ -388,10 +388,10 @@ public class SpecRoundTripTests
 }
 
 /// <summary>
-/// Cycle 7 review: proves <see cref="SpecRoundTripTests.HeadingHierarchyViolation"/>
+/// Proves <see cref="SpecRoundTripTests.HeadingHierarchyViolation"/>
 /// actually detects a skipped level, independently of any
-/// <see cref="DocumentSpecSamples"/> member. Before cycle 7, every sample
-/// claiming a conformance profile had at most one heading, so
+/// <see cref="DocumentSpecSamples"/> member. Before this test existed, every
+/// sample claiming a conformance profile had at most one heading, so
 /// <see cref="SpecRoundTripTests.Sample_ClaimingConformance_HasValidHeadingHierarchy"/>'s
 /// own loop over headings after the first never ran for any of them;
 /// replacing its comparison with an absurd one (for instance, always true)

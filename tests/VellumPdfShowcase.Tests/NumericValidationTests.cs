@@ -8,9 +8,9 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// Cycle 6 review, part 1: every collection and every string in the model was
-/// capped, but not one number was, except <see cref="TableSpec.ColumnWidths"/>.
-/// These tests cover the numeric caps that closed that gap.
+/// Every collection and every string in the model was capped, but not one
+/// number was, except <see cref="TableSpec.ColumnWidths"/>. These tests
+/// cover the numeric caps that closed that gap.
 /// </summary>
 /// <remarks>
 /// NOTE: the page, font-size and leading caps were once derived from a defect
@@ -416,7 +416,7 @@ public class TotalTextLengthLimitTests
     }
 
     /// <summary>
-    /// Round nine review, Medium 3: <see cref="TextStyleSpec.LinkUri"/> is
+    /// <see cref="TextStyleSpec.LinkUri"/> is
     /// reachable through <see cref="DocumentSpec.Content"/> at every run of a
     /// paragraph but was never counted toward <see cref="SpecLimits.MaxTotalTextLength"/>.
     /// Ten runs, each carrying only a one-character <see cref="TextRunSpec.Text"/>
@@ -447,7 +447,7 @@ public class TotalTextLengthLimitTests
     }
 
     /// <summary>
-    /// Round nine review, Medium 3: <see cref="ListItemSpec.Language"/> is
+    /// <see cref="ListItemSpec.Language"/> is
     /// reachable through <see cref="DocumentSpec.Content"/> at every depth a
     /// list can nest to but was never counted toward
     /// <see cref="SpecLimits.MaxTotalTextLength"/>. 600 list items, each with
@@ -765,7 +765,7 @@ public class StrokeWidthValidationTests
 }
 
 /// <summary>
-/// Cycle 6 review, part 2: <see cref="FontSpec.EmbeddedFontIndex"/> is
+/// <see cref="FontSpec.EmbeddedFontIndex"/> is
 /// meaningful only relative to <see cref="DocumentSpec.EmbeddedFonts"/>, and
 /// an out-of-range index was previously accepted at construction: measured
 /// directly, <see cref="SpecRenderer.Render"/> then threw a bare
@@ -834,7 +834,7 @@ public class EmbeddedFontIndexValidationTests
     }
 
     /// <summary>
-    /// Cycle 7 review: deleting <see cref="DocumentSpec.ValidateBandFontReference"/>'s
+    /// Deleting <see cref="DocumentSpec.ValidateBandFontReference"/>'s
     /// call for <see cref="DocumentSpec.Footer"/> left the suite green,
     /// because nothing exercised it; only <see cref="DocumentSpec.Header"/>
     /// and <see cref="DocumentSpec.DefaultTextStyle"/> had a regression guard
@@ -914,7 +914,7 @@ public class EmbeddedFontIndexValidationTests
 }
 
 /// <summary>
-/// Cycle 6 review, part 2: <see cref="EncryptionSpec.Permissions"/> accepted
+/// <see cref="EncryptionSpec.Permissions"/> accepted
 /// any raw value, not only a union of the library's named flags. Measured
 /// directly: a raw value with an undefined bit set made
 /// <c>SpecCodeEmitter.EmitPermissions</c> either emit invalid C# (a lone
@@ -959,7 +959,7 @@ public class PermissionsUnionValidationTests
 }
 
 /// <summary>
-/// Cycle 6 review, part 3: the owner-password rule compared the two passwords
+/// The owner-password rule once compared the two passwords
 /// as STRINGS, but the library truncates a password to 127 UTF-8 bytes before
 /// deriving key material from it (<c>StandardSecurityHandler.PasswordBytes</c>).
 /// Measured directly against the shipped package: a 127-byte password and a
@@ -1015,7 +1015,7 @@ public class OwnerPasswordByteTruncationTests
 }
 
 /// <summary>
-/// Cycle 6 review, part 3: <see cref="SpecAssets.FromSpec"/> handed back the
+/// <see cref="SpecAssets.FromSpec"/> once handed back the
 /// very arrays <see cref="SpecLimits.ValidateAssetBytes"/> already cloned at
 /// <see cref="DocumentSpec"/> construction, reopening the immutability hole
 /// from the other direction: a caller holding a <see cref="SpecAssets"/>
@@ -1067,8 +1067,8 @@ public class SpecAssetsImmutabilityTests
 }
 
 /// <summary>
-/// Cycle 6 review, part 3: <c>Document.Encrypt</c> and <c>Document.Save</c>
-/// were called unwrapped, so a bad combination of settings could throw any of
+/// <c>Document.Encrypt</c> and <c>Document.Save</c>
+/// were once called unwrapped, so a bad combination of settings could throw any of
 /// four different exception types depending on which rule it broke, while
 /// every OTHER failure path in <see cref="SpecRenderer.Render"/> already
 /// normalised to <see cref="InvalidOperationException"/>. This is now
@@ -1295,5 +1295,24 @@ public class ImageSignatureTests
     public void UndefinedFormat_ThrowsArgumentOutOfRangeException()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => ImageSignature.Matches((ImageFormat)99, [0x00]));
+    }
+
+    /// <summary>
+    /// Before the null guard, the PNG and GIF arms used <c>AsSpan().StartsWith</c>,
+    /// which tolerates a null array, while the JPEG, BMP and TIFF arms indexed
+    /// <c>bytes</c> directly and raised an uncaught <see cref="NullReferenceException"/>
+    /// instead. All five formats now agree: null bytes throw
+    /// <see cref="ArgumentNullException"/>, the same exception the rest of this
+    /// model's validation surface uses.
+    /// </summary>
+    [Theory]
+    [InlineData(ImageFormat.Png)]
+    [InlineData(ImageFormat.Jpeg)]
+    [InlineData(ImageFormat.Bmp)]
+    [InlineData(ImageFormat.Gif)]
+    [InlineData(ImageFormat.Tiff)]
+    public void NullBytes_ThrowsArgumentNullException(ImageFormat format)
+    {
+        Assert.Throws<ArgumentNullException>(() => ImageSignature.Matches(format, null!));
     }
 }

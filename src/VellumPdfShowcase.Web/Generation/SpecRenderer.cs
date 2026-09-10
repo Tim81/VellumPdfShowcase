@@ -114,7 +114,7 @@ public static class SpecRenderer
     /// learned to treat as a liability rather than as safety.
     /// </para>
     /// <para>
-    /// Cycle 7 review: this contract was FALSE until <see cref="TextRunSpec"/>
+    /// This contract was FALSE until <see cref="TextRunSpec"/>
     /// validated its own members. <see cref="TextRunSpec"/> was, before that
     /// fix, this model's one bare positional record with neither member
     /// checked at all; a <see cref="TextRunSpec.Style"/> of
@@ -126,7 +126,7 @@ public static class SpecRenderer
     /// dereferences was.
     /// </para>
     /// <para>
-    /// Round nine review: the SAME shape of gap survived in three further
+    /// The SAME shape of gap survived in three further
     /// <see langword="required"/> members with no null check of their own,
     /// found by the identical reasoning applied to the rest of the model
     /// rather than assumed closed once <see cref="TextRunSpec"/> was fixed: a
@@ -529,7 +529,7 @@ public static class SpecRenderer
             catch (Exception ex)
             {
                 // No `when` guard excluding a specific exception type here any
-                // more: cycle 6 excluded ArgumentOutOfRangeException so the
+                // more: this previously excluded ArgumentOutOfRangeException so the
                 // switch's own now-removed unreachable-format throw could
                 // propagate unwrapped instead of being reported as a decode
                 // failure. ImageLoaders[spec.Format] no longer throws that type

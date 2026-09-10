@@ -66,8 +66,8 @@ public static class SpecLimits
     /// <see cref="MaxTotalTextLength"/> (6,000, six per cent of this value) is
     /// substantially smaller than this value.
     /// <see cref="MaxTotalTextLength"/> only bounds the strings the
-    /// <see cref="Model.DocumentSpec.Content"/> walk visits, which, as of
-    /// cycle 7, is every text-bearing member reachable through that list:
+    /// <see cref="Model.DocumentSpec.Content"/> walk visits, which is
+    /// currently every text-bearing member reachable through that list:
     /// heading text and bookmark title, plain text, paragraph run text, list
     /// item text at every depth, table cell content, image and pie-chart
     /// alternative text, AND a pie slice's own label (an earlier version of
@@ -105,14 +105,21 @@ public static class SpecLimits
     /// smaller document once recorded here, which understated the cost this
     /// cap bounds by a factor of 2.2. Start from the maximal construction
     /// described on <see cref="MaxTotalTextLength"/> (one <see cref="Model.ListSpec"/>
-    /// of 4,999 <see cref="Model.ListItemSpec"/>, the first carrying the
-    /// full 6,000-character text budget as solid <c>'W'</c> and the rest
-    /// empty, in 36-point Helvetica at this model's own default 72-point
-    /// margins; 10,998 pages on its own) and widen the page from 200 by 200
-    /// to 200 by 280 points to leave room for a <see cref="Model.RunningBandSpec.Height"/>
-    /// of 40 on both a header and a footer, each holding a template at this
-    /// cap's own value, 200 characters. This renders about 11,000 pages, on
-    /// desktop x64 in Release, at 601 ms. Varying the template length on this
+    /// of 1,667 top-level <see cref="Model.ListItemSpec"/>, 1,666 of them
+    /// each carrying two empty children and the last carrying none, for
+    /// 4,999 items in total; the first item alone carries the full
+    /// 6,000-character text budget as solid <c>'W'</c> and every other item
+    /// is empty, in 36-point Helvetica at this model's own default 72-point
+    /// margins; 10,998 pages on its own) and heighten the page from 200 by
+    /// 200 to 200 by 280 points, the width unchanged, to leave room for a
+    /// <see cref="Model.RunningBandSpec.Height"/> of 40 on both a header and
+    /// a footer, each holding a template at this cap's own value, 200
+    /// characters. This renders 10,998 pages, identical to the unbanded
+    /// construction it started from, because the 80 points added to the
+    /// page's height are exactly the 80 points the two 40-point bands
+    /// reserve, leaving the content box unchanged at 56 points; that
+    /// identity is what makes the two page counts comparable. It takes 601
+    /// ms on desktop x64 in Release. Varying the template length on this
     /// same construction gives:
     /// <list type="table">
     /// <item><term>template length 1</term><description>556 ms</description></item>
@@ -120,21 +127,26 @@ public static class SpecLimits
     /// <item><term>template length 2,000</term><description>965 ms</description></item>
     /// <item><term>template length 100,000</term><description>18,718 ms</description></item>
     /// </list>
-    /// This reports time, not bytes: what actually drives how many bytes a
-    /// wider template adds is the band's own <see cref="Model.RunningBandSpec.Style"/>
-    /// and what the template text itself contains, neither of which an
-    /// earlier version of this remark stated, and time, not bytes, is the
-    /// quantity this cap exists to bound. NOTE what these figures show: the
-    /// 200-character cap itself is worth only about 45 ms over the
-    /// one-character floor at this geometry, a small fraction of the 601 ms
-    /// total. The cost is page count and the second pagination pass a
-    /// running band forces the library into, not the template text; this cap
-    /// must not be described as what bounds the freeze this construction
-    /// produces. It remains justified because it still removes a 31-fold
-    /// cost at 100,000 characters, 18,718 ms against 601 ms. See the remark
-    /// on <see cref="MaxTotalTextLength"/> for the freeze itself, its full
-    /// figure with both bands at this cap, and the decision to accept it
-    /// rather than tune further.
+    /// This reports time, not bytes; an earlier version of this remark
+    /// reported bytes without stating what drives them. Both the band's own
+    /// <see cref="Model.RunningBandSpec.Style"/>, here 36-point Helvetica
+    /// with 50-point leading, matching the body style, and the template text
+    /// itself, here the ASCII character <c>'a'</c> repeated to the given
+    /// length, drive that byte cost: a wider template of that character in
+    /// that style costs more bytes because the glyph run drawn into each
+    /// page's band grows, not because of anything this cap tracks beyond
+    /// length. Time, not bytes, is the quantity this cap exists to bound,
+    /// which is why the table above reports only time. NOTE what these
+    /// figures show: the 200-character cap itself is worth only about 45 ms
+    /// over the one-character floor at this geometry, a small fraction of
+    /// the 601 ms total. The cost is page count and the second pagination
+    /// pass a running band forces the library into, not the template text;
+    /// this cap must not be described as what bounds the freeze this
+    /// construction produces. It remains justified because it still removes
+    /// a 31-fold cost at 100,000 characters, 18,718 ms against 601 ms. See
+    /// the remark on <see cref="MaxTotalTextLength"/> for the freeze itself,
+    /// its full figure with both bands at this cap, and the decision to
+    /// accept it rather than tune further.
     /// <para>
     /// <see cref="Model.RunningBandSpec.Style"/>'s own
     /// <see cref="Model.TextStyleSpec.LinkUri"/> was checked for the same
@@ -143,7 +155,13 @@ public static class SpecLimits
     /// <see cref="Model.TextStyleSpec.LinkUri"/> renders output of IDENTICAL
     /// LENGTH, 1,027,765 bytes, to the same footer with no
     /// <see cref="Model.TextStyleSpec.LinkUri"/> at all, across a
-    /// footer-only specification that renders 2,475 pages. NOTE: this is a
+    /// footer-only variant of the construction above: the same 20,000 by
+    /// 260 point page, 55-point margins, 36-point/50-point-leading style and
+    /// 1,650-item list, with only a footer, at
+    /// <see cref="Model.RunningBandSpec.Height"/> 30, and no header. That
+    /// specification renders 2,475 pages, half the 4,950 the same list
+    /// renders under both a header and a footer, because removing one band
+    /// frees that much more of each page for content. NOTE: this is a
     /// length comparison, not a byte-for-byte one. Two renders of the same
     /// specification are never byte-identical, because the library writes a
     /// random document identifier on every render; a byte-for-byte claim
@@ -151,7 +169,12 @@ public static class SpecLimits
     /// does. The library does not turn a running band's link into a per-page
     /// annotation, so <see cref="MaxUriLength"/> alone already bounds it and
     /// no dedicated cap is needed here. <c>RunningBandTemplateCapTests.MaximalLinkUriOnFooterStyle_AddsNothingAcrossManyPages</c>
-    /// guards this directly, because no other test in the repository sets
+    /// guards the same exemption on a smaller, cheaper document instead of
+    /// the 2,475-page one above: 80 unordered list items on a 200 by 200
+    /// point page at 20-point margins, with only a footer, which renders 40
+    /// pages, not 2,475. That is enough pages for the comparison to mean
+    /// something without paying for the larger construction on every test
+    /// run, and it remains the only test in the repository that sets
     /// <see cref="Model.TextStyleSpec.LinkUri"/> on a header or footer style
     /// at all.
     /// </para>
@@ -310,12 +333,13 @@ public static class SpecLimits
     /// 32,136,696 bytes of source just under this cap, rendered 30,315,242
     /// bytes (28.91 MB) of output in 737 ms. This is the SAME order of
     /// magnitude as the worst case this model already accepts elsewhere: the
-    /// <see cref="MaxRunningBandTemplateLength"/> construction's roughly
-    /// 11,000 pages render in 601 ms on desktop and 35,148 ms in the browser
-    /// this application ships to; this cap's own worst case, extrapolated by
-    /// the same 20 to 30 times desktop-to-browser factor that construction and
-    /// <see cref="MaxTotalTextLength"/>'s own remark both measure directly, is
-    /// on the order of tens of seconds, not the tens of MINUTES the uncapped
+    /// <see cref="MaxRunningBandTemplateLength"/> construction's 10,998
+    /// pages render in 601 ms on desktop and 35,148 ms in the browser this
+    /// application ships to; this cap's own worst case, extrapolated by the
+    /// same roughly seventeen to fifty-nine times desktop-to-browser factor
+    /// that construction and <see cref="MaxTotalTextLength"/>'s own remark
+    /// both measure directly, is on the order of tens of seconds, not the
+    /// tens of MINUTES the uncapped
     /// 1.30 GB figure above would extrapolate to at 500 occurrences. Embedded
     /// fonts and an ICC profile were measured and found far cheaper per byte
     /// than an image (100 fonts totalling 39.2 MB registered in 34 ms, against
@@ -417,35 +441,40 @@ public static class SpecLimits
     /// bound, took 1,955 ms in the same browser against 88 ms on desktop. The
     /// factor between desktop and browser is not one fixed number: the
     /// 20,000-character pair gives 47,963 over 1,578, about thirty; the
-    /// zero-margin pair gives 1,955 over 88, about twenty-two. Both are far
-    /// above the three to ten a reader extrapolating from either figure
-    /// alone might assume. Forty-eight seconds is a tab that looks dead
-    /// rather than busy, so this value was lowered to bound it. The lever is
-    /// deliberately this cap and <see cref="MaxWalkedNodes"/> rather than a
-    /// return of the page-geometry bound: the geometry bound refused page
-    /// sizes and font sizes the library itself accepts, which made the
-    /// catalogue understate the library, and it was defeated five times by
-    /// levers inside the library's own layout. These two caps bound the same
-    /// worst case from the other side, using only quantities the model can
-    /// see exactly.
+    /// zero-margin pair gives 1,955 over 88, about twenty-two; the current
+    /// 6,000-character construction, measured further below, gives 5,205
+    /// over 309, about seventeen; and the running-band construction, also
+    /// measured further below, gives 35,148 over 601, about fifty-nine.
+    /// Across these four pairs the factor ranges from about seventeen to
+    /// about fifty-nine, a RANGE rather than a single number to multiply by,
+    /// and every point in it is far above the three to ten a reader
+    /// extrapolating from any one pair alone might assume. Forty-eight
+    /// seconds is a tab that looks dead rather than busy, so this value was
+    /// lowered to bound it. The lever is deliberately this cap and
+    /// <see cref="MaxWalkedNodes"/> rather than a return of the page-geometry
+    /// bound: the geometry bound refused page sizes and font sizes the
+    /// library itself accepts, which made the catalogue understate the
+    /// library, and it was defeated five times by levers inside the
+    /// library's own layout. These two caps bound the same worst case from
+    /// the other side, using only quantities the model can see exactly.
     /// </para>
     /// <para>
     /// WHERE THE FLOOR IS, measured rather than chosen. The worst case is one
     /// rendered line per character on a content box too narrow for two, so
     /// PAGE COUNT is exactly linear in this value: 20,000 characters is
     /// 20,000 pages. Browser TIME is not linear in it; it is superlinear, as
-    /// the table below shows. The floor is set by the regression guards, and
-    /// the binding one is not the guard a reader would expect from the two
-    /// constraints named beside it. <c>DeepPaginationTests</c>' list
-    /// reproduction (<c>ManyShortListItemsRepro</c>) needs 4,950 characters
-    /// across 4,951 nodes, which is also why <see cref="MaxWalkedNodes"/>
-    /// cannot go below 5,000 without breaking that same reproduction, and
-    /// every sample shipped in <c>DocumentSpecSamples</c> fits under 4,000
-    /// characters, verified by lowering this cap and running the suite;
-    /// both figures are satisfied by a value well below 6,000. Neither is
-    /// what actually binds THIS value. <c>DeepPaginationTests</c>' OTHER
-    /// reproduction, <c>DefaultMarginsWideGlyphRepro</c>, fills its content
-    /// box with the four-character string <c>"WWW "</c>, and at that
+    /// the table below shows. The floor is set by the regression guards.
+    /// <c>DeepPaginationTests</c>' list reproduction
+    /// (<c>ManyShortListItemsRepro</c>) needs 4,950 characters across 4,951
+    /// nodes; <see cref="MaxWalkedNodes"/> can go as low as 4,951 before
+    /// that same reproduction breaks, verified directly by setting the
+    /// constant to 4,951 and confirming <c>DeepPaginationTests</c> stays
+    /// green. Every sample shipped in <c>DocumentSpecSamples</c> fits under
+    /// 4,000 characters, verified by lowering this cap and running the
+    /// suite. Both figures are satisfied by a value well below 6,000, so
+    /// neither sets this value's floor. <c>DeepPaginationTests</c>' OTHER
+    /// reproduction, <c>DefaultMarginsWideGlyphRepro</c>, does: it fills its
+    /// content box with the four-character string <c>"WWW "</c>, and at that
     /// geometry three of every four characters produce a page, not one: 0.75
     /// pages per character, not the 1 an earlier version of this remark
     /// assumed. Its own render assertion needs page count over 4,000 to mean
@@ -462,8 +491,8 @@ public static class SpecLimits
     /// browser and the same way as the 47,963 ms figure above:
     /// <list type="table">
     /// <item><term>Text budget alone (6,000 characters, the construction above)</term><description>6,000 pages, 309 ms desktop</description></item>
-    /// <item><term>Node budget alone (1,665 list items, each with two empty children)</term><description>4,995 pages, 139 ms desktop</description></item>
-    /// <item><term>Both budgets, as first recorded</term><description>10,992 pages, 387 ms desktop, 11,985 ms browser</description></item>
+    /// <item><term>Node budget only (1,665 list items, each with two empty children: 4,996 of 5,000 nodes, not the full budget)</term><description>4,995 pages, 139 ms desktop</description></item>
+    /// <item><term>Both budgets, as first recorded (a 6,000-character paragraph of solid 'W' plus a separate list of 1,664 top-level items, each with two empty children, on this same 200 by 200 page at default margins)</term><description>10,992 pages, 387 ms desktop, 11,985 ms browser</description></item>
     /// <item><term>Both budgets, the maximal construction below</term><description>10,998 pages, 342 ms desktop</description></item>
     /// </list>
     /// A list item with empty text is a line-producing node that costs
@@ -486,23 +515,26 @@ public static class SpecLimits
     /// either way, because output size falls with it too.
     /// </para>
     /// <para>
-    /// The deepest document alone is not the true worst case. Add a header
-    /// and a footer, each with a <see cref="Model.RunningBandSpec.Height"/>
-    /// of 40 and a <see cref="Model.RunningBandSpec.Template"/> at
+    /// Adding a header and a footer, each with a
+    /// <see cref="Model.RunningBandSpec.Height"/> of 40 and a
+    /// <see cref="Model.RunningBandSpec.Template"/> at
     /// <see cref="MaxRunningBandTemplateLength"/>'s own cap, on a page
-    /// widened to 200 by 280 points to leave room for both bands: see the
+    /// heightened to 200 by 280 points, the width unchanged, to leave room
+    /// for both bands, costs more than the deepest document alone: see the
     /// remark on <see cref="MaxRunningBandTemplateLength"/> for that
     /// construction in full and what it costs by template length. That
-    /// construction renders about 11,000 pages, at 601 ms on desktop x64 and
-    /// at 35,148 ms in the browser this application ships to, measured
-    /// through the site's own elapsed-time display in a published Release
-    /// build. THAT figure, not the 11,985 ms of the recorded both-budgets
-    /// document above, is the true ceiling this file's caps together buy. A
-    /// running band is laid out once per page and forces a second
-    /// pagination pass; neither cost is visible to <see cref="MaxWalkedNodes"/>
-    /// or to this value, which is why <see cref="MaxRunningBandTemplateLength"/>
-    /// exists as a third, independent cap rather than being folded into
-    /// either of these two.
+    /// construction renders 10,998 pages, the same count as the maximal
+    /// construction above, because the 80 points added to the page's height
+    /// are exactly what the two 40-point bands reserve, at 601 ms on desktop
+    /// x64 and at 35,148 ms in the browser this application ships to,
+    /// measured through the site's own elapsed-time display in a published
+    /// Release build. THAT figure, not the 11,985 ms of the recorded
+    /// both-budgets document above, is the true ceiling this file's caps
+    /// together buy. A running band is laid out once per page and forces a
+    /// second pagination pass; neither cost is visible to
+    /// <see cref="MaxWalkedNodes"/> or to this value, which is why
+    /// <see cref="MaxRunningBandTemplateLength"/> exists as a third,
+    /// independent cap rather than being folded into either of these two.
     /// </para>
     /// <para>
     /// Thirty-five seconds is a known property of a browser-hosted,
@@ -653,9 +685,8 @@ public static class SpecLimits
     public const double MaxAngleMagnitudeRadians = 1_000;
 
     /// <summary>
-    /// Caps <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/>. Cycle 7
-    /// review: this was the one numeric member in the model with no cap of
-    /// its own. <see cref="IccProfileHeader.Validate"/> only cross-checks it
+    /// Caps <see cref="Model.PdfAOutputIntentSpec.ComponentCount"/>. This was
+    /// the one numeric member in the model with no cap of its own. <see cref="IccProfileHeader.Validate"/> only cross-checks it
     /// against the profile's OWN declared colour space when that colour
     /// space is one of the four <see cref="IccProfileHeader.Validate"/>
     /// recognises (GRAY, RGB, Lab, CMYK); a profile declaring any other
@@ -871,21 +902,25 @@ public static class ImageSignature
     private static readonly byte[] Gif87a = "GIF87a"u8.ToArray();
     private static readonly byte[] Gif89a = "GIF89a"u8.ToArray();
 
-    public static bool Matches(ImageFormat format, byte[] bytes) => format switch
+    public static bool Matches(ImageFormat format, byte[] bytes)
     {
-        ImageFormat.Png => bytes.AsSpan().StartsWith(PngMagic),
-        ImageFormat.Jpeg => bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF,
-        ImageFormat.Bmp => bytes.Length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D,
-        ImageFormat.Gif => bytes.AsSpan().StartsWith(Gif87a) || bytes.AsSpan().StartsWith(Gif89a),
-        ImageFormat.Tiff => bytes.Length >= 4 &&
-            ((bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2A && bytes[3] == 0x00) ||
-             (bytes[0] == 0x4D && bytes[1] == 0x4D && bytes[2] == 0x00 && bytes[3] == 0x2A)),
-        // Unreachable through any DocumentSpec today, because ImageSpec.Format validates against this same
-        // enum at construction; kept anyway as a defensive boundary against a future ImageFormat member the
-        // switch above has not been taught to sniff, so an unrecognised value fails loudly here rather than
-        // silently falling through to "does not match" and being treated as a rejected, well-formed image.
-        _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unrecognised image format."),
-    };
+        ArgumentNullException.ThrowIfNull(bytes);
+        return format switch
+        {
+            ImageFormat.Png => bytes.AsSpan().StartsWith(PngMagic),
+            ImageFormat.Jpeg => bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF,
+            ImageFormat.Bmp => bytes.Length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D,
+            ImageFormat.Gif => bytes.AsSpan().StartsWith(Gif87a) || bytes.AsSpan().StartsWith(Gif89a),
+            ImageFormat.Tiff => bytes.Length >= 4 &&
+                ((bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2A && bytes[3] == 0x00) ||
+                 (bytes[0] == 0x4D && bytes[1] == 0x4D && bytes[2] == 0x00 && bytes[3] == 0x2A)),
+            // Unreachable through any DocumentSpec today, because ImageSpec.Format validates against this same
+            // enum at construction; kept anyway as a defensive boundary against a future ImageFormat member the
+            // switch above has not been taught to sniff, so an unrecognised value fails loudly here rather than
+            // silently falling through to "does not match" and being treated as a rejected, well-formed image.
+            _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unrecognised image format."),
+        };
+    }
 }
 
 /// <summary>
@@ -901,6 +936,7 @@ public static class IccProfileHeader
 
     public static void Validate(byte[] profile, int componentCount)
     {
+        ArgumentNullException.ThrowIfNull(profile);
         if (profile.Length < MinimumHeaderLength)
         {
             throw new ArgumentException(

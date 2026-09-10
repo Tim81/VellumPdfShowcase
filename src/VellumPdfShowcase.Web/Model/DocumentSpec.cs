@@ -119,21 +119,21 @@ public sealed record DocumentSpec
     /// <see cref="SpecLimits.MaxTextLength"/> from being multiplied together
     /// into an unreasonably large total.
     /// <para>
-    /// Cycle 7 audit of every string this record can hold, against what the
+    /// An audit of every string this record can hold, against what the
     /// walk actually counts: <see cref="HeadingSpec.Text"/>,
     /// <see cref="HeadingSpec.BookmarkTitle"/>, <see cref="PlainTextSpec.Text"/>,
     /// each <see cref="TextRunSpec.Text"/>, each <see cref="ListItemSpec.Text"/>
     /// (at every depth), each <see cref="TableCellSpec.Content"/>,
     /// <see cref="ImageSpec.AltText"/>, <see cref="PieChartSpec.AltText"/> and
     /// every <see cref="PieSlice.Label"/> are all reachable through THIS list
-    /// and are all counted (the last two were NOT, before cycle 7: a
+    /// and are all counted (the last two were NOT, before this audit: a
     /// specification of charts with maximal-length slice labels reached
     /// 490,220,429 characters through that gap, 24.5 times
     /// <see cref="SpecLimits.MaxTotalTextLength"/>, entirely inside a total
     /// this walk was already supposed to bound).
     /// </para>
     /// <para>
-    /// Round nine audit, Medium 3: two FURTHER kinds of member reachable
+    /// A later audit found two FURTHER kinds of member reachable
     /// through this list were still missing, and are now counted too. Every
     /// <see cref="TextStyleSpec.LinkUri"/> a style reachable from
     /// <see cref="Content"/> can carry (a paragraph run's, a heading's, a
@@ -470,9 +470,9 @@ public sealed record DocumentSpec
                     // same node, not a separate position in the tree, so its
                     // length is added without a further TryVisit(); see the
                     // remark on this class for why every text-bearing member
-                    // reachable from Content, not merely the two the cycle 7
-                    // review named (PieSlice.Label and AltText), must be
-                    // counted here. Round nine review: Style.LinkUri and
+                    // reachable from Content, not merely the two named first
+                    // (PieSlice.Label and AltText), must be
+                    // counted here. Style.LinkUri and
                     // Language are two further such members this walk missed
                     // before; see TryAddStyleUri's own remark.
                     return TryAddCharacters(heading.Text.Length) &&
@@ -547,8 +547,8 @@ public sealed record DocumentSpec
                     // HeadingSpec.BookmarkTitle above. Each slice IS already
                     // visited as its own node below; slice.Label is that
                     // node's own text and must be counted the same way every
-                    // other node's text is, which the walk did not do before
-                    // cycle 7: a document of charts with maximal-length slice
+                    // other node's text is, which the walk did not once do:
+                    // a document of charts with maximal-length slice
                     // labels reached 490,220,429 characters, 24.5 times
                     // MaxTotalTextLength, through this exact gap.
                     if (!TryAddCharacters(pieChart.AltText?.Length ?? 0))
@@ -581,7 +581,7 @@ public sealed record DocumentSpec
         /// <see cref="TextStyleSpec.LinkUri"/> is <see langword="null"/>.
         /// </summary>
         /// <remarks>
-        /// Round nine review, Medium 3: <see cref="TextStyleSpec.LinkUri"/>,
+        /// <see cref="TextStyleSpec.LinkUri"/>,
         /// capped at <see cref="SpecLimits.MaxUriLength"/> (2,048) each, is
         /// reachable through <see cref="Content"/> at every position a
         /// <see cref="TextStyleSpec"/> can appear, and can therefore be
@@ -1068,7 +1068,7 @@ public sealed record TextStyleSpec
     /// or <c>data:</c> scheme is not a hyperlink there.
     /// </summary>
     /// <remarks>
-    /// Cycle 6 left open, and cycle 7 closes: a C0 control character (0x00
+    /// This closes a gap left open by the scheme check alone: a C0 control character (0x00
     /// through 0x1F) or DEL (0x7F) embedded in an otherwise well-formed
     /// <c>http</c>/<c>https</c> URI. Measured directly: <see cref="Uri.TryCreate(string?, UriKind, out Uri?)"/>
     /// accepts every one tried (a NUL byte, a tab, an escape character, a
@@ -1106,7 +1106,7 @@ public sealed record TextStyleSpec
 
 /// <summary>One inline run of a <see cref="ParagraphSpec"/>, matching the library's <c>TextRun</c>.</summary>
 /// <remarks>
-/// Cycle 7 review: this was the one bare positional record anywhere in this
+/// This was the one bare positional record anywhere in this
 /// model, with neither member validated at all, which is exactly why
 /// <see cref="SpecRenderer.Render"/>'s documented exception contract was
 /// false. A <see cref="Style"/> of <see langword="null"/>, in particular,

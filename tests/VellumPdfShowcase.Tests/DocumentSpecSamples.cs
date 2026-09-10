@@ -643,7 +643,7 @@ internal static class DocumentSpecSamples
     /// previously reached every sample in this file that uses a single sole
     /// heading: each now uses <see langword="0"/>.
     /// <para>
-    /// Cycle 7 review: this is also the one sample carrying a genuine
+    /// This is also the one sample carrying a genuine
     /// three-level heading hierarchy (0, 1, 2), added because every
     /// conformance-claiming sample previously had at most one heading, which
     /// left <see cref="SpecRoundTripTests.Sample_ClaimingConformance_HasValidHeadingHierarchy"/>'s
@@ -758,7 +758,7 @@ internal static class DocumentSpecSamples
     /// property alone.
     /// </summary>
     /// <remarks>
-    /// Round nine review (LOW): the justification originally recorded here
+    /// The justification originally recorded here
     /// for removing <c>EncryptedWithDefaults</c> was that doing so "left
     /// every test and the branch-coverage gate green", which is exactly the
     /// REACHABILITY-only reasoning the gate's own documentation (see its
