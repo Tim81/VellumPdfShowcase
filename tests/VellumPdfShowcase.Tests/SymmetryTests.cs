@@ -231,6 +231,7 @@ public class SymmetryTests
         nameof(DanglingContentFontIndexSpecification),
         nameof(DanglingHeaderFontIndexSpecification),
         nameof(DanglingNestedListItemFontIndexSpecification),
+        nameof(AggregateAssetBytesOverLimitSpecification),
         nameof(SharedStyleAcrossNestedStructureSpecification),
         nameof(MalformedButWellSignedImageSpecification),
         nameof(MalformedEmbeddedFontSpecification),
@@ -339,6 +340,35 @@ public class SymmetryTests
             },
         ],
     };
+
+    /// <summary>
+    /// A specification whose aggregate asset bytes exceed
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/>: two arbitrary 17 MB
+    /// <see cref="DocumentSpec.EmbeddedFonts"/> entries, each individually
+    /// under <see cref="SpecLimits.MaxAssetBytes"/> (20 MB) but together over
+    /// the 33,554,432 byte aggregate cap. Passes every construction-time
+    /// check (each entry's own length, the embedded-font COUNT, and, since
+    /// neither entry is ever referenced by index,
+    /// <see cref="DocumentSpec.ValidateEmbeddedFontReferences"/> too) and is
+    /// rejected only by <see cref="DocumentSpec.ValidateAggregateAssetBytes"/>,
+    /// which <see cref="SpecRenderer.Render"/> and
+    /// <see cref="SpecCodeEmitter.Emit"/> each call immediately after
+    /// <see cref="DocumentSpec.ValidateEmbeddedFontReferences"/>. Arbitrary
+    /// bytes are enough here, unlike <see cref="MalformedEmbeddedFontSpecification"/>:
+    /// this check runs before either consumer ever parses a font, so no real
+    /// TrueType structure is needed for the two to agree.
+    /// </summary>
+    private static DocumentSpec AggregateAssetBytesOverLimitSpecification()
+    {
+        var oneFont = new byte[17 * 1024 * 1024];
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            EmbeddedFonts = [oneFont, (byte[])oneFont.Clone()],
+            Content = [new PlainTextSpec { Text = "x" }],
+        };
+    }
 
     /// <summary>
     /// Accepted by both consumers, and shaped for the agreement that actually

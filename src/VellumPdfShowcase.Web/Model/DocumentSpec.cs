@@ -700,6 +700,69 @@ public sealed record DocumentSpec
         }
     }
 
+    /// <summary>
+    /// Sums every distinct asset byte array this specification carries
+    /// against <see cref="SpecLimits.MaxTotalAssetBytes"/>: every distinct
+    /// <see cref="ImageSpec.Bytes"/> reachable from <see cref="Content"/>,
+    /// every entry of <see cref="EmbeddedFonts"/>, and an output intent's own
+    /// <see cref="PdfAOutputIntentSpec.IccProfile"/>. <see cref="Generation.SpecRenderer.Render"/>
+    /// and <see cref="Generation.SpecCodeEmitter.Emit"/> both call this,
+    /// immediately after <see cref="ValidateEmbeddedFontReferences"/>, before
+    /// doing anything else with a <see cref="DocumentSpec"/>.
+    /// </summary>
+    /// <remarks>
+    /// This cannot be done at construction, for the identical reason
+    /// <see cref="ValidateEmbeddedFontReferences"/> cannot: see that method's
+    /// own remark. It spans three independent top-level properties of THIS
+    /// SAME record (<see cref="Content"/>, <see cref="EmbeddedFonts"/>,
+    /// <see cref="OutputIntent"/>), which a caller's object initializer may
+    /// set in any order, so no one of the three can see the other two at
+    /// their final value from its own <see langword="init"/> accessor.
+    /// </remarks>
+    /// <remarks>
+    /// Images are deduplicated by REFERENCE identity, reusing
+    /// <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/>
+    /// rather than restating the same rule a second time: see
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/>'s own remark for why this is
+    /// the opposite counting rule from <see cref="MaxWalkedNodes"/> and
+    /// <see cref="SpecLimits.MaxTotalTextLength"/>, and why that is correct
+    /// rather than an inconsistency. <see cref="EmbeddedFonts"/> entries are
+    /// never deduplicated: nothing about how a caller sets that list can make
+    /// two of its entries "the same font" the way one <see cref="ImageSpec"/>
+    /// instance referenced twice through <see cref="Content"/> is the same
+    /// image, and <c>Document.UseTrueTypeFont</c> parses every entry
+    /// regardless.
+    /// </remarks>
+    public void ValidateAggregateAssetBytes()
+    {
+        long total = 0;
+
+        foreach (var image in Generation.SpecCodeEmitter.DistinctContentImagesByReference(this))
+        {
+            total += image.Bytes.Length;
+        }
+
+        foreach (var font in EmbeddedFonts)
+        {
+            total += font.Length;
+        }
+
+        if (OutputIntent is PdfAOutputIntentSpec pdfA)
+        {
+            total += pdfA.IccProfile.Length;
+        }
+
+        if (total > SpecLimits.MaxTotalAssetBytes)
+        {
+            throw new ArgumentException(
+                "This specification's assets (every distinct image reachable from Content, every entry of " +
+                $"EmbeddedFonts, and any output intent's IccProfile) total {total:N0} bytes, more than the " +
+                $"{SpecLimits.MaxTotalAssetBytes:N0} byte ({SpecLimits.MaxTotalAssetBytes / (1024 * 1024)} MB) " +
+                "aggregate limit. A repeated ImageSpec INSTANCE is counted once, not once per occurrence; " +
+                "reduce the number of distinct assets or their combined size.");
+        }
+    }
+
     private static void ValidateContentFontReferences(ContentItemSpec item, int embeddedFontCount)
     {
         switch (item)

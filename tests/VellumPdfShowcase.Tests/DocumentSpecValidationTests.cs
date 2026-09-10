@@ -7,6 +7,7 @@ using VellumPdf.Fonts;
 using VellumPdf.Images;
 using VellumPdf.Layout.Core;
 using VellumPdf.Layout.Elements;
+using VellumPdfShowcase.Web.Generation;
 using VellumPdfShowcase.Web.Model;
 
 namespace VellumPdfShowcase.Tests;
@@ -1629,6 +1630,176 @@ public class SpecSizeLimitTests
 }
 
 /// <summary>
+/// <see cref="SpecLimits.MaxTotalAssetBytes"/>: unlike every cap above, which
+/// <see cref="DocumentSpec"/> enforces at construction, this one is a
+/// DEFERRED check, enforced by <see cref="DocumentSpec.ValidateAggregateAssetBytes"/>,
+/// which <see cref="SpecRenderer.Render"/> and <see cref="SpecCodeEmitter.Emit"/>
+/// both call, for the identical reason <see cref="DocumentSpec.ValidateEmbeddedFontReferences"/>
+/// is deferred: see that method's own remark. A specification exceeding this
+/// cap therefore CONSTRUCTS successfully and is rejected only when rendered
+/// or emitted, so every test below drives <see cref="SpecRenderer.Render"/>
+/// (and, for the rejection case, <see cref="SpecCodeEmitter.Emit"/> too)
+/// rather than expecting construction itself to throw.
+/// </summary>
+public class AggregateAssetByteBudgetTests
+{
+    private static TextStyleSpec Style() =>
+        new() { Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica) };
+
+    private static DocumentSpec BuildImagesSpec(IReadOnlyList<byte[]> images) => new()
+    {
+        Page = new PageSizeSpec(200, 200),
+        DefaultTextStyle = Style(),
+        Content = [.. images.Select(png => new ImageSpec { Format = ImageFormat.Png, Bytes = png, Width = 40, Height = 40 })],
+    };
+
+    /// <summary>
+    /// 18 DISTINCT 2048 by 2048 synthetic PNGs, totalling 32,136,696 bytes,
+    /// which is under <see cref="SpecLimits.MaxTotalAssetBytes"/> (33,554,432);
+    /// see the constant's own remark for this exact configuration and figure.
+    /// Both consumers must accept it: <see cref="SpecRenderer.Render"/> must
+    /// actually render, not merely avoid throwing, and <see cref="SpecCodeEmitter.Emit"/>
+    /// must produce non-empty code.
+    /// </summary>
+    [Fact]
+    public void ManyDistinctImagesJustUnderLimit_ConstructsAndRenders()
+    {
+        List<byte[]> images = [.. Enumerable.Range(0, 18).Select(_ => SyntheticPng.CreateVaryingRgb(2048, 2048))];
+        var total = images.Sum(b => (long)b.Length);
+        Assert.True(total < SpecLimits.MaxTotalAssetBytes, $"Precondition: total ({total:N0}) must be under the cap ({SpecLimits.MaxTotalAssetBytes:N0}) for this test to mean anything.");
+
+        var spec = BuildImagesSpec(images);
+
+        var pdfBytes = SpecRenderer.Render(spec);
+        Assert.True(pdfBytes.Length > 0);
+
+        var code = SpecCodeEmitter.Emit(spec);
+        Assert.False(string.IsNullOrEmpty(code));
+    }
+
+    /// <summary>
+    /// The same 18 images plus ONE more distinct instance, pushing the total
+    /// to 33,922,068 bytes, just over the cap. Both consumers must reject it
+    /// with an <see cref="ArgumentException"/>, naming the aggregate limit;
+    /// <see cref="SymmetryTests"/> carries the permanent regression guard that
+    /// the two cannot disagree about this (<c>AggregateAssetBytesOverLimitSpecification</c>
+    /// in its fixed adversarial roster), so this test only needs to prove the
+    /// rejection itself and its message, not the agreement between consumers.
+    /// </summary>
+    [Fact]
+    public void OneMoreDistinctImageOverLimit_RenderAndEmitBothThrow()
+    {
+        List<byte[]> images = [.. Enumerable.Range(0, 19).Select(_ => SyntheticPng.CreateVaryingRgb(2048, 2048))];
+        var total = images.Sum(b => (long)b.Length);
+        Assert.True(total > SpecLimits.MaxTotalAssetBytes, $"Precondition: total ({total:N0}) must exceed the cap ({SpecLimits.MaxTotalAssetBytes:N0}) for this test to mean anything.");
+
+        var spec = BuildImagesSpec(images);
+
+        var renderException = Assert.Throws<ArgumentException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("aggregate limit", renderException.Message, StringComparison.OrdinalIgnoreCase);
+
+        var emitException = Assert.Throws<ArgumentException>(() => SpecCodeEmitter.Emit(spec));
+        Assert.Contains("aggregate limit", emitException.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The design point most likely to be got wrong later: one shared
+    /// <see cref="ImageSpec"/> INSTANCE, about 11.1 MB
+    /// (<c>SyntheticPng.CreateVaryingRgb(9999, 9999)</c>, 11,676,640 bytes;
+    /// 9999 rather than a rounder dimension because the Kernel PNG loader's
+    /// own decoded-pixel-count safety guard refuses anything at or above 100
+    /// million pixels, and 9999 squared is the largest round-ish value just
+    /// under that), placed three times in <see cref="DocumentSpec.Content"/>.
+    /// Counted by OCCURRENCE, the total would be 35,029,920 bytes, over
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/> (33,554,432); counted
+    /// correctly, by DISTINCT REFERENCE, it is one 11,676,640 byte share,
+    /// comfortably under. This is the behaviour
+    /// <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/>
+    /// exists to make correct on both sides.
+    /// </summary>
+    [Fact]
+    public void SharedImageInstance_RepeatedThreeTimes_CountedOnce_ConstructsAndRenders()
+    {
+        var png = SyntheticPng.CreateVaryingRgb(9999, 9999);
+        Assert.True(png.Length < SpecLimits.MaxTotalAssetBytes, "Precondition: one occurrence must fit under the cap alone.");
+        Assert.True(3L * png.Length > SpecLimits.MaxTotalAssetBytes, "Precondition: three occurrences, counted naively, must exceed the cap.");
+
+        var shared = new ImageSpec { Format = ImageFormat.Png, Bytes = png, Width = 40, Height = 40 };
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content = [shared, shared, shared],
+        };
+
+        var pdfBytes = SpecRenderer.Render(spec);
+        Assert.True(pdfBytes.Length > 0);
+
+        var code = SpecCodeEmitter.Emit(spec);
+        Assert.False(string.IsNullOrEmpty(code));
+    }
+
+    /// <summary>
+    /// The companion negative case, matching <see cref="SharedImageCacheTests.DistinctInstances_IdenticalBytes_CacheDoesNotHelp"/>'s
+    /// own pairing: the SAME byte-for-byte content as three DISTINCT
+    /// <see cref="ImageSpec"/> instances rather than one shared instance. This
+    /// must be rejected, proving the dedup is genuinely keyed by reference
+    /// identity rather than by content or by <see cref="ImageSpec"/>'s own
+    /// record equality.
+    /// </summary>
+    [Fact]
+    public void DistinctImageInstances_IdenticalBytes_EachCountedSeparately_ExceedsLimit()
+    {
+        var png = SyntheticPng.CreateVaryingRgb(9999, 9999);
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            Content =
+            [
+                new ImageSpec { Format = ImageFormat.Png, Bytes = png, Width = 40, Height = 40 },
+                new ImageSpec { Format = ImageFormat.Png, Bytes = (byte[])png.Clone(), Width = 40, Height = 40 },
+                new ImageSpec { Format = ImageFormat.Png, Bytes = (byte[])png.Clone(), Width = 40, Height = 40 },
+            ],
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("aggregate limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Every asset member is covered, not only <see cref="DocumentSpec.Content"/>'s
+    /// images: <see cref="DocumentSpec.EmbeddedFonts"/> entries contribute too,
+    /// even though none is referenced by any <see cref="TextStyleSpec"/> (see
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/>'s own remark for why an
+    /// unreferenced entry is still parsed, and so still a real cost, even
+    /// though it never reaches the saved output).
+    /// </summary>
+    [Fact]
+    public void EmbeddedFontsAloneOverLimit_RenderThrows()
+    {
+        // 2 arbitrary 17 MB arrays: individually under MaxAssetBytes (20 MB),
+        // together (34 MB) over MaxTotalAssetBytes (33,554,432 bytes). Real
+        // TrueType structure is not needed: this check runs before any font
+        // is parsed.
+        var oneFont = new byte[17 * 1024 * 1024];
+        List<byte[]> fonts = [oneFont, (byte[])oneFont.Clone()];
+
+        var spec = new DocumentSpec
+        {
+            Page = new PageSizeSpec(200, 200),
+            DefaultTextStyle = Style(),
+            EmbeddedFonts = fonts,
+            Content = [new PlainTextSpec { Text = "x" }],
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SpecRenderer.Render(spec));
+        Assert.Contains("aggregate limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
 /// Plan section 5.4 control 2: the declared <see cref="ImageFormat"/> must
 /// agree with the image's own magic bytes, checked by
 /// <see cref="DocumentSpec.Content"/> because that is the only property that
@@ -2306,6 +2477,7 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(2_000, SpecLimits.MaxListItems);
         Assert.Equal(100, SpecLimits.MaxListItemChildren);
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
+        Assert.Equal(32 * 1024 * 1024, SpecLimits.MaxTotalAssetBytes);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
         Assert.Equal(6_000, SpecLimits.MaxTotalTextLength);
         Assert.Equal(1, SpecLimits.MinPageDimensionPoints);

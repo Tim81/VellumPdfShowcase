@@ -216,6 +216,126 @@ public static class SpecLimits
     public const int MaxEmbeddedFonts = 100;
 
     /// <summary>
+    /// Caps the SUM, in bytes, of every distinct asset byte array one
+    /// specification carries: each distinct <see cref="Model.ImageSpec.Bytes"/>
+    /// reachable from <see cref="Model.DocumentSpec.Content"/>, every entry of
+    /// <see cref="Model.DocumentSpec.EmbeddedFonts"/>, and an output intent's
+    /// own <see cref="Model.PdfAOutputIntentSpec.IccProfile"/>. Enforced by
+    /// <see cref="Model.DocumentSpec.ValidateAggregateAssetBytes"/>, which both
+    /// <see cref="Generation.SpecRenderer.Render"/> and
+    /// <see cref="Generation.SpecCodeEmitter.Emit"/> call; see that method's
+    /// own remark for why this cannot be checked at construction the way
+    /// <see cref="MaxAssetBytes"/> itself is.
+    /// </summary>
+    /// <remarks>
+    /// THE GAP THIS CLOSES. <see cref="MaxAssetBytes"/> bounds one byte array.
+    /// Nothing bounded their SUM: a specification could hold hundreds of
+    /// DISTINCT images, each individually under <see cref="MaxAssetBytes"/>,
+    /// or every one of <see cref="MaxEmbeddedFonts"/>'s 100 slots filled at
+    /// <see cref="MaxAssetBytes"/> each. MEASURED by the coordinator through
+    /// <see cref="Generation.SpecRenderer.Render"/>, every specification below
+    /// was inside every existing cap: 500 DISTINCT 4096 by 4096 PNGs, each 2.5
+    /// MB of source, rendered 1.30 GB of output in 86,859 ms on desktop; 500
+    /// DISTINCT 2048 by 2048 PNGs rendered 596 MB in 22,666 ms; the SAME 500
+    /// images as one SHARED instance, after the per-render image cache fix
+    /// (see <see cref="Generation.SpecRenderer.RenderContext"/>'s own
+    /// <c>ImageCache</c>), rendered 2.79 MB in 109 ms. <see cref="Model.SpecLimits.MaxContentItems"/>
+    /// permits 2,000 occurrences, so the first figure extrapolates to roughly
+    /// 5 GB: memory exhaustion in the visitor's own tab, not merely a freeze.
+    /// </remarks>
+    /// <remarks>
+    /// COUNTED BY DISTINCT REFERENCE, deliberately the opposite rule from
+    /// <see cref="MaxWalkedNodes"/> and <see cref="MaxTotalTextLength"/>, which
+    /// count by POSITION so that shared structure cannot amplify a total.
+    /// Both rules are correct for what each one bounds. A walked node or a
+    /// character is laid out again, in full, at every position that reaches
+    /// it, because neither <see cref="Generation.SpecRenderer"/> nor
+    /// <see cref="Generation.SpecCodeEmitter"/> caches layout by identity, so
+    /// counting by position is the only rule that cannot be defeated by
+    /// sharing. An asset byte array is the opposite: since the shared-image
+    /// caching fix, <see cref="Generation.SpecRenderer.RenderContext.ImageCache"/>
+    /// decodes and embeds a repeated <see cref="Model.ImageSpec"/> INSTANCE
+    /// once, and <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/>
+    /// hoists the identical reference into one shared decode in the emitted
+    /// C#, so a shared instance genuinely costs once on both sides, measured
+    /// directly above (2.79 MB against 596 MB to 1.30 GB for the identical
+    /// pixels as distinct instances). Counting by position here would charge
+    /// twice for something the cache already made free, penalising exactly
+    /// the sharing pattern the caching fix exists to reward, and counting by
+    /// value equality would be wrong for the same reason
+    /// <see cref="Generation.SpecRenderer.RenderContext.ImageCache"/>'s own
+    /// remark gives for keying the cache by reference rather than by
+    /// <see cref="Model.ImageSpec"/>'s record equality: two value-equal but
+    /// DISTINCT instances are not the same decode, and must not be charged
+    /// once between them. <see cref="Generation.SpecCodeEmitter.DistinctContentImagesByReference"/>
+    /// is reused directly, by reference-identity <see cref="HashSet{T}"/>,
+    /// rather than restating the same rule a second time, so this cap and the
+    /// cache it mirrors cannot silently drift apart about which occurrence is
+    /// "the same image".
+    /// </remarks>
+    /// <remarks>
+    /// EVERY ASSET MEMBER IS COVERED, not only images. Every entry of
+    /// <see cref="Model.DocumentSpec.EmbeddedFonts"/> is loaded by
+    /// <see cref="Generation.SpecRenderer.Render"/> unconditionally, via
+    /// <c>Document.UseTrueTypeFont</c>, regardless of whether any
+    /// <see cref="Model.TextStyleSpec"/> in the specification ever references
+    /// it by index, so <see cref="MaxEmbeddedFonts"/> (100) times
+    /// <see cref="MaxAssetBytes"/> (20 MB) is 2 GB the model already admitted
+    /// before this cap. MEASURED rather than assumed: 100 DISTINCT 410,712
+    /// byte font arrays (the shipped Liberation Sans face, cloned), none
+    /// referenced by any content style, registered in 34 ms on desktop and
+    /// added nothing to the 53,444 byte output; an unreferenced embedded font
+    /// is parsed but never actually embedded into the saved bytes. This does
+    /// NOT make the 2 GB figure safe to leave uncapped: <c>Document.UseTrueTypeFont</c>
+    /// still parses, and <see cref="Model.SpecLimits.ValidateAssetBytes"/>
+    /// still clones, every one of those bytes regardless of whether the
+    /// library later embeds them, which is memory pressure in the visitor's
+    /// own tab per CLAUDE.md control 1 even when the OUTPUT stays small; this
+    /// cap bounds that memory directly rather than relying on an output-size
+    /// side effect that a future library change could remove. An output
+    /// intent's <see cref="Model.PdfAOutputIntentSpec.IccProfile"/> is a single
+    /// optional byte array, so it can contribute at most one
+    /// <see cref="MaxAssetBytes"/> share; it is summed in for completeness, not
+    /// because it was independently found to be a large contributor.
+    /// </remarks>
+    /// <remarks>
+    /// THE VALUE, MEASURED rather than guessed, at 32 MiB (33,554,432 bytes).
+    /// Every shipped asset fits with wide headroom: the one bundled font is
+    /// 410,712 bytes and the bundled sRGB ICC profile is 3,024 bytes, about
+    /// 414 KB together, roughly 80 times under this cap; every
+    /// <c>DocumentSpecSamples</c> image is a one-pixel placeholder of a few
+    /// dozen bytes. MEASURED AT THIS VALUE, Release configuration, desktop x64:
+    /// 18 DISTINCT 2048 by 2048 synthetic PNGs (<c>SyntheticPng.CreateVaryingRgb</c>,
+    /// the same generator <c>SharedImageCacheTests</c> uses), totalling
+    /// 32,136,696 bytes of source just under this cap, rendered 30,315,242
+    /// bytes (28.91 MB) of output in 737 ms. This is the SAME order of
+    /// magnitude as the worst case this model already accepts elsewhere: the
+    /// <see cref="MaxRunningBandTemplateLength"/> construction's roughly
+    /// 11,000 pages render in 601 ms on desktop and 35,148 ms in the browser
+    /// this application ships to; this cap's own worst case, extrapolated by
+    /// the same 20 to 30 times desktop-to-browser factor that construction and
+    /// <see cref="MaxTotalTextLength"/>'s own remark both measure directly, is
+    /// on the order of tens of seconds, not the tens of MINUTES the uncapped
+    /// 1.30 GB figure above would extrapolate to at 500 occurrences. Embedded
+    /// fonts and an ICC profile were measured and found far cheaper per byte
+    /// than an image (100 fonts totalling 39.2 MB registered in 34 ms, against
+    /// 30.65 MB of images costing 737 ms), so images are the figure this value
+    /// is calibrated against; a specification that spends its whole budget on
+    /// fonts instead costs less than the figure above, not more.
+    /// </remarks>
+    /// <remarks>
+    /// NOTE what this cap does NOT bound. Exactly as <see cref="MaxAssetBytes"/>'s
+    /// own remark states, this bounds SOURCE bytes, not decoded pixel count: a
+    /// well-formed file far smaller than its own <see cref="MaxAssetBytes"/>
+    /// share can still declare an enormous pixel grid, and that remains the
+    /// decoding library's own decoded-pixel-count guard's responsibility, not
+    /// this cap's. This cap answers a different question: given assets the
+    /// per-image guard already accepts, how many of them, and how large in
+    /// total, may one specification hold at once.
+    /// </remarks>
+    public const int MaxTotalAssetBytes = 32 * 1024 * 1024;
+
+    /// <summary>
     /// Caps how deeply a <see cref="Model.ListItemSpec"/> tree may nest through
     /// <see cref="Model.ListItemSpec.Children"/>. Measured directly: unbounded
     /// nesting overflows the CLR stack at roughly depth 4000 on the desktop,

@@ -141,6 +141,7 @@ public static class SpecRenderer
     public static byte[] Render(DocumentSpec spec)
     {
         spec.ValidateEmbeddedFontReferences();
+        spec.ValidateAggregateAssetBytes();
 
         using var document = new Document
         {
