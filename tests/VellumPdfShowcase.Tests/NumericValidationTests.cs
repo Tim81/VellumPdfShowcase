@@ -227,8 +227,10 @@ public class DeepPaginationTests
     };
 
     /// <summary>
-    /// Measured: 15,000 pages on 2.3.1, exit 127 on 2.3.0 at roughly 4,353
-    /// <c>DocumentRenderer.PlaceRenderer</c> frames.
+    /// Measured at a <see cref="SpecLimits.MaxTotalTextLength"/> of 20,000:
+    /// 15,000 pages on 2.3.1, exit 127 on 2.3.0 at roughly 4,353
+    /// <c>DocumentRenderer.PlaceRenderer</c> frames. This reproduction is the
+    /// worst text volume the model admits, so its page count follows that cap.
     /// </summary>
     private static DocumentSpec DefaultMarginsWideGlyphRepro()
     {
@@ -305,9 +307,30 @@ public class DeepPaginationTests
         return count;
     }
 
+    /// <summary>
+    /// The reproductions below only mean something while the model still admits
+    /// a document deep enough to have reached the defect. 2.3.0 died past
+    /// roughly 4,250 page continuations, and at this geometry one character is
+    /// one page, so a text budget under that threshold would leave these tests
+    /// passing on a document 2.3.0 would have rendered happily.
+    /// </summary>
+    [Fact]
+    public void TextAndNodeBudgets_StayAboveTheCrashThreshold()
+    {
+        Assert.True(
+            SpecLimits.MaxTotalTextLength >= 4_500,
+            $"MaxTotalTextLength is {SpecLimits.MaxTotalTextLength}, below the roughly 4,250 page continuations " +
+            "VellumPdf.Layout 2.3.0 needed to overflow the stack. The reproductions in this class would still " +
+            "pass, on documents that never reached the defect.");
+
+        Assert.True(
+            SpecLimits.MaxWalkedNodes >= 4_951,
+            $"MaxWalkedNodes is {SpecLimits.MaxWalkedNodes}, too few for the 4,951-node list reproduction below.");
+    }
+
     [Fact]
     public void DefaultMarginsWideGlyphRepro_RendersDeeply() =>
-        Assert.True(PageCount(SpecRenderer.Render(DefaultMarginsWideGlyphRepro())) > 10_000);
+        Assert.True(PageCount(SpecRenderer.Render(DefaultMarginsWideGlyphRepro())) > 4_000);
 
     [Fact]
     public void ManyShortListItemsRepro_RendersDeeply() =>

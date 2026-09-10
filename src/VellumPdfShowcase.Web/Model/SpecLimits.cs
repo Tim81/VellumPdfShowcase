@@ -214,34 +214,58 @@ public static class SpecLimits
     /// </para>
     /// <para>
     /// IN THE BROWSER THIS APPLICATION SHIPS TO, that same specification took
-    /// 47,963 ms, measured through the site's own elapsed-time display in a
-    /// published Release build. The same text at ZERO margins, which is 1,000
-    /// pages rather than 20,000 and is the worst case this model admitted
-    /// while it still carried a page-geometry bound, took 1,955 ms in the same
-    /// browser against 88 ms on desktop.
+    /// 47,963 ms at this value's previous setting of 20,000, measured through
+    /// the site's own elapsed-time display in a published Release build. The
+    /// same text at ZERO margins, which is 1,000 pages rather than 20,000 and
+    /// was the worst case this model admitted while it still carried a
+    /// page-geometry bound, took 1,955 ms in the same browser against 88 ms on
+    /// desktop. The factor between desktop and browser is about thirty, not the
+    /// three to ten a reader extrapolating from the figures above might assume.
     /// </para>
     /// <para>
-    /// NOTE: 48 seconds is a tab that looks dead rather than busy, and the
-    /// factor between desktop and browser is about thirty, not the three to
-    /// ten a reader might assume. Generation still cannot freeze the tab
-    /// UNBOUNDEDLY, which is the invariant CLAUDE.md states, and it still runs
-    /// behind a macrotask yield so the busy state paints first. But the bound
-    /// is now measured in tens of seconds, and that figure is recorded here
-    /// rather than left to be rediscovered.
+    /// Forty-eight seconds is a tab that looks dead rather than busy, so this
+    /// value was lowered to bound it. The lever is deliberately this cap and
+    /// <see cref="MaxWalkedNodes"/> rather than a return of the page-geometry
+    /// bound: the geometry bound refused page sizes and font sizes the library
+    /// itself accepts, which made the catalogue understate the library, and it
+    /// was defeated five times by levers inside the library's own layout.
+    /// These two caps bound the same worst case from the other side, using only
+    /// quantities the model can see exactly.
     /// </para>
     /// <para>
-    /// This value is also what keeps a single element clear of the library's
-    /// OWN ceiling of 50,000 page continuations per top-level element, without
-    /// this file needing a cap of its own for it. A rendered line comes from
-    /// either a line-producing node or a character, so one element cannot
-    /// exceed <see cref="MaxWalkedNodes"/> plus this value in lines, about
-    /// 25,000, and cannot demand more continuations than it has lines.
-    /// Measured directly at the boundary: 49,999 continuations render, and
-    /// 50,002 raise a catchable <see cref="InvalidOperationException"/> naming
-    /// the limit.
+    /// WHERE THE FLOOR IS, measured rather than chosen. The worst case is one
+    /// rendered line per character on a content box too narrow for two, so
+    /// browser time is very nearly linear in this value: 20,000 characters is
+    /// 20,000 pages and 48 seconds. Cutting it to a few seconds would need
+    /// roughly 2,000, and that is below what the regression guards themselves
+    /// need: <c>DeepPaginationTests</c>' list reproduction carries 4,950
+    /// characters across 4,951 nodes, and it has to, because fewer than about
+    /// 4,250 page continuations do not reach the defect it exists to prove is
+    /// gone. Every sample shipped in <c>DocumentSpecSamples</c> fits under
+    /// 4,000 characters, verified by lowering this cap and running the suite.
+    /// 6,000 is therefore the smallest value that keeps both reproductions
+    /// expressible, with headroom, and it is what this value is set to.
     /// </para>
-    /// </remarks>
-    public const int MaxTotalTextLength = 20_000;
+    /// <para>
+    /// MEASURED AT THIS VALUE, in the same browser and the same way as the
+    /// 47,963 ms figure above: the text-driven worst case, this many characters
+    /// of the widest glyph at 36 points on a 200 by 200 page at default
+    /// margins, takes 5,205 ms. The node-driven worst case, 1,650 list items
+    /// each carrying two children on a geometry giving one line per page,
+    /// takes 2,621 ms. Those two are the model's worst cases from either side,
+    /// so about five seconds is the ceiling this pair of caps buys. NOTE the
+    /// relationship is not linear in this value: a third of the characters cost
+    /// a ninth of the time, not a third, because output size falls with it.
+    /// </para>
+    /// <para>
+    /// NOTE: five seconds is still a long freeze, and bounding it further means
+    /// giving up the ability to express a document that reaches the 2.3.0 crash
+    /// threshold at all, which would mean deleting the regression guards for
+    /// the defect this model spent ten review rounds on. That trade was not
+    /// taken. NOTE also that <see cref="MaxWalkedNodes"/> stays at 5,000 for
+    /// the same reason: the list reproduction needs 4,951 of them.
+    /// </para>
+    public const int MaxTotalTextLength = 6_000;
 
     /// <summary>
     /// The lower bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and

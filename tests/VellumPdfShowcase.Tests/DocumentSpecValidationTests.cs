@@ -1769,7 +1769,7 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(100, SpecLimits.MaxListItemChildren);
         Assert.Equal(100, SpecLimits.MaxEmbeddedFonts);
         Assert.Equal(5_000, SpecLimits.MaxWalkedNodes);
-        Assert.Equal(20_000, SpecLimits.MaxTotalTextLength);
+        Assert.Equal(6_000, SpecLimits.MaxTotalTextLength);
         Assert.Equal(1, SpecLimits.MinPageDimensionPoints);
         Assert.Equal(20_000, SpecLimits.MaxPageDimensionPoints);
         Assert.Equal(1_000, SpecLimits.MaxFontSize);
