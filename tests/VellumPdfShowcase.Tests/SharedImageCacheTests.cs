@@ -25,8 +25,8 @@ namespace VellumPdfShowcase.Tests;
 /// assertion flakes. <see cref="SharedInstance_RepeatedManyTimes_StaysSmall"/>
 /// is the one that fails if the cache is removed: without it, 200 occurrences
 /// of even a tiny synthetic image push the output size well past the ceiling
-/// asserted there (measured directly, uncached: about 2.4 MB against the
-/// 49,077 bytes this test's threshold allows for).
+/// asserted there (measured directly: 2,482,658 bytes uncached against 49,077
+/// cached, with the assertion's own threshold at 300,000).
 /// <see cref="DistinctInstances_IdenticalBytes_CacheDoesNotHelp"/> is the
 /// companion measurement: distinct <see cref="ImageSpec"/> instances sharing
 /// byte-for-byte identical content are NOT deduplicated, deliberately,

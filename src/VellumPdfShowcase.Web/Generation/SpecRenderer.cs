@@ -497,7 +497,7 @@ public static class SpecRenderer
     /// identical bytes rather than one shared instance (the cache is keyed by
     /// reference identity; see <see cref="RenderContext.ImageCache"/> for why):
     /// 512 by 512 gives 199,407,372 bytes (190.17 MB) in 4,558 ms; 2048 by
-    /// 2048 gives 842,066,872 bytes (803.06 MB) in 24,031 ms; 4096 by 4096 did
+    /// 2048 gives 842,066,872 bytes (803.06 MiB) in 24,031 ms; 4096 by 4096 did
     /// not complete at 500 occurrences in the sandboxed environment this
     /// figure was measured in (process killed for memory exhaustion), but
     /// scaled runs at 50, 100 and 150 occurrences (172.17 MB/5,283 ms,
@@ -512,7 +512,12 @@ public static class SpecRenderer
     /// directly against the cap that now exists, a specification far smaller
     /// than 500 occurrences is already refused before any image is decoded:
     /// 50 distinct 4096 by 4096 instances (193,691,750 source bytes) is
-    /// rejected at construction time by <see cref="DocumentSpec.ValidateAggregateAssetBytes"/>.
+    /// rejected by <see cref="DocumentSpec.ValidateAggregateAssetBytes"/>,
+    /// which this method and <see cref="SpecCodeEmitter.Emit"/> each call
+    /// before doing any work. NOTE it is deferred rather than checked at
+    /// construction, for the reason that method's own remark gives: it spans
+    /// three top-level properties that an object initializer may set in any
+    /// order.
     /// </para>
     /// <see cref="Generation.SpecCodeEmitter"/> hoists the identical repeated
     /// reference into one shared decode in the emitted C#, for the same

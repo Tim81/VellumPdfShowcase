@@ -272,7 +272,7 @@ public static class SpecLimits
     /// measured before the per-render image cache existed, not 500 distinct
     /// instances; the two are not the same number. 500 DISTINCT 2048 by 2048
     /// PNGs (each 1,785,372 source bytes) DID complete: 842,066,872 bytes
-    /// (803.06 MB) in 24,031 ms, also recorded on
+    /// (803.06 MiB) in 24,031 ms, also recorded on
     /// <see cref="Generation.SpecRenderer.BuildImage"/>. The SAME 500 images
     /// as one SHARED instance at 4096 by 4096, after the per-render image
     /// cache fix (see <see cref="Generation.SpecRenderer.RenderContext"/>'s
@@ -324,14 +324,17 @@ public static class SpecLimits
     /// <see cref="Model.TextStyleSpec"/> in the specification ever references
     /// it by index, so <see cref="MaxEmbeddedFonts"/> (100) times
     /// <see cref="MaxAssetBytes"/> (20 MiB) is 2 GiB the model already admitted
-    /// before this cap. MEASURED rather than assumed, at the largest legal
-    /// construction THIS cap now admits (100 would exceed it; 81 times
-    /// 410,712 is 33,267,672 bytes, under the 33,554,432 byte limit, and 82
-    /// would not be): 81 DISTINCT 410,712 byte font arrays (the shipped
-    /// Liberation Sans face, cloned), none referenced by any content style,
-    /// registered in 40 ms on desktop, cold, and added nothing to the 53,852
-    /// byte output; an unreferenced embedded font is parsed but never
-    /// actually embedded into the saved bytes. This does NOT make the 2 GiB
+    /// before this cap. MEASURED rather than assumed, on a 200 by 200 point page carrying one
+    /// unstyled <c>"W"</c>, varying only the number of unreferenced font
+    /// entries: 0 fonts give 1,522 bytes with no <c>FontFile2</c>; 1, 2, 10,
+    /// 80 and 81 fonts all give 53,444 bytes, every one of them carrying a
+    /// <c>FontFile2</c> stream. NOTE what that says, because an earlier
+    /// version of this remark had it backwards: the library embeds the
+    /// registered face ONCE whether or not any content references it, and
+    /// deduplicates identical clones, so the output stops growing after the
+    /// first entry rather than never growing at all. Eighty-one is the largest
+    /// legal count under this cap, since 81 times 410,712 is 33,267,672 bytes
+    /// and 82 would exceed 33,554,432. This does NOT make the 2 GiB
     /// figure safe to leave uncapped: <c>Document.UseTrueTypeFont</c>
     /// still parses, and <see cref="Model.SpecLimits.ValidateAssetBytes"/>
     /// still clones, every one of those bytes regardless of whether the
@@ -566,8 +569,8 @@ public static class SpecLimits
     /// twice, not a defect this file can tune away. Bounding it further
     /// means giving up the ability to express a document that reaches the
     /// 2.3.0 crash threshold at all, which would mean deleting the
-    /// regression guards for the defect this model spent ten review rounds
-    /// on; that trade was not taken. This value and <see cref="MaxWalkedNodes"/>
+    /// regression guards for the pagination defect those guards exist for;
+    /// that trade was not taken. This value and <see cref="MaxWalkedNodes"/>
     /// stay where they are, deliberately, and tuning them further has
     /// stopped. Together with <see cref="MaxRunningBandTemplateLength"/>,
     /// these caps reduce the freeze well below the 47,963 ms the previous,
