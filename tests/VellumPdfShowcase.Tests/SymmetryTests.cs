@@ -1,5 +1,6 @@
 using System.Reflection;
 using VellumPdf.Encryption;
+using VellumPdf.Layout.Elements;
 using VellumPdfShowcase.Web.Generation;
 using VellumPdfShowcase.Web.Model;
 
@@ -108,25 +109,53 @@ public class SymmetryTests
         var (renderThrew, renderException) = TryRun(() => SpecRenderer.Render(spec));
         var (emitThrew, emitException) = TryRun(() => SpecCodeEmitter.Emit(spec));
 
+        var violation = AgreementViolation(renderThrew, renderException, emitThrew, emitException);
+
+        Assert.True(violation is null, violation);
+    }
+
+    /// <summary>
+    /// The decision this file exists to make, extracted from the assertion so
+    /// that it can be driven directly with all four combinations of outcomes.
+    /// Returns <see langword="null"/> when the two consumers agree, and the
+    /// failure message otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Extracted for the reason <see cref="SpecRoundTripTests"/> extracted its
+    /// own heading-hierarchy rule. Every specification in this file's corpus
+    /// makes the comparison below evaluate <c>false == false</c>: the samples
+    /// all succeed on both sides, and every adversarial specification is one of
+    /// the documented asymmetries, where Render throws
+    /// <see cref="InvalidOperationException"/>, which is not an
+    /// <see cref="ArgumentException"/> and so is not a rejection AS MALFORMED
+    /// on either side. A guard whose central comparison has only ever seen one
+    /// pair of inputs is not known to discriminate. The corpus now carries
+    /// specifications both consumers reject, and
+    /// <see cref="SymmetryGuardRuleTests"/> drives this method with the two
+    /// disagreeing combinations directly.
+    /// </remarks>
+    internal static string? AgreementViolation(bool renderThrew, Exception? renderException, bool emitThrew, Exception? emitException)
+    {
         var renderRejectedAsMalformed = renderThrew && renderException is ArgumentException;
         var emitRejectedAsMalformed = emitThrew && emitException is ArgumentException;
 
-        Assert.True(
-            renderRejectedAsMalformed == emitRejectedAsMalformed,
-            "SpecRenderer.Render and SpecCodeEmitter.Emit disagree about whether this specification is " +
-            $"malformed. Render {Describe(renderThrew, renderException)}; Emit {Describe(emitThrew, emitException)}. " +
-            "A specification the model let through construction must not look well-formed to one consumer's " +
-            "own dispatch and malformed to the other's.");
+        if (renderRejectedAsMalformed != emitRejectedAsMalformed)
+        {
+            return "SpecRenderer.Render and SpecCodeEmitter.Emit disagree about whether this specification is " +
+                $"malformed. Render {Describe(renderThrew, renderException)}; Emit {Describe(emitThrew, emitException)}. " +
+                "A specification the model let through construction must not look well-formed to one consumer's " +
+                "own dispatch and malformed to the other's.";
+        }
 
         // Emit's own documented contract: it may throw ArgumentException, but
         // never InvalidOperationException, since it never executes anything.
-        if (emitThrew)
+        if (emitThrew && emitException is InvalidOperationException)
         {
-            Assert.False(
-                emitException is InvalidOperationException,
-                $"SpecCodeEmitter.Emit threw InvalidOperationException ({emitException!.Message}), which its own " +
-                "documented exception contract promises never happens.");
+            return $"SpecCodeEmitter.Emit threw InvalidOperationException ({emitException.Message}), which its own " +
+                "documented exception contract promises never happens.";
         }
+
+        return null;
     }
 
     private static string Describe(bool threw, Exception? exception) =>
@@ -171,15 +200,23 @@ public class SymmetryTests
     public static TheoryData<string> AdversarialSpecNames()
     {
         TheoryData<string> names = [];
-        foreach (var method in typeof(SymmetryTests)
-            .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-            .Where(method => method.ReturnType == typeof(DocumentSpec) && method.Name.EndsWith("Specification", StringComparison.Ordinal)))
+        foreach (var name in AdversarialSpecificationNames())
         {
-            names.Add(method.Name);
+            names.Add(name);
         }
 
         return names;
     }
+
+    /// <summary>
+    /// The names alone, so that <see cref="AdversarialCorpusTests"/> can assert
+    /// over the same corpus without a second copy of the discovery rule.
+    /// </summary>
+    internal static IEnumerable<string> AdversarialSpecificationNames() =>
+        typeof(SymmetryTests)
+            .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(method => method.ReturnType == typeof(DocumentSpec) && method.Name.EndsWith("Specification", StringComparison.Ordinal))
+            .Select(method => method.Name);
 
     [Theory]
     [MemberData(nameof(AdversarialSpecNames))]
@@ -189,6 +226,130 @@ public class SymmetryTests
         var spec = (DocumentSpec)method.Invoke(null, null)!;
 
         RenderAndEmitAgreeOnArgumentRejection(spec);
+    }
+
+    /// <summary>
+    /// A specification BOTH consumers reject, which the corpus had none of.
+    /// <see cref="DocumentSpec.DefaultTextStyle"/> names an embedded font by
+    /// index while <see cref="DocumentSpec.EmbeddedFonts"/> is empty. That
+    /// cannot be checked by either member's own accessor, since neither can
+    /// see the other at its final value, so it survives construction and is
+    /// rejected by <c>ValidateEmbeddedFontReferences</c>, which Render and Emit
+    /// each call first.
+    /// </summary>
+    private static DocumentSpec DanglingDefaultStyleFontIndexSpecification() => new()
+    {
+        Page = new PageSizeSpec(200, 200),
+        DefaultTextStyle = new TextStyleSpec { Font = FontSpec.FromEmbedded(0) },
+        Content = [new PlainTextSpec { Text = "x" }],
+    };
+
+    /// <summary>
+    /// The same dangling reference reached through <see cref="DocumentSpec.Content"/>
+    /// rather than through the document's own default style, so the walk that
+    /// validates content font references is exercised too.
+    /// </summary>
+    private static DocumentSpec DanglingContentFontIndexSpecification() => new()
+    {
+        Page = new PageSizeSpec(200, 200),
+        DefaultTextStyle = Style(),
+        Content = [new ParagraphSpec { Runs = [new TextRunSpec("x", new TextStyleSpec { Font = FontSpec.FromEmbedded(2) })] }],
+    };
+
+    /// <summary>
+    /// The same dangling reference on a running band's own style, which is a
+    /// third distinct validation path.
+    /// </summary>
+    private static DocumentSpec DanglingHeaderFontIndexSpecification() => new()
+    {
+        Page = new PageSizeSpec(200, 200),
+        DefaultTextStyle = Style(),
+        Content = [new PlainTextSpec { Text = "x" }],
+        Header = new RunningBandSpec { Template = "{page}", Style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0) } },
+    };
+
+    /// <summary>
+    /// The same dangling reference on a list item nested two levels deep,
+    /// which is the recursive arm of the content walk. This is also the
+    /// corpus's only CONTENT-shaped adversarial specification: every other one
+    /// is asset-, encryption- or output-intent-shaped, and none of them
+    /// exercises the per-content-type dispatch where the two consumers most
+    /// plausibly diverge.
+    /// </summary>
+    private static DocumentSpec DanglingNestedListItemFontIndexSpecification() => new()
+    {
+        Page = new PageSizeSpec(200, 200),
+        DefaultTextStyle = Style(),
+        Content =
+        [
+            new ListSpec
+            {
+                Style = ListStyle.Unordered,
+                Items =
+                [
+                    new ListItemSpec
+                    {
+                        Text = "outer",
+                        Children =
+                        [
+                            new ListItemSpec
+                            {
+                                Text = "inner",
+                                Style = new TextStyleSpec { Font = FontSpec.FromEmbedded(0) },
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
+
+    /// <summary>
+    /// Accepted by both consumers, and shaped for the agreement that actually
+    /// matters rather than for a rejection: one value-equal
+    /// <see cref="TextStyleSpec"/> reused across a nested list item, a spanning
+    /// table cell and a paragraph run. The renderer caches styles and the
+    /// emitter hoists them, both keyed on that record equality, so this is
+    /// where a divergence about whether a style object is shared would show.
+    /// </summary>
+    private static DocumentSpec SharedStyleAcrossNestedStructureSpecification()
+    {
+        var shared = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica),
+            FontSize = 11,
+        };
+
+        var equalButDistinct = new TextStyleSpec
+        {
+            Font = FontSpec.FromStandard14(VellumPdf.Fonts.Standard14.Helvetica),
+            FontSize = 11,
+        };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(300, 300),
+            DefaultTextStyle = Style(),
+            Content =
+            [
+                new ParagraphSpec { Runs = [new TextRunSpec("first", shared), new TextRunSpec("second", equalButDistinct)] },
+                new ListSpec
+                {
+                    Style = ListStyle.OrderedDecimal,
+                    DefaultStyle = shared,
+                    Items = [new ListItemSpec { Text = "outer", Style = equalButDistinct, Children = [new ListItemSpec { Text = "inner", Style = shared }] }],
+                },
+                new TableSpec
+                {
+                    DefaultCellStyle = equalButDistinct,
+                    Rows =
+                    [
+                        new TableRowSpec { Cells = [new TableCellSpec { Content = "spanning", ColSpan = 2, Style = shared }] },
+                        new TableRowSpec { Cells = [new TableCellSpec { Content = "a" }, new TableCellSpec { Content = "b" }] },
+                    ],
+                },
+            ],
+        };
     }
 
     /// <summary>
@@ -319,4 +480,135 @@ public class SymmetryTests
         var exception = Assert.Throws<ArgumentException>(() => new FontSpec { Kind = (FontKind)99 });
         Assert.Contains("Kind", exception.Message, StringComparison.Ordinal);
     }
+}
+
+/// <summary>
+/// Drives <see cref="SymmetryTests.AgreementViolation"/> with all four
+/// combinations of outcomes directly, because the corpus alone cannot.
+/// </summary>
+/// <remarks>
+/// Every specification in that corpus makes the rule evaluate the same pair of
+/// inputs, so a weakened comparison would keep passing. Measured before this
+/// was written: all 24 corpus members produced "neither consumer rejected this
+/// as malformed", and the arm that checks Emit's own contract had never been
+/// reached at all. These four cases are what make the rule's own logic a
+/// tested thing rather than an assumed one.
+/// </remarks>
+public class SymmetryGuardRuleTests
+{
+    [Fact]
+    public void NeitherRejects_IsAgreement() =>
+        Assert.Null(SymmetryTests.AgreementViolation(false, null, false, null));
+
+    [Fact]
+    public void BothRejectAsMalformed_IsAgreement() =>
+        Assert.Null(SymmetryTests.AgreementViolation(true, new ArgumentException("render"), true, new ArgumentException("emit")));
+
+    [Fact]
+    public void OnlyRenderRejectsAsMalformed_IsAViolation()
+    {
+        var violation = SymmetryTests.AgreementViolation(true, new ArgumentException("render"), false, null);
+
+        Assert.NotNull(violation);
+        Assert.Contains("disagree", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnlyEmitRejectsAsMalformed_IsAViolation()
+    {
+        var violation = SymmetryTests.AgreementViolation(false, null, true, new ArgumentException("emit"));
+
+        Assert.NotNull(violation);
+        Assert.Contains("disagree", violation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The documented asymmetry, which must NOT be reported: the library
+    /// refuses something only execution can discover, so Render throws
+    /// <see cref="InvalidOperationException"/> while Emit returns the correct
+    /// code for it.
+    /// </summary>
+    [Fact]
+    public void RenderThrowsInvalidOperationWhileEmitSucceeds_IsAgreement() =>
+        Assert.Null(SymmetryTests.AgreementViolation(true, new InvalidOperationException("library refused"), false, null));
+
+    /// <summary>
+    /// Emit promises never to throw <see cref="InvalidOperationException"/>,
+    /// since it executes nothing. This arm of the rule was unreachable from
+    /// the corpus.
+    /// </summary>
+    [Fact]
+    public void EmitThrowsInvalidOperation_IsAViolation()
+    {
+        var violation = SymmetryTests.AgreementViolation(true, new InvalidOperationException("render"), true, new InvalidOperationException("emit"));
+
+        Assert.NotNull(violation);
+        Assert.Contains("promises never happens", violation, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// The adversarial corpus is discovered by reflection over method names, with
+/// no floor: renaming a factory off the <c>Specification</c> suffix removes it
+/// from the theory silently, and the theory then passes with fewer cases. This
+/// pins what the corpus must CONTAIN, in terms of the verdicts it produces
+/// rather than a count, which is the property that actually matters.
+/// </summary>
+public class AdversarialCorpusTests
+{
+    private static (bool RenderRejected, bool EmitRejected) Verdicts(DocumentSpec spec)
+    {
+        var renderRejected = false;
+        var emitRejected = false;
+
+        try
+        {
+            SpecRenderer.Render(spec);
+        }
+        catch (ArgumentException)
+        {
+            renderRejected = true;
+        }
+        catch (Exception)
+        {
+            // Any other exception is not a rejection AS MALFORMED.
+        }
+
+        try
+        {
+            SpecCodeEmitter.Emit(spec);
+        }
+        catch (ArgumentException)
+        {
+            emitRejected = true;
+        }
+
+        return (renderRejected, emitRejected);
+    }
+
+    private static IEnumerable<DocumentSpec> Corpus()
+    {
+        foreach (var name in SymmetryTests.AdversarialSpecificationNames())
+        {
+            var method = typeof(SymmetryTests).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!;
+            yield return (DocumentSpec)method.Invoke(null, null)!;
+        }
+    }
+
+    /// <summary>
+    /// At least one adversarial specification must be rejected by BOTH
+    /// consumers, or the guard's central comparison is only ever evaluated
+    /// with one pair of inputs and cannot be said to discriminate.
+    /// </summary>
+    [Fact]
+    public void Corpus_ContainsASpecificationBothConsumersReject() =>
+        Assert.Contains(Corpus().Select(Verdicts), verdict => verdict is (true, true));
+
+    /// <summary>
+    /// And at least one must be the documented asymmetry, so that the guard is
+    /// also known not to misfire on the case it explicitly carves out.
+    /// </summary>
+    [Fact]
+    public void Corpus_ContainsADocumentedAsymmetry() =>
+        Assert.Contains(Corpus().Select(Verdicts), verdict => verdict is (false, false));
 }
