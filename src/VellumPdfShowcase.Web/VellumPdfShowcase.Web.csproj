@@ -33,7 +33,15 @@
     <UseSystemResourceKeys>false</UseSystemResourceKeys>
     <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
     <RunAOTCompilation>false</RunAOTCompilation>
-    <DebuggerSupport>false</DebuggerSupport>
+    <!--
+      Left unset for Debug: both launch profiles (Properties/launchSettings.json)
+      configure inspectUri for the in-browser debug proxy at
+      /_framework/debug/ws-proxy, which requires debugger support to be built
+      in. Forcing this false unconditionally, as before, applied to Debug
+      builds too and silently broke that proxy. Only the Release (published)
+      configuration trims it.
+    -->
+    <DebuggerSupport Condition="'$(Configuration)' != 'Debug'">false</DebuggerSupport>
     <EventSourceSupport>false</EventSourceSupport>
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
     <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
@@ -43,8 +51,14 @@
       that a real `dotnet publish` with the trim analyzer disabled links cleanly and that the
       linker (not just the build-time analyzer) raises nothing equivalent for this component.
       Scoped to this one diagnostic so the analyzer still watches VellumPdf usage.
+
+      IL2110 fires on the framework LayoutView component's own Razor-generated display class
+      (App_razor.g.cs, the NotFound branch's `<LayoutView Layout="@typeof(MainLayout)">`), the
+      same category of framework-generated-code false positive as IL2111 above: the analyzer
+      cannot follow DynamicallyAccessedMembers through the compiler's closure field. Verified
+      the same way, with a real `dotnet publish`, that the linker raises nothing equivalent.
     -->
-    <NoWarn>$(NoWarn);IL2111</NoWarn>
+    <NoWarn>$(NoWarn);IL2111;IL2110</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

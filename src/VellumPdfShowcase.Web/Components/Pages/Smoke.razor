@@ -37,9 +37,14 @@
 
     @if (_hardCodedBytes is not null)
     {
-        <button type="button" @onclick="@(() => DownloadAsync(_hardCodedBytes, "smoke-hardcoded.pdf"))">
-            Download
+        <button type="button" @onclick="DownloadHardCodedAsync" aria-disabled="@(_busyHardCodedDownload ? "true" : "false")">
+            @(_busyHardCodedDownload ? "Downloading…" : "Download")
         </button>
+
+        @if (_hardCodedDownloadError is not null)
+        {
+            <p role="alert">Download failed: <br /><code>@_hardCodedDownloadError</code></p>
+        }
 
         @if (_hardCodedSupportsInline)
         {
@@ -85,9 +90,14 @@
 
     @if (_pdfABytes is not null)
     {
-        <button type="button" @onclick="@(() => DownloadAsync(_pdfABytes, "smoke-pdfa2b.pdf"))">
-            Download
+        <button type="button" @onclick="DownloadPdfAAsync" aria-disabled="@(_busyPdfADownload ? "true" : "false")">
+            @(_busyPdfADownload ? "Downloading…" : "Download")
         </button>
+
+        @if (_pdfADownloadError is not null)
+        {
+            <p role="alert">Download failed: <br /><code>@_pdfADownloadError</code></p>
+        }
 
         @if (_pdfASupportsInline)
         {

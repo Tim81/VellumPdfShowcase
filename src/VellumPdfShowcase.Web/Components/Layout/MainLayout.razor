@@ -10,7 +10,16 @@
         </div>
 
         <article class="content px-4">
-            @Body
+            <ErrorBoundary>
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent>
+                    <p role="alert">
+                        This page failed to render. Reload to try again.
+                    </p>
+                </ErrorContent>
+            </ErrorBoundary>
         </article>
     </main>
 </div>
