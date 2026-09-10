@@ -63,7 +63,7 @@ public static class SpecLimits
     /// </summary>
     /// <remarks>
     /// NOTE: this remains a distinct, load-bearing cap even now that
-    /// <see cref="MaxTotalTextLength"/> (20,000, a fifth of this value) is
+    /// <see cref="MaxTotalTextLength"/> (6,000, a sixteenth of this value) is
     /// substantially smaller than this value.
     /// <see cref="MaxTotalTextLength"/> only bounds the strings the
     /// <see cref="Model.DocumentSpec.Content"/> walk visits, which, as of
@@ -258,21 +258,29 @@ public static class SpecLimits
     /// passes to loops, so no text volume this file admits can crash a caller
     /// any longer, and that derivation is gone. What remains is a bound on
     /// generation time and on output size, which is what the browser figures
-    /// above measure. Measured directly against 2.3.1: the worst
-    /// specification every cap in this file together still permits, this many
-    /// characters of the widest glyph at 36 points on a 200 by 200 point page
-    /// with this model's own DEFAULT margins, renders 20,000 pages and 7.5 MB
-    /// in 1,578 ms on desktop x64.
+    /// above measure. Measured directly against 2.3.1, through
+    /// <see cref="Generation.SpecRenderer.Render"/> at this value's own cap:
+    /// 6,000 characters of the widest glyph at 36 points on a 200 by 200
+    /// point page with this model's own DEFAULT margins renders 6,000 pages
+    /// and 2,253,004 bytes in 309 ms on desktop x64. NOTE: 36 points is not
+    /// this file's font-size ceiling; <see cref="MaxFontSize"/> now permits
+    /// up to 1,000 points, and per the remark there, a larger font does not
+    /// change this worst case, only makes it easier to reach.
     /// </para>
     /// <para>
-    /// IN THE BROWSER THIS APPLICATION SHIPS TO, that same specification took
-    /// 47,963 ms at this value's previous setting of 20,000, measured through
-    /// the site's own elapsed-time display in a published Release build. The
-    /// same text at ZERO margins, which is 1,000 pages rather than 20,000 and
-    /// was the worst case this model admitted while it still carried a
-    /// page-geometry bound, took 1,955 ms in the same browser against 88 ms on
-    /// desktop. The factor between desktop and browser is about thirty, not the
-    /// three to ten a reader extrapolating from the figures above might assume.
+    /// IN THE BROWSER THIS APPLICATION SHIPS TO, the same construction (the
+    /// widest glyph at 36 points on a 200 by 200 point page at default
+    /// margins) at this value's PREVIOUS setting of 20,000 rendered 20,000
+    /// pages and 7.5 MB in 1,578 ms on desktop x64, and took 47,963 ms in the
+    /// browser, measured through the site's own elapsed-time display in a
+    /// published Release build. The same text at ZERO margins, which was
+    /// 1,000 pages rather than 20,000 and was the worst case this model
+    /// admitted while it still carried a page-geometry bound, took 1,955 ms
+    /// in the same browser against 88 ms on desktop. The factor between
+    /// desktop and browser is not one fixed number: the 20,000-character pair
+    /// gives 47,963 over 1,578, about thirty; the zero-margin pair gives
+    /// 1,955 over 88, about twenty-two. Both are far above the three to ten a
+    /// reader extrapolating from either figure alone might assume.
     /// </para>
     /// <para>
     /// Forty-eight seconds is a tab that looks dead rather than busy, so this
@@ -287,10 +295,11 @@ public static class SpecLimits
     /// <para>
     /// WHERE THE FLOOR IS, measured rather than chosen. The worst case is one
     /// rendered line per character on a content box too narrow for two, so
-    /// browser time is very nearly linear in this value: 20,000 characters is
-    /// 20,000 pages and 48 seconds. Cutting it to a few seconds would need
-    /// roughly 2,000, and that is below what the regression guards themselves
-    /// need: <c>DeepPaginationTests</c>' list reproduction carries 4,950
+    /// PAGE COUNT is exactly linear in this value: 20,000 characters is
+    /// 20,000 pages. Browser TIME is not linear in it; it is superlinear, as
+    /// the measurement further below shows. The floor is set by the
+    /// regression guards, not by a time budget derived from that curve:
+    /// <c>DeepPaginationTests</c>' list reproduction carries 4,950
     /// characters across 4,951 nodes, and it has to, because fewer than about
     /// 4,250 page continuations do not reach the defect it exists to prove is
     /// gone. Every sample shipped in <c>DocumentSpecSamples</c> fits under
@@ -300,23 +309,39 @@ public static class SpecLimits
     /// </para>
     /// <para>
     /// MEASURED AT THIS VALUE, in the same browser and the same way as the
-    /// 47,963 ms figure above: the text-driven worst case, this many characters
-    /// of the widest glyph at 36 points on a 200 by 200 page at default
-    /// margins, takes 5,205 ms. The node-driven worst case, 1,650 list items
-    /// each carrying two children on a geometry giving one line per page,
-    /// takes 2,621 ms. Those two are the model's worst cases from either side,
-    /// so about five seconds is the ceiling this pair of caps buys. NOTE the
-    /// relationship is not linear in this value: a third of the characters cost
-    /// a ninth of the time, not a third, because output size falls with it.
+    /// 47,963 ms figure above: the text-driven case alone, this many
+    /// characters of the widest glyph at 36 points on a 200 by 200 page at
+    /// default margins, took 5,205 ms, and the node-driven case alone, 1,650
+    /// list items each carrying two children on a geometry giving one line
+    /// per page, took 2,621 ms; both measured before the band cap existed and
+    /// before anyone had checked whether the two budgets add. They do: a list
+    /// item with empty text is a line-producing node that costs nothing
+    /// against the text budget, so a specification can spend both budgets at
+    /// once. Measured through <see cref="Generation.SpecRenderer.Render"/> at
+    /// the current constants, on desktop x64: the text budget alone (6,000
+    /// characters, the construction above) renders 6,000 pages and 2,253,004
+    /// bytes in 309 ms; the node budget alone (1,665 list items each with two
+    /// empty children) renders 4,995 pages and 1,872,116 bytes in 139 ms;
+    /// both budgets spent in one document render 10,992 pages, 83 per cent
+    /// more than the text-only case, and 4,154,957 bytes in 387 ms. IN THE
+    /// BROWSER, that same both-budgets document took 11,985 ms, measured
+    /// through the site's own elapsed-time display in a published Release
+    /// build; that, not the roughly five seconds either budget alone costs
+    /// above, is the real ceiling this pair of caps buys. NOTE the
+    /// relationship is not linear in this value: a third of the characters
+    /// cost a ninth of the time, not a third, because output size falls with
+    /// it.
     /// </para>
     /// <para>
-    /// NOTE: five seconds is still a long freeze, and bounding it further means
-    /// giving up the ability to express a document that reaches the 2.3.0 crash
-    /// threshold at all, which would mean deleting the regression guards for
-    /// the defect this model spent ten review rounds on. That trade was not
+    /// NOTE: roughly twelve seconds, the both-budgets browser figure above,
+    /// is still a long freeze, and bounding it further means giving up the
+    /// ability to express a document that reaches the 2.3.0 crash threshold
+    /// at all, which would mean deleting the regression guards for the
+    /// defect this model spent ten review rounds on. That trade was not
     /// taken. NOTE also that <see cref="MaxWalkedNodes"/> stays at 5,000 for
     /// the same reason: the list reproduction needs 4,951 of them.
     /// </para>
+    /// </remarks>
     public const int MaxTotalTextLength = 6_000;
 
     /// <summary>
