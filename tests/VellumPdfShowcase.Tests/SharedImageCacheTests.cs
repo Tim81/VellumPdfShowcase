@@ -12,8 +12,8 @@ namespace VellumPdfShowcase.Tests;
 /// occurrence in <see cref="DocumentSpec.Content"/>, even when every
 /// occurrence was the SAME instance. Nothing bounded the product of one
 /// image's decoded size and its occurrence count, which is memory exhaustion
-/// in a browser tab rather than a mere slowdown. Measured by the coordinator
-/// through <see cref="Generation.SpecRenderer.Render"/>, a shared 512 by 512
+/// in a browser tab rather than a mere slowdown. Measured through
+/// <see cref="Generation.SpecRenderer.Render"/>, a shared 512 by 512
 /// PNG placed 500 times produced 138 MB of output; a shared 4096 by 4096 PNG
 /// placed 500 times produced 1.30 GB. <see cref="Generation.SpecRenderer"/>'s
 /// (private) per-render image cache closes the cheap trigger: a repeated

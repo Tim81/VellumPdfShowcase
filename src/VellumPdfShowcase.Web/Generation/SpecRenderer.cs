@@ -468,7 +468,7 @@ public static class SpecRenderer
     /// and its occurrence count: <see cref="SpecLimits.MaxAssetBytes"/> bounds
     /// one array, and <see cref="SpecLimits.MaxContentItems"/> and
     /// <see cref="SpecLimits.MaxWalkedNodes"/> bound occurrences, but nothing
-    /// bounded their product. Measured by the coordinator before this fix, on
+    /// bounded their product. Measured before this fix, on
     /// a 200 by 200 page with a shared 512 by 512 PNG placed 500 times: 138 MB
     /// of output in 4,723 ms; a 2048 by 2048 PNG placed 500 times: 596 MB in
     /// 23,904 ms; a 4096 by 4096 PNG placed 500 times: 1.30 GB in 76,147 ms.
@@ -484,9 +484,9 @@ public static class SpecRenderer
     /// RE-MEASURED after this fix, same shape (200 by 200 page, one shared
     /// instance, <see cref="ImageSpec.Width"/> and <see cref="ImageSpec.Height"/>
     /// of 40, 500 occurrences), against synthetically generated source PNGs of
-    /// the same three dimensions rather than the coordinator's own files (so
-    /// the byte counts below are not directly comparable to the coordinator's
-    /// source sizes above, only the shape of the improvement is): 512 by 512
+    /// the same three dimensions rather than the source files the figures above
+    /// were taken from (so the byte counts below are not directly comparable to
+    /// those source sizes, only the shape of the improvement is): 512 by 512
     /// gives 576,827 bytes in 45 ms; 2048 by 2048 gives 1,862,147 bytes in 43
     /// ms; 4096 by 4096 gives 3,788,696 bytes in 112 ms. Output size no longer
     /// tracks occurrence count at all; it tracks the one decoded image.
@@ -502,10 +502,10 @@ public static class SpecRenderer
     /// figure was measured in (process killed for memory exhaustion), but
     /// scaled runs at 50, 100 and 150 occurrences (172.17 MB/5,283 ms,
     /// 344.34 MB/11,980 ms, 516.51 MB/17,047 ms) grow linearly and extrapolate
-    /// to roughly 1.7 GB and 57 s at 500, consistent with the coordinator's own
-    /// 1.30 GB/76,147 ms figure above. This is the number the owner needs to
-    /// decide whether a cap on distinct images is still warranted; this fix
-    /// deliberately does not add one.
+    /// to roughly 1.7 GB and 57 s at 500, consistent with the 1.30 GB and
+    /// 76,147 ms figure above. NOTE: that residual is what
+    /// <see cref="SpecLimits.MaxTotalAssetBytes"/> was subsequently added to
+    /// bound; this fix alone deliberately did not add a cap.
     /// </para>
     /// <see cref="Generation.SpecCodeEmitter"/> hoists the identical repeated
     /// reference into one shared decode in the emitted C#, for the same

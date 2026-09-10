@@ -276,7 +276,7 @@ public class DocumentSpecValidationTests
         HasValueEquality(type, visiting, out _);
 
     /// <summary>
-    /// Finding 4: the single-<paramref name="type"/> overload above reduced
+    /// Diagnostic specificity: the single-<paramref name="type"/> overload above reduced
     /// every rejection to one message, "does not implement value equality,
     /// record equality falls back to reference equality for it", which is
     /// untrue for at least two shapes a maintainer could plausibly meet: a
@@ -402,7 +402,7 @@ public class DocumentSpecValidationTests
                 }
                 catch (Exception ex)
                 {
-                    // Finding 4: previously an unlabelled `catch` that
+                    // Previously an unlabelled `catch` that
                     // returned false with no distinguishing message. A
                     // member typed as an abstract base (an abstract record,
                     // for instance) reaches exactly this catch, since
@@ -460,7 +460,7 @@ public class DocumentSpecValidationTests
                 // not enough.
                 if (!ReportsInequalityOnEveryField(underlyingType, out var unnoticedFieldReason))
                 {
-                    // Finding 4: this rejection can also be a FALSE positive,
+                    // This rejection can also be a FALSE positive,
                     // for a type whose value equality is genuinely correct in
                     // both polarities but that has a field (a memoised hash
                     // cache, say) its override deliberately and correctly
@@ -540,7 +540,7 @@ public class DocumentSpecValidationTests
         Justification = "Test-only reflection; this assembly is never AOT-published, and the enum types perturbed " +
             "here are this model's own.")]
     /// <remarks>
-    /// Finding 1: enumerates <paramref name="type"/>'s fields through
+    /// Enumerates <paramref name="type"/>'s fields through
     /// <see cref="AllInstanceFields"/>, which walks the inheritance chain,
     /// rather than a single non-recursive <c>GetFields</c> call, for the
     /// identical reason <see cref="HasValueEquality(Type, HashSet{Type}?, out string?)"/>
@@ -549,7 +549,7 @@ public class DocumentSpecValidationTests
     /// <c>NonPublic</c>, is exactly where an override could be ignoring a
     /// change without this method ever perturbing it to find out.
     /// <paramref name="unnoticedFieldReason"/> names the specific field and
-    /// the specific way its perturbation went unnoticed (finding 4), rather
+    /// the specific way its perturbation went unnoticed, rather
     /// than leaving the caller to report the generic "does not implement
     /// value equality" for what might be a field an override deliberately
     /// and correctly ignores.
@@ -1067,7 +1067,7 @@ public class DocumentSpecValidationTests
             Assert.False(HasValueEquality(typeof(ThrowsOnOneFieldHonestOnAnotherHazard)));
 
         /// <summary>
-        /// Finding 1: <c>GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)</c>,
+        /// <c>GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)</c>,
         /// without <see langword="DeclaredOnly"/> and without walking
         /// <see cref="Type.BaseType"/> by hand, does NOT return a base
         /// type's own PRIVATE fields; <see cref="BindingFlags.FlattenHierarchy"/>
@@ -1125,7 +1125,7 @@ public class DocumentSpecValidationTests
         /// record pair with the identical SHAPE of inheritance as
         /// <see cref="ArrayCarryingBaseRecord"/>/<see cref="ArrayCarryingDerivedRecord"/>,
         /// but with no array anywhere in the chain. The walk up
-        /// <see cref="Type.BaseType"/> that finding 1 added must not turn
+        /// <see cref="Type.BaseType"/> that the inheritance walk added must not turn
         /// into over-rejection of a perfectly safe base member merely
         /// because it now reaches fields it previously could not see.
         /// </summary>
@@ -1144,7 +1144,7 @@ public class DocumentSpecValidationTests
             Assert.True(HasValueEquality(typeof(WellBehavedDerivedRecord)));
 
         /// <summary>
-        /// Finding 4, first shape: a class with a memoised hash field its
+        /// The first shape that is rejected without being unsafe: a class with a memoised hash field its
         /// <c>Equals</c> override correctly and deliberately ignores. Value
         /// equality is correct in BOTH polarities (two instances with equal
         /// <see cref="Value"/> compare equal regardless of
@@ -1185,7 +1185,7 @@ public class DocumentSpecValidationTests
         }
 
         /// <summary>
-        /// Finding 4, second shape: a member typed as an abstract record
+        /// The second such shape: a member typed as an abstract record
         /// base. <see cref="RuntimeHelpers.GetUninitializedObject(Type)"/>
         /// cannot instantiate an abstract type at all, so the behavioural
         /// blank-instance check throws before it can compare anything, which

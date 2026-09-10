@@ -255,7 +255,7 @@ public static class SpecLimits
     /// Nothing bounded their SUM: a specification could hold hundreds of
     /// DISTINCT images, each individually under <see cref="MaxAssetBytes"/>,
     /// or every one of <see cref="MaxEmbeddedFonts"/>'s 100 slots filled at
-    /// <see cref="MaxAssetBytes"/> each. MEASURED by the coordinator through
+    /// <see cref="MaxAssetBytes"/> each. MEASURED through
     /// <see cref="Generation.SpecRenderer.Render"/>, every specification below
     /// was inside every existing cap: 500 DISTINCT 4096 by 4096 PNGs, each 2.5
     /// MB of source, rendered 1.30 GB of output in 86,859 ms on desktop; 500
