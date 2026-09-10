@@ -254,17 +254,17 @@
     assertion in this script is a necessary second step, not folded into
     the test run itself.
 
-    REQUIRED, NOT YET AUTOMATED: no CI workflow exists in this repository
-    yet, deployment being when one would normally be added. Until one
-    exists and runs this script, it is
-    the CONTRIBUTOR's own responsibility to run it by hand, alongside
-    `dotnet run --project tests/.../VellumPdfShowcase.Tests.csproj -c Debug`,
-    as part of the verification sequence for ANY change that touches
-    src/VellumPdfShowcase.Web/Generation, not merely SpecCodeEmitter.cs
-    itself: no automation currently enforces that either script runs at all.
-    Wire this script into the step 9 deploy workflow alongside the plain
-    test invocation once that workflow exists, so this note can be deleted
-    once it stops being true.
+    AUTOMATED: .github/workflows/ci.yml runs this script on every pull
+    request and on every push to main, in the job named "Format, build,
+    test, coverage", alongside the format gate, the Release build with
+    warnings as errors, and the plain test invocation. A change that leaves
+    a branch in the generation namespace unreached now fails there rather
+    than depending on a contributor remembering this file.
+
+    NOTE: running it by hand before opening a pull request is still worth
+    the five seconds, because the failure it reports names the uncovered
+    branch directly, which is quicker to act on than the same failure read
+    out of a workflow log.
 #>
 [CmdletBinding()]
 param(

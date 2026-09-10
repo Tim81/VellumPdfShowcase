@@ -1,0 +1,182 @@
+# Continuous integration for the WebAssembly target.
+#
+# This repository ships a Blazor WebAssembly application that runs entirely in
+# the visitor's browser. There is no server component and nothing to deploy from
+# here, so this workflow verifies the same four gates a contributor is expected
+# to run by hand, and then verifies the shape of the published WebAssembly
+# output itself, which is where several defects have appeared that no unit test
+# could observe.
+#
+# NOTE: the verification order matters. The format gate runs before the build so
+# that a formatting failure is reported as such rather than being buried under
+# compiler output.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second push to the same branch supersedes the first. The default branch is
+# excluded, so a merge to main is always verified to completion.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  verify:
+    name: Format, build, test, coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # global.json pins the SDK feature band and selects the
+      # Microsoft.Testing.Platform runner, so no version is named here.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json', 'Directory.Build.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore
+
+      # Line endings are normalised to LF by .gitattributes while the primary
+      # development machine has core.autocrlf enabled, so this gate can pass in a
+      # working tree and fail on a fresh checkout. A CI checkout IS a fresh
+      # checkout, which is exactly why this step is worth having.
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes --no-restore
+
+      - name: Build (Release, warnings as errors)
+        run: dotnet build -c Release --no-restore -warnaserror
+
+      # NOTE: `dotnet test` is not used. The test project runs on the native
+      # Microsoft.Testing.Platform host, which this invocation starts directly.
+      - name: Test
+        run: dotnet run --project tests/VellumPdfShowcase.Tests/VellumPdfShowcase.Tests.csproj -c Debug
+
+      # The emitter and the renderer consume one specification and must never
+      # diverge. A branch no sample reaches can be corrupted without turning the
+      # suite red, so this gate requires every reachable branch in the generation
+      # namespace to be taken. It is a separate invocation because coverlet has
+      # no threshold gate of its own.
+      - name: Branch coverage gate
+        shell: pwsh
+        run: ./eng/check-emitter-branch-coverage.ps1
+
+  publish:
+    name: Publish and verify the WebAssembly output
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json', 'Directory.Build.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Trimming runs only on publish, so a trim warning cannot be caught by the
+      # build job above. TrimMode is full and the trim analyser is enabled, so
+      # this step is the one that exercises the linker.
+      - name: Publish
+        run: dotnet publish src/VellumPdfShowcase.Web/VellumPdfShowcase.Web.csproj -c Release -o publish -warnaserror
+
+      # Each assertion below corresponds to a property set deliberately in the
+      # web project, and each has been wrong at some point in this repository's
+      # history without any test noticing.
+      - name: Verify the published output
+        run: |
+          set -euo pipefail
+          framework="publish/wwwroot/_framework"
+          config="publish/VellumPdfShowcase.Web.runtimeconfig.json"
+          failed=0
+
+          fail() { echo "FAIL: $1"; failed=1; }
+          pass() { echo "ok:   $1"; }
+
+          test -d "$framework" || { echo "FAIL: no _framework directory was produced"; exit 1; }
+          test -f "$config" || { echo "FAIL: no runtimeconfig.json was produced"; exit 1; }
+
+          # CompressionEnabled is false. Precompressed copies would double the
+          # deployed size for a static host that compresses on the fly anyway.
+          compressed=$(find publish/wwwroot \( -name '*.br' -o -name '*.gz' \) | wc -l)
+          if [ "$compressed" -eq 0 ]; then pass "no precompressed assets"; else fail "$compressed precompressed assets were emitted"; fi
+
+          # InvariantGlobalization. An ICU payload is roughly 1.5 MB that this
+          # application, which formats no culture-sensitive text, does not need.
+          icu=$(find publish/wwwroot -iname '*icu*' | wc -l)
+          if [ "$icu" -eq 0 ]; then pass "no ICU payload"; else fail "$icu ICU files were emitted"; fi
+
+          # UseSystemResourceKeys must stay false. The SDK defaults it to true
+          # for this project type, which replaces exception messages with
+          # resource keys. This site displays exception text when generation
+          # fails, so a key rather than a sentence would reach the visitor.
+          if grep -q '"System.Resources.UseSystemResourceKeys": false' "$config"; then
+            pass "framework exception messages are retained"
+          else
+            fail "System.Resources.UseSystemResourceKeys is not false"
+          fi
+
+          # Debugger support is trimmed in Release only, so that the Debug launch
+          # profiles keep the in-browser debug proxy working.
+          if grep -q '"System.Diagnostics.Debugger.IsSupported": false' "$config"; then
+            pass "debugger support is trimmed from the release output"
+          else
+            fail "System.Diagnostics.Debugger.IsSupported is not false"
+          fi
+
+          if grep -q '"System.Globalization.Invariant": true' "$config"; then
+            pass "globalization is invariant"
+          else
+            fail "System.Globalization.Invariant is not true"
+          fi
+
+          # The trim analyser suppresses IL2110 and IL2111 on framework-generated
+          # Razor code. Both suppressions sit near the router, so this checks that
+          # the routes survived trimming rather than trusting the suppression.
+          app=$(find "$framework" -name 'VellumPdfShowcase.Web.*.wasm' | head -n 1)
+          if [ -z "$app" ]; then
+            fail "the application assembly is missing from the published output"
+          else
+            for route in smoke not-found; do
+              if grep -qa "$route" "$app"; then
+                pass "route '$route' survives trimming"
+              else
+                fail "route '$route' was trimmed out of $(basename "$app")"
+              fi
+            done
+          fi
+
+          exit "$failed"
+
+      - name: Upload the published site
+        uses: actions/upload-artifact@v7
+        with:
+          name: wwwroot
+          path: publish/wwwroot
+          retention-days: 7
