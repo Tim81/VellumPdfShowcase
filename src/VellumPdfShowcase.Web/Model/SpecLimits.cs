@@ -208,9 +208,26 @@ public static class SpecLimits
     /// generation time and on output size, which is what the browser figures
     /// above measure. Measured directly against 2.3.1: the worst
     /// specification every cap in this file together still permits, this many
-    /// characters of the widest glyph at <see cref="MaxFontSize"/> on a
-    /// <see cref="MinPageDimensionPoints"/>-scale page, renders 20,000 pages
-    /// and 7.5 MB in 1,578 ms on desktop x64.
+    /// characters of the widest glyph at 36 points on a 200 by 200 point page
+    /// with this model's own DEFAULT margins, renders 20,000 pages and 7.5 MB
+    /// in 1,578 ms on desktop x64.
+    /// </para>
+    /// <para>
+    /// IN THE BROWSER THIS APPLICATION SHIPS TO, that same specification took
+    /// 47,963 ms, measured through the site's own elapsed-time display in a
+    /// published Release build. The same text at ZERO margins, which is 1,000
+    /// pages rather than 20,000 and is the worst case this model admitted
+    /// while it still carried a page-geometry bound, took 1,955 ms in the same
+    /// browser against 88 ms on desktop.
+    /// </para>
+    /// <para>
+    /// NOTE: 48 seconds is a tab that looks dead rather than busy, and the
+    /// factor between desktop and browser is about thirty, not the three to
+    /// ten a reader might assume. Generation still cannot freeze the tab
+    /// UNBOUNDEDLY, which is the invariant CLAUDE.md states, and it still runs
+    /// behind a macrotask yield so the busy state paints first. But the bound
+    /// is now measured in tens of seconds, and that figure is recorded here
+    /// rather than left to be rediscovered.
     /// </para>
     /// <para>
     /// This value is also what keeps a single element clear of the library's
