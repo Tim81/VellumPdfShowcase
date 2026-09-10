@@ -282,7 +282,7 @@ public static class SpecCodeEmitter
         }
 
         /// <summary>
-        /// Names, in the register of plan section 13.3, whichever of the
+        /// Names whichever of the
         /// three asset names <see cref="SpecAssets"/> declares this
         /// particular snippet actually reads as a bare identifier, together
         /// with its real type, so a reader is not left to guess where

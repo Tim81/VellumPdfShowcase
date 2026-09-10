@@ -47,9 +47,9 @@ public sealed record DocumentSpec
 
     /// <summary>
     /// The style registered as the document's default through
-    /// <c>Document.SetDefaultFont</c>. Per section 3.4.0 of the plan, that
-    /// member is consulted only by the <c>Document.Add(string, TextStyle?)</c>
-    /// overload, which a <see cref="PlainTextSpec"/> with no explicit
+    /// <c>Document.SetDefaultFont</c>. That member is consulted only by the
+    /// <c>Document.Add(string, TextStyle?)</c> overload, which a
+    /// <see cref="PlainTextSpec"/> with no explicit
     /// <see cref="PlainTextSpec.Style"/> maps to.
     /// </summary>
     /// <remarks>
@@ -82,7 +82,7 @@ public sealed record DocumentSpec
     /// <c>Document</c> exactly once, regardless of how many styles reference it.
     /// </summary>
     /// <remarks>
-    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxEmbeddedFonts"/>
+    /// The list is capped at <see cref="SpecLimits.MaxEmbeddedFonts"/>
     /// entries, each entry is capped at <see cref="SpecLimits.MaxAssetBytes"/>,
     /// and both the list and each entry's own byte array are snapshotted at
     /// construction (<see cref="SpecLimits.ValidateAssetBytes"/> returns a
@@ -97,7 +97,7 @@ public sealed record DocumentSpec
 
     /// <summary>The document's content, laid out in the order given. A document must have at least one item.</summary>
     /// <remarks>
-    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxContentItems"/>
+    /// The list is capped at <see cref="SpecLimits.MaxContentItems"/>
     /// and snapshotted with a collection expression at construction, so an
     /// aliased, later-mutated <c>List&lt;ContentItemSpec&gt;</c> cannot empty
     /// this property out from under a fully constructed <see cref="DocumentSpec"/>.
@@ -271,7 +271,7 @@ public sealed record DocumentSpec
 
     /// <summary>The output intent to embed, if any.</summary>
     /// <remarks>
-    /// Per plan section 5.4, a <see cref="PdfAOutputIntentSpec"/> has its
+    /// A <see cref="PdfAOutputIntentSpec"/> has its
     /// <see cref="PdfAOutputIntentSpec.IccProfile"/> header validated here
     /// against its own <see cref="PdfAOutputIntentSpec.ComponentCount"/>,
     /// which requires both properties to already be set and so cannot be done
@@ -293,7 +293,7 @@ public sealed record DocumentSpec
     /// Encryption settings, if the document is to be encrypted.
     /// </summary>
     /// <remarks>
-    /// Per plan section 5.4, a restricted <see cref="EncryptionSpec.Permissions"/>
+    /// A restricted <see cref="EncryptionSpec.Permissions"/>
     /// set requires an <see cref="EncryptionSpec.OwnerPassword"/> that is both
     /// non-empty AND distinct from <see cref="EncryptionSpec.UserPassword"/>.
     /// The library authenticates full owner access to whichever password
@@ -416,7 +416,7 @@ public sealed record DocumentSpec
     /// <see cref="Generation.SpecRenderer.AddContentItem"/>'s switch falling
     /// through with no arm to match), and made
     /// <see cref="Generation.SpecCodeEmitter.EmitContentItem"/> throw instead,
-    /// which is exactly the divergence CLAUDE.md's round-trip invariant
+    /// which is exactly the divergence the round-trip invariant
     /// forbids. Rejecting it HERE, at construction, is what lets both
     /// consumers omit a matching defensive arm entirely rather than
     /// duplicating this membership check on both sides: a type that cannot
@@ -1002,7 +1002,7 @@ public sealed record FontSpec
 
 /// <summary>Mirrors the settable members of the library's <c>TextStyle</c>.</summary>
 /// <remarks>
-/// Per plan section 3.4.0.1, every member of this record must implement value
+/// Every member of this record must implement value
 /// equality. <see cref="Generation.SpecRenderer"/>'s style cache and
 /// <see cref="Generation.SpecCodeEmitter"/>'s style hoisting both key on this
 /// record's own equality, and they agree about when a style is shared only
@@ -1210,7 +1210,7 @@ public sealed record HeadingSpec : ContentItemSpec
 public sealed record ParagraphSpec : ContentItemSpec
 {
     /// <summary>
-    /// Per plan section 5.4, the list is capped at <see cref="SpecLimits.MaxParagraphRuns"/>
+    /// The list is capped at <see cref="SpecLimits.MaxParagraphRuns"/>
     /// and snapshotted with a collection expression at construction. Each
     /// run's own <see cref="TextRunSpec.Text"/> and <see cref="TextRunSpec.Style"/>
     /// are validated by <see cref="TextRunSpec"/> itself, at its own
@@ -1260,8 +1260,8 @@ public sealed record ParagraphSpec : ContentItemSpec
 /// <summary>
 /// A plain string added through the library's <c>Document.Add(string, TextStyle?)</c>
 /// overload: the last of that method's overloads this model had not already
-/// covered when this type was added. Plan section 3.1 lists two further
-/// members that remain unexpressed, for different reasons: <c>Document.Add(IRenderer)</c>,
+/// covered when this type was added. Two further members of the library's
+/// <c>Document</c> remain unexpressed, for different reasons: <c>Document.Add(IRenderer)</c>,
 /// a developer-supplied drawing hook with nothing for a structured form to
 /// represent, and <c>Document.TextEncodingWarnings</c>, which is get-only and
 /// so was never a candidate to begin with. <c>Document.UseObjectStreams</c>,
@@ -1298,7 +1298,7 @@ public sealed record ListSpec : ContentItemSpec
 
     /// <summary>
     /// Capped at <see cref="SpecLimits.MaxListItems"/> and snapshotted with a
-    /// collection expression at construction, per plan section 5.4.
+    /// collection expression at construction.
     /// </summary>
     public required IReadOnlyList<ListItemSpec> Items
     {
@@ -1395,7 +1395,7 @@ public sealed record ListItemSpec
 public sealed record TableSpec : ContentItemSpec
 {
     /// <summary>
-    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxTableRows"/>
+    /// Capped at <see cref="SpecLimits.MaxTableRows"/>
     /// and snapshotted with a collection expression at construction.
     /// </summary>
     public required IReadOnlyList<TableRowSpec> Rows
@@ -1404,7 +1404,7 @@ public sealed record TableSpec : ContentItemSpec
         init => field = ValidateRows(value);
     }
 
-    /// <summary>Capped at <see cref="SpecLimits.MaxTableColumnWidths"/> entries and snapshotted at construction, per plan section 5.4.</summary>
+    /// <summary>Capped at <see cref="SpecLimits.MaxTableColumnWidths"/> entries and snapshotted at construction.</summary>
     public IReadOnlyList<double>? ColumnWidths
     {
         get;
@@ -1488,7 +1488,7 @@ public sealed record TableSpec : ContentItemSpec
 public sealed record TableRowSpec
 {
     /// <summary>
-    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxTableCellsPerRow"/>
+    /// Capped at <see cref="SpecLimits.MaxTableCellsPerRow"/>
     /// and snapshotted with a collection expression at construction.
     /// </summary>
     public required IReadOnlyList<TableCellSpec> Cells
@@ -1585,7 +1585,7 @@ public enum ImageFormat
 
 /// <summary>A <c>LayoutImage</c>, decoded through the matching Kernel loader for <see cref="Format"/>.</summary>
 /// <remarks>
-/// Per plan section 5.4, <see cref="Bytes"/> is capped at
+/// <see cref="Bytes"/> is capped at
 /// <see cref="SpecLimits.MaxAssetBytes"/> and defensively copied here
 /// (<see cref="SpecLimits.ValidateAssetBytes"/> returns a clone), so mutating
 /// the caller's own array afterward cannot change what a fully constructed
@@ -1643,7 +1643,7 @@ public sealed record ImageSpec : ContentItemSpec
 public sealed record PieChartSpec : ContentItemSpec
 {
     /// <summary>
-    /// Per plan section 5.4, capped at <see cref="SpecLimits.MaxChartSlices"/>
+    /// Capped at <see cref="SpecLimits.MaxChartSlices"/>
     /// and snapshotted with a collection expression at construction.
     /// </summary>
     public required IReadOnlyList<PieSlice> Slices
@@ -1889,7 +1889,7 @@ public abstract record OutputIntentSpec;
 /// <c>Document.SetPdfAOutputIntent</c>.
 /// </summary>
 /// <remarks>
-/// Per plan section 5.4, <see cref="IccProfile"/> is capped at
+/// <see cref="IccProfile"/> is capped at
 /// <see cref="SpecLimits.MaxAssetBytes"/> and defensively copied here
 /// (<see cref="SpecLimits.ValidateAssetBytes"/> returns a clone), so mutating
 /// the caller's own array afterward cannot change what a fully constructed
@@ -1947,7 +1947,7 @@ public sealed record CmykOutputIntentSpec : OutputIntentSpec
 /// Encryption settings, matching <c>PdfEncryptionSettings</c>.
 /// </summary>
 /// <remarks>
-/// Per plan section 5.4: whether <see cref="OwnerPassword"/> may be
+/// Whether <see cref="OwnerPassword"/> may be
 /// left unset depends on <see cref="Permissions"/>, so that rule is enforced
 /// by <see cref="DocumentSpec.Encryption"/>, the only property that ever sees
 /// both fully set. Measured directly against the library: with

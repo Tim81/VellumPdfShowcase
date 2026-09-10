@@ -10,8 +10,8 @@ namespace VellumPdfShowcase.Tests;
 /// <summary>
 /// <see cref="DocumentSpec"/> instances used by the round-trip tests. Each
 /// exercises a different combination of the model so that, between them, every
-/// content item type and every optional feature in plan section 6.2 is
-/// covered at least once.
+/// content item type and every optional feature the catalogue demonstrates
+/// is covered at least once.
 /// </summary>
 internal static class DocumentSpecSamples
 {
@@ -258,8 +258,8 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// Two of every element whose emitted code declares a fixed-name local
-    /// variable: two lists (in fact all four list styles, since plan section
-    /// 6.2 requires unordered, decimal, alpha and roman in one document),
+    /// variable: two lists (in fact all four list styles, since the catalogue
+    /// requires unordered, decimal, alpha and roman in one document),
     /// two tables and two multi-run paragraphs. The Roslyn round-trip test
     /// compiles the emitted code, and a second <c>list</c>, <c>table</c> or
     /// <c>runs</c> sharing the name of the first is a compile error the
@@ -385,7 +385,7 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// A PDF/A-2u claim, the conformance profile the round trip exercises
-    /// alongside PDF/A-2b (plan section 6.2 lists all four PDF/A and PDF/UA
+    /// alongside PDF/A-2b (the catalogue lists all four PDF/A and PDF/UA
     /// profiles as available; PdfA2b is covered by <see cref="PdfA2bWithOutputIntent"/>).
     /// </summary>
     public static DocumentSpec PdfA2uWithOutputIntent()
@@ -590,7 +590,7 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// A PDF/A-2a claim, the accessibility-conformant level of PDF/A-2,
-    /// covering one of the four PDF/A and PDF/UA profiles plan section 6.2
+    /// covering one of the four PDF/A and PDF/UA profiles the catalogue
     /// requires, alongside <see cref="PdfA2bWithOutputIntent"/>,
     /// <see cref="PdfA2uWithOutputIntent"/> and <see cref="PdfUA1WithOutputIntent"/>.
     /// </summary>
@@ -622,7 +622,7 @@ internal static class DocumentSpecSamples
 
     /// <summary>
     /// A PDF/UA-1 claim, the fourth and last of the four conformance profiles
-    /// plan section 6.2 requires, alongside <see cref="PdfA2bWithOutputIntent"/>,
+    /// the catalogue requires, alongside <see cref="PdfA2bWithOutputIntent"/>,
     /// <see cref="PdfA2uWithOutputIntent"/> and <see cref="PdfA2aWithOutputIntent"/>.
     /// Also sets <see cref="PdfAOutputIntentSpec.Info"/> explicitly, the one
     /// output intent member no other sample in this file sets.
@@ -828,8 +828,8 @@ internal static class DocumentSpecSamples
     /// hand-picked call sites (see
     /// <see cref="SpecRoundTripTests.SampleNamesClaimingConformance"/>): a
     /// PDF/A-2b claim here fails ISO 19005-2:2011 clause 6.2.4.3, because
-    /// this model can only ever paint content in DeviceRGB (plan section
-    /// 6.2's CMYK note) and this sample's only output intent is a CMYK one,
+    /// this model can only ever paint content in DeviceRGB, and this
+    /// sample's only output intent is a CMYK one,
     /// with no RGB <c>DestOutputProfile</c> to justify the DeviceRGB fills.
     /// That is an ISO 19005-2 content rule specifically; PDF/UA-1's rule
     /// catalogue (ISO 14289-1) has no equivalent, so the identical bytes,
@@ -1056,7 +1056,8 @@ internal static class DocumentSpecSamples
     /// every <c>document.Add</c> site, instead of decoding it three times.
     /// Without both sides agreeing on that, this sample's round trip fails on
     /// the byte comparison, rather than on anything either consumer's own
-    /// exception contract documents; see CLAUDE.md's round-trip invariant.
+    /// exception contract documents, which is what the round-trip invariant
+    /// forbids.
     /// A second, value-equal but reference-DISTINCT <see cref="ImageSpec"/>
     /// sits alongside it, used only once, to pin that the cache and the
     /// hoisting are keyed by REFERENCE identity, not by

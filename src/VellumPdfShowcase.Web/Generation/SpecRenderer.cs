@@ -296,8 +296,8 @@ public static class SpecRenderer
     /// has no unreachable branch for the coverage gate to find. Before that
     /// validation existed, an unrecognised subtype silently fell through this
     /// switch as though it were absent, while <see cref="Generation.SpecCodeEmitter.EmitContentItem"/>
-    /// threw for the identical input: exactly the divergence CLAUDE.md's
-    /// round-trip invariant forbids. See the remark on <c>ContentItemSpec</c>.
+    /// threw for the identical input: exactly the divergence the round-trip
+    /// invariant forbids. See the remark on <c>ContentItemSpec</c>.
     /// </summary>
     private static void AddContentItem(Document document, ContentItemSpec item, RenderContext context)
     {
@@ -447,7 +447,7 @@ public static class SpecRenderer
 
     /// <summary>
     /// Wraps the Kernel image loader for <see cref="ImageSpec.Format"/> in a
-    /// try/catch, per plan section 5.4 control 5: <see cref="DocumentSpec.Content"/>
+    /// try/catch: <see cref="DocumentSpec.Content"/>
     /// already rejects bytes whose magic signature contradicts the declared
     /// format, but a well-signed file can still be malformed further in, and
     /// a raw exception from the least-exercised code in the dependency chain
@@ -526,7 +526,7 @@ public static class SpecRenderer
     /// Without that matching change on the emitter side, this fix alone would
     /// have made <see cref="Render"/> embed a repeated image once while the
     /// compiled-and-executed emitted code kept embedding it once per
-    /// occurrence, which is exactly the divergence CLAUDE.md's round-trip
+    /// occurrence, which is exactly the divergence the round-trip
     /// invariant forbids; <c>DocumentSpecSamples.RepeatedImageInstance</c> and
     /// <c>SpecRoundTripTests</c> hold the two together.
     /// </remarks>
@@ -567,7 +567,7 @@ public static class SpecRenderer
         };
     }
 
-    /// <summary>Wraps <c>Document.UseTrueTypeFont</c>, per plan section 5.4 control 5, for the same reason as <see cref="BuildImage"/>.</summary>
+    /// <summary>Wraps <c>Document.UseTrueTypeFont</c> for the same reason as <see cref="BuildImage"/>.</summary>
     private static EmbeddedFontHandle LoadEmbeddedFont(Document document, byte[] bytes)
     {
         try

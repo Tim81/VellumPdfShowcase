@@ -111,7 +111,7 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
-    /// Plan section 3.4.0.1: every member of <see cref="TextStyleSpec"/> must
+    /// Every member of <see cref="TextStyleSpec"/> must
     /// implement value equality, because <see cref="Generation.SpecRenderer"/>'s
     /// style cache and <see cref="Generation.SpecCodeEmitter"/>'s style
     /// hoisting both key on this record's own equality, and C# record
@@ -150,7 +150,7 @@ public class DocumentSpecValidationTests
     }
 
     /// <summary>
-    /// Guards plan section 3.4.0.1 the way <see cref="TextStyleSpec_TwoEqualInstances_AreEqualHashAlikeAndCollideInADictionary"/>
+    /// Guards the value-equality invariant the way <see cref="TextStyleSpec_TwoEqualInstances_AreEqualHashAlikeAndCollideInADictionary"/>
     /// cannot. That test constructs both instances by naming every member
     /// this record has TODAY; a member added later defaults to
     /// <see langword="null"/> on both without either instance ever setting
@@ -169,7 +169,7 @@ public class DocumentSpecValidationTests
     /// <see langword="readonly record struct"/> WRAPPING an array (an array
     /// field's own equality is reference-based regardless of what wraps it,
     /// and <see cref="System.Collections.Immutable.ImmutableArray{T}"/>, the
-    /// natural type for the dash pattern plan section 3.4.0.1 names, has
+    /// natural type for a dash pattern, has
     /// exactly this shape); a public FIELD, invisible to <c>GetProperties</c>
     /// entirely; and a CLASS that overrides <c>Equals(object?)</c> to compare
     /// by reference, which the original guard's own final check (does an
@@ -265,8 +265,8 @@ public class DocumentSpecValidationTests
     /// which runs no constructor at all, hold identical, all-default field
     /// values by construction, so a genuinely structural override must
     /// consider them equal; an override that instead compares object
-    /// identity (<c>ReferenceEquals(this, obj)</c>, the shape plan section
-    /// 3.4.0.1 also warns against) reports two distinct, separately
+    /// identity (<c>ReferenceEquals(this, obj)</c>) reports two distinct,
+    /// separately
     /// allocated instances as unequal regardless of their field contents,
     /// which is exactly what this check catches and a presence-only check
     /// on the override cannot.
@@ -348,7 +348,7 @@ public class DocumentSpecValidationTests
         if (underlyingType.IsInterface)
         {
             // An interface-typed member (IReadOnlyList<T>
-            // is the shape plan section 3.4.0.1 names by example, a dash
+            // is the canonical example of the hazard, a dash
             // pattern) has no instance FIELDS of its own for the recursion
             // below to find, so the original check fell through to
             // `fields.All(...)` over an EMPTY array, which is vacuously true.
@@ -799,7 +799,7 @@ public class DocumentSpecValidationTests
     /// </summary>
     public class HasValueEqualityGuardTests
     {
-        /// <summary>The exact shape plan section 3.4.0.1 names by example: a value type wrapping an array, matching <see cref="System.Collections.Immutable.ImmutableArray{T}"/>.</summary>
+        /// <summary>The canonical example of the hazard: a value type wrapping an array, matching <see cref="System.Collections.Immutable.ImmutableArray{T}"/>.</summary>
         private readonly record struct ArrayWrappingRecordStruct(int[] Values);
 
         /// <summary>A public FIELD, not a property, of array type: invisible to <c>GetProperties</c> entirely.</summary>
@@ -957,8 +957,8 @@ public class DocumentSpecValidationTests
             Assert.False(HasValueEquality(typeof(StructuralEqualsIdentityHashCodeStructHazard)));
 
         /// <summary>
-        /// Plan section 3.4.0.1's own named example, verbatim: "a dash
-        /// pattern for instance". Before the interface fix above, this
+        /// The named example of the hazard, a dash pattern. Before the
+        /// interface fix above, this
         /// vacuously passed: <c>IReadOnlyList&lt;double&gt;</c> is not a
         /// class, not an array, and has no fields of its own for the
         /// recursion to inspect, so <c>fields.All(...)</c> over an empty
@@ -984,9 +984,8 @@ public class DocumentSpecValidationTests
         /// not override <see cref="object.Equals(object?)"/>, and neither does
         /// the compiler-generated per-field comparison a C# <see langword="record"/>
         /// performs for a member of an interface type it cannot see through.
-        /// This is precisely the divergence plan section 3.4.0.1 warns a
-        /// list- or array-typed <see cref="TextStyleSpec"/> member would
-        /// silently reintroduce: <see cref="Generation.SpecRenderer"/>'s style
+        /// This is precisely the divergence a list- or array-typed
+        /// <see cref="TextStyleSpec"/> member would silently reintroduce: <see cref="Generation.SpecRenderer"/>'s style
         /// cache and <see cref="Generation.SpecCodeEmitter"/>'s style hoisting
         /// would stop agreeing about which styles are the same one.
         /// </summary>
@@ -1596,8 +1595,8 @@ public class RequiredMemberNullValidationTests
 
 /// <summary>
 /// <see cref="ListItemSpec.Children"/> caps nesting depth at
-/// <see cref="SpecLimits.MaxListNestingDepth"/>, the one plan section 5.4
-/// control a wrapped parser call cannot rescue, because an uncaught stack
+/// <see cref="SpecLimits.MaxListNestingDepth"/>, the one control a wrapped
+/// parser call cannot rescue, because an uncaught stack
 /// overflow terminates the process outright.
 /// </summary>
 public class ListNestingDepthTests
@@ -1629,7 +1628,7 @@ public class ListNestingDepthTests
     }
 }
 
-/// <summary>Plan section 5.4: caps on specification size, so no single specification can freeze or exhaust the tab.</summary>
+/// <summary>Caps on specification size, so no single specification can freeze or exhaust the tab.</summary>
 public class SpecSizeLimitTests
 {
     private static TextStyleSpec Style() =>
@@ -2077,7 +2076,7 @@ public class ImageSpecReferenceIdentityKeyingTests
 }
 
 /// <summary>
-/// Plan section 5.4 control 2: the declared <see cref="ImageFormat"/> must
+/// The declared <see cref="ImageFormat"/> must
 /// agree with the image's own magic bytes, checked by
 /// <see cref="DocumentSpec.Content"/> because that is the only property that
 /// ever sees both <see cref="ImageSpec.Format"/> and <see cref="ImageSpec.Bytes"/>
@@ -2106,7 +2105,7 @@ public class ImageFormatAgreementTests
 }
 
 /// <summary>
-/// Plan section 5.4: an ICC profile header must be internally consistent
+/// An ICC profile header must be internally consistent
 /// before it is embedded as an output intent on a document claiming PDF/A or
 /// PDF/UA conformance. Checked by <see cref="DocumentSpec.OutputIntent"/>
 /// because that is the only property that ever sees both

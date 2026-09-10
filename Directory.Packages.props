@@ -22,8 +22,8 @@
     <!--
       Branch coverage for the emitter-branch gate (eng/check-emitter-branch-coverage.ps1).
       coverlet.collector, above, is the VSTest data collector and never activates
-      under the native Microsoft.Testing.Platform host this project runs (see the
-      "dotnet test is broken here" note in CLAUDE.md). coverlet.MTP is coverlet's
+      under the native Microsoft.Testing.Platform host this project runs.
+      coverlet.MTP is coverlet's
       own Microsoft.Testing.Platform integration and instruments the test host
       directly, with no VSTest handshake in the path.
     -->

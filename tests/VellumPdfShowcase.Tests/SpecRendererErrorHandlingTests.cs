@@ -6,10 +6,10 @@ using VellumPdfShowcase.Web.Model;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// Plan section 5.4 control 5: a malformed asset must surface as a legible
+/// A malformed asset must surface as a legible
 /// message rather than an unhandled exception from deep inside a Kernel
 /// parser. Both byte arrays below pass the magic-byte sniff
-/// <see cref="DocumentSpec.Content"/> already performs (control 2, and
+/// <see cref="DocumentSpec.Content"/> already performs (and
 /// there is no such sniff for a font) but are structurally invalid past
 /// their signature, so only the try/catch in <see cref="SpecRenderer"/>
 /// stands between them and a raw, undifferentiated exception from the

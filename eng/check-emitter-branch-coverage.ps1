@@ -13,8 +13,7 @@
     It runs the test project through coverlet.MTP, coverlet's own
     Microsoft.Testing.Platform integration (NOT coverlet.collector, which is
     a VSTest data collector and never activates under the native MTP host
-    this project runs; see the "dotnet test is broken here" note in
-    CLAUDE.md), instrumenting every type in the
+    this project runs), instrumenting every type in the
     VellumPdfShowcase.Web.Generation namespace (see NAMESPACE-WIDE
     INSTRUMENTATION FIX below for why this is the whole namespace, not only
     SpecCodeEmitter itself). It
@@ -99,8 +98,8 @@
     Reachability, not observability. A line coverlet marks fully covered
     was executed by some test; it does not follow that the test's
     assertions depend on what that line produced, and this script cannot
-    tell the two apart (see plan section 3.4.0.2 and CLAUDE.md's round-trip
-    invariant). SpecRoundTripTests compares emitted-and-executed bytes
+    tell the two apart; the round-trip test is what supplies that
+    property, not this gate. SpecRoundTripTests compares emitted-and-executed bytes
     against SpecRenderer's own output for every sample this script's runs
     exercise, which is what supplies the observability property this gate
     does not. The two are complementary, not redundant: this gate would
@@ -193,8 +192,8 @@
     This gate instruments VellumPdfShowcase.Web.Generation only.
     VellumPdfShowcase.Web.Model carries the content walk and every member
     validator both real consumers depend on before doing anything else,
-    and VellumPdfShowcase.Web.Components.Pages will carry whatever UI steps
-    6 and 8 of the plan add; neither is instrumented today, so a branch
+    and VellumPdfShowcase.Web.Components.Pages will carry whatever the UI
+    later adds; neither is instrumented today, so a branch
     added to either is as invisible to this gate as one in a closure is.
     Widening --coverlet-include to VellumPdfShowcase.Web.Model.* was tried
     directly while fixing this: measured at the time, the suite reached
@@ -222,8 +221,7 @@
 
 .PARAMETER Configuration
     Build configuration to run the test project under. Defaults to Debug,
-    matching the "dotnet test is broken here" invocation documented in
-    CLAUDE.md.
+    matching the invocation this repository uses to run the suite.
 
 .EXAMPLE
     pwsh eng/check-emitter-branch-coverage.ps1
@@ -234,15 +232,15 @@
     all (coverlet.MTP instruments ahead of time, once, before the run
     starts). This is a separate invocation from the plain
     `dotnet run --project tests/.../VellumPdfShowcase.Tests.csproj -c Debug`
-    documented in CLAUDE.md as the normal way to run the suite on this
-    machine: coverlet.MTP has no built-in threshold gate (see its README,
+    that is the normal way to run the suite on this machine:
+    coverlet.MTP has no built-in threshold gate (see its README,
     "Known Limitations: Threshold validation is not yet supported"), so the
     assertion in this script is a necessary second step, not folded into
     the test run itself.
 
     REQUIRED, NOT YET AUTOMATED: no CI workflow exists in this repository
-    yet (deployment, which is when one would normally be added, is a
-    later step of the plan). Until one exists and runs this script, it is
+    yet, deployment being when one would normally be added. Until one
+    exists and runs this script, it is
     the CONTRIBUTOR's own responsibility to run it by hand, alongside
     `dotnet run --project tests/.../VellumPdfShowcase.Tests.csproj -c Debug`,
     as part of the verification sequence for ANY change that touches

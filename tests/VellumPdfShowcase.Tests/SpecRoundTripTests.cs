@@ -12,7 +12,7 @@ using PreflightConformance = VellumPdf.Conformance.PdfConformance;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// The test described in plan section 5.2: compile the C# that
+/// The central test of the round-trip invariant: compile the C# that
 /// <see cref="SpecCodeEmitter"/> produces with Roslyn, execute it, and assert
 /// that the resulting PDF matches what <see cref="SpecRenderer"/> produced from
 /// the same <see cref="DocumentSpec"/>. This is what keeps the two from

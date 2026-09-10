@@ -3,7 +3,7 @@ using VellumPdfShowcase.Web.Generation;
 namespace VellumPdfShowcase.Tests;
 
 /// <summary>
-/// Answers plan section 16 item 6 before any round-trip assertion is written:
+/// Answers one question before any round-trip assertion is written:
 /// is VellumPdf's output deterministic? It is not. Rendering the same
 /// <see cref="Web.Model.DocumentSpec"/> twice, a second apart, produces two
 /// different byte arrays, differing in exactly two places once compared as

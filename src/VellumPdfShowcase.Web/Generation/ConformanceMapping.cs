@@ -4,8 +4,8 @@ using PreflightConformance = VellumPdf.Conformance.PdfConformance;
 namespace VellumPdfShowcase.Web.Generation;
 
 /// <summary>
-/// Maps between the two distinct <c>PdfConformance</c> enumerations described in
-/// section 3.4.1 of the plan. <c>Document.Conformance</c> takes
+/// Maps between the two distinct <c>PdfConformance</c> enumerations this
+/// application must bridge. <c>Document.Conformance</c> takes
 /// <see cref="DocumentConformance"/>; <c>PdfPreflight.Validate</c> takes
 /// <see cref="PreflightConformance"/>. The two are spelled differently
 /// (<c>PdfA2b</c> against <c>PdfA2B</c>) and, critically, carry different

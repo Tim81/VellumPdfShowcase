@@ -106,9 +106,9 @@ public class SpecCodeEmitterHoistingScopeTests
 }
 
 /// <summary>
-/// Plan section 5.4's controls exist to be exercised, not merely present:
-/// section 3.4.0.2 records that an untested output-intent branch previously
-/// looked like coverage while asserting nothing. These tests drive
+/// A control exists to be exercised, not merely to be present: an untested
+/// output-intent branch previously looked like coverage while asserting
+/// nothing. These tests drive
 /// <see cref="Generation.SpecRenderer"/>'s output-intent try/catch into
 /// actually catching something, which no other test in this project does.
 /// </summary>

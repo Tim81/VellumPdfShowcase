@@ -7,7 +7,7 @@ namespace VellumPdfShowcase.Web.Model;
 
 /// <summary>
 /// The size and length caps <see cref="DocumentSpec"/> and its nested records
-/// enforce at construction, per plan section 5.4. Generation runs synchronously
+/// enforce at construction. Generation runs synchronously
 /// on the visitor's own tab, so an unbounded specification is a denial of
 /// service the visitor inflicts on themselves; every limit here is generous
 /// enough that no sample or real showcase document comes close to it.
@@ -339,7 +339,7 @@ public static class SpecLimits
     /// still parses, and <see cref="Model.SpecLimits.ValidateAssetBytes"/>
     /// still clones, every one of those bytes regardless of whether the
     /// library later embeds them, which is memory pressure in the visitor's
-    /// own tab per CLAUDE.md control 1 even when the OUTPUT stays small; this
+    /// own tab even when the OUTPUT stays small; this
     /// cap bounds that memory directly rather than relying on an output-size
     /// side effect that a future library change could remove. An output
     /// intent's <see cref="Model.PdfAOutputIntentSpec.IccProfile"/> is a single
@@ -630,7 +630,7 @@ public static class SpecLimits
     /// <see cref="MaxTotalTextLength"/> and <see cref="MaxWalkedNodes"/>
     /// whatever this value is; a larger font makes that worst case easier to
     /// reach and no larger. The showcase must demonstrate typography at
-    /// display scale, per plan section 6.2, and a ceiling derived from a
+    /// display scale, and a ceiling derived from a
     /// defect the library has fixed would make the catalogue understate what
     /// the library does.
     /// </remarks>
@@ -918,7 +918,7 @@ public static class SpecLimits
 
 /// <summary>
 /// Sniffs the leading bytes of an image against the five formats the Kernel
-/// image loaders accept, per plan section 5.4 control 2: the declared
+/// image loaders accept: the declared
 /// <see cref="ImageFormat"/> must agree with the bytes actually supplied,
 /// rather than being trusted outright and used to select which clean-room
 /// parser attacker-controlled bytes are handed to.
@@ -952,8 +952,8 @@ public static class ImageSignature
 
 /// <summary>
 /// Validates the fixed 128-byte ICC profile header (ICC.1:2010 section 7.2)
-/// against a value the profile itself is claimed to have, per plan section
-/// 5.4: a three-byte junk value must not silently become an output intent on
+/// against a value the profile itself is claimed to have: a three-byte junk
+/// value must not silently become an output intent on
 /// a document claiming PDF/A or PDF/UA conformance.
 /// </summary>
 public static class IccProfileHeader

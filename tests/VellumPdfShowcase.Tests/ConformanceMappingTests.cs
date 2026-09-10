@@ -8,8 +8,7 @@ namespace VellumPdfShowcase.Tests;
 /// Covers all five members of <see cref="DocumentConformance"/>, including
 /// <see cref="DocumentConformance.None"/>, against the explicit mapping in
 /// <see cref="ConformanceMapping"/>. A numeric cast between the two
-/// <c>PdfConformance</c> enumerations is wrong for every profile (plan section
-/// 3.4.1): casting <c>PdfA2b</c> (1) yields <c>PdfA2U</c> (1), <c>PdfA2u</c> (2)
+/// <c>PdfConformance</c> enumerations is wrong for every profile: casting <c>PdfA2b</c> (1) yields <c>PdfA2U</c> (1), <c>PdfA2u</c> (2)
 /// yields <c>PdfA2A</c> (2), <c>PdfA2a</c> (3) yields <c>PdfUA1</c> (3), and
 /// <c>PdfUA1</c> (4) falls outside the target enum's range altogether. These
 /// assertions pin the correct, unrelated-by-arithmetic value for each member.
