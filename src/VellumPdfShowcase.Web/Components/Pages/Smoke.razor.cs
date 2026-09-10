@@ -61,6 +61,25 @@ public partial class Smoke
     /// caller can still see the field unset and import a second, orphaned
     /// module reference.
     /// </summary>
+    /// <remarks>
+    /// NOTE: a task caches its FAILURE as durably as its result, which a
+    /// resolved reference does not, so <see cref="GetModuleIfActiveAsync"/>
+    /// evicts a faulted task rather than leaving it in the field.
+    ///
+    /// NOTE also what that eviction does NOT buy, because the obvious claim
+    /// for it is false and was measured rather than assumed. The browser
+    /// records a failed dynamic import in its own module map, keyed by
+    /// specifier: a second <c>import()</c> of the same path fails immediately
+    /// with no further network request. Measured directly in the running
+    /// application, with the module's response aborted once and then allowed
+    /// through, the second import failed identically while the request count
+    /// stayed at one. So evicting the .NET-side task cannot rescue a failed
+    /// fetch of this module, and neither could caching the resolved reference
+    /// instead. Only a full page load, which builds a new module map, does
+    /// that. The eviction is worth keeping for a fault that never reached the
+    /// module map, and it is not worth describing as a recovery path for a
+    /// fetch that failed.
+    /// </remarks>
     private Task<IJSObjectReference> GetModuleAsync() =>
         _moduleTask ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/pdfInterop.js").AsTask();
 
@@ -72,9 +91,37 @@ public partial class Smoke
     /// so this returns <see langword="null"/> without touching component
     /// state or creating a blob URL.
     /// </summary>
+    /// <remarks>
+    /// A faulted import is evicted from the cache before the exception reaches
+    /// the caller's own handler, so the next click issues a fresh
+    /// <c>import()</c> rather than re-throwing a task that failed minutes ago.
+    /// See <see cref="GetModuleAsync"/> for the limit of what that recovers:
+    /// a failed FETCH of the module is cached by the browser itself and is
+    /// beyond reach either way.
+    ///
+    /// The eviction is conditional on the cache still holding the SAME task
+    /// this call awaited. A handler that already started a fresh import must
+    /// not have it discarded by an older failure landing afterwards.
+    /// </remarks>
     private async Task<IJSObjectReference?> GetModuleIfActiveAsync()
     {
-        var module = await GetModuleAsync();
+        var moduleTask = GetModuleAsync();
+
+        IJSObjectReference module;
+        try
+        {
+            module = await moduleTask;
+        }
+        catch
+        {
+            if (ReferenceEquals(_moduleTask, moduleTask))
+            {
+                _moduleTask = null;
+            }
+
+            throw;
+        }
+
         return _disposed ? null : module;
     }
 
@@ -87,6 +134,11 @@ public partial class Smoke
 
         _busyHardCoded = true;
         _hardCodedError = null;
+
+        // The document about to replace the current one has never been downloaded,
+        // so a download failure recorded against the previous one no longer
+        // describes anything on screen.
+        _hardCodedDownloadError = null;
         StateHasChanged();
 
         try
@@ -166,6 +218,7 @@ public partial class Smoke
 
         _busyPdfA = true;
         _pdfAError = null;
+        _pdfADownloadError = null;
         StateHasChanged();
 
         try

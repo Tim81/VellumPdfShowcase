@@ -196,17 +196,33 @@
     later adds; neither is instrumented today, so a branch
     added to either is as invisible to this gate as one in a closure is.
     Widening --coverlet-include to VellumPdfShowcase.Web.Model.* was tried
-    directly while fixing this: measured at the time, the suite reached
-    98.58% line and 93.45% branch coverage there, roughly forty untested
-    branches spread across some fifteen types, the large majority a
-    `value ?? throw ArgumentNullException` or `value is null ? null :
-    Validate(...)` pattern on a required or optional member whose null (or
-    boundary) case has never been paired with a test, the same shape as the
-    null-check gap closed elsewhere in this same fix. Turning that widened
-    include on without first closing those gaps would fail this gate
-    outright; closing forty scattered gaps was judged disproportionate to
-    fold into this fix, which already touches DocumentSpec.cs extensively
-    for unrelated reasons, so the include remains Generation-only and this
+    directly, and RE-MEASURED against the tree as it now stands rather than
+    left at an older figure: the suite reaches 96.68% line and 87.09% branch
+    coverage there, 48 of 372 branches untaken, across 13 types. Two types
+    hold more than half of them. ImageSignature accounts for 17, and
+    DocumentSpec.ContentWalkState for 11.
+
+    NOTE the shape of those gaps, since it decides what closing them is worth.
+    The 28 in those two types are short-circuit operands inside multi-condition
+    expressions. The JPEG arm of the magic-byte sniff takes 3 of its 6 branch
+    outcomes and the TIFF arm 5 of 16, because a test supplying correct bytes
+    and a test supplying a wholly wrong format between them never produce a
+    header whose first byte matches and whose second does not. The walk's
+    `!TryVisit() || !TryAddCharacters(...)` chains are the same pattern.
+    Reaching those operands needs input contrived to fail at one specific
+    position, which is worth doing for the sniff, the control standing between
+    attacker-chosen bytes and a clean-room parser, and worth much less for the
+    walk, where either operand failing produces the identical refusal.
+
+    Of the remaining 20, twelve are the `value is null ? null : Validate(...)`
+    and `value ?? throw ArgumentNullException` pattern on an optional or
+    required member whose null case no test pairs with it. Those are cheap to
+    close and carry no argument against closing them. The last eight are
+    scattered singletons: an ICC colour-space switch, a URI parse, two
+    empty-collection ternaries.
+
+    Turning the widened include on without first closing those gaps would fail
+    this gate outright, so the include remains Generation-only and this
     measurement is recorded here as the reason, not silently deferred.
     Widening to Model is real, tractable follow-up work; widening to
     Components.Pages first needs a UI test harness (bUnit or equivalent)
