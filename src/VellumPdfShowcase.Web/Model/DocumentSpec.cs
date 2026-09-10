@@ -162,14 +162,19 @@ public sealed record DocumentSpec
     /// <see cref="SpecLimits.MaxTotalTextLength"/> and
     /// <see cref="SpecLimits.MaxWalkedNodes"/> exist to bound, so a template
     /// this walk (or any cap on <see cref="Content"/>) cannot see IS
-    /// multiplied, by pagination rather than by structure. A 100,000-character
-    /// template rendered across the 4,950 pages this model's other caps
-    /// together still permit measured 3,282,491 bytes and 5,518 ms, against
-    /// 2,015,291 bytes and 171 ms for a one-character template on the
-    /// identical document. <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
-    /// bounds it directly instead, at a value measured small enough that the
-    /// multiplication it cannot avoid stays cheap; see that constant's own
-    /// remark for the figures.
+    /// multiplied, by pagination rather than by structure.
+    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> bounds it
+    /// directly instead, at a value measured small enough that the
+    /// multiplication it cannot avoid stays cheap. NOTE: this remark once
+    /// carried its own figures here (page count, bytes, milliseconds); they
+    /// were deleted, deliberately, because they were measured on a document
+    /// 2.2 times shallower than this model actually admits and had drifted
+    /// out of step with <see cref="SpecLimits.MaxRunningBandTemplateLength"/>'s
+    /// own remark, which carries the correct, current measurement (the
+    /// construction it is measured on, and the true page count, roughly
+    /// 11,000, not the smaller figure once repeated here). Restating a
+    /// number here would only give it a second place to go stale; see that
+    /// constant's own remark for the figures instead.
     /// </para>
     /// <para>
     /// <see cref="RunningBandSpec.Style"/>'s own <see cref="TextStyleSpec.LinkUri"/>
