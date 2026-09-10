@@ -171,6 +171,7 @@ public class SampleCorpusTests
             nameof(DocumentSpecSamples.RemainingBranchCoverage),
             nameof(DocumentSpecSamples.RemainingEmitterBranchCoverage),
             nameof(DocumentSpecSamples.FinalEmitterBranchCoverage),
+            nameof(DocumentSpecSamples.RepeatedImageInstance),
         ];
 
         RosterAssertions.AssertSameRoster(expected, SampleCorpus.Names());

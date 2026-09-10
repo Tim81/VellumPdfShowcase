@@ -115,7 +115,39 @@ public static class SpecCodeEmitter
     private sealed class Emitter(DocumentSpec documentSpec, CodeWriter writer)
     {
         private readonly Dictionary<TextStyleSpec, string> _hoistedStyles = BuildHoistedStyleNames(documentSpec);
-        private int _imageIndex;
+
+        /// <summary>
+        /// The asset index (into <c>Images</c>) assigned to every DISTINCT
+        /// <see cref="ImageSpec"/> reachable from <see cref="DocumentSpec.Content"/>,
+        /// one entry per instance, keyed by REFERENCE identity. Built from
+        /// <see cref="DistinctContentImagesByReference"/>, the SAME method
+        /// <see cref="SpecAssets.FromSpec"/> calls to decide how many byte
+        /// arrays <c>Images</c> holds and in what order, so this emitter and
+        /// the assets the round-trip test (and a real page) load for it
+        /// cannot disagree about which occurrence is "the same image" and
+        /// which is a new one.
+        /// </summary>
+        private readonly Dictionary<ImageSpec, int> _imageIndices = BuildImageIndices(documentSpec);
+
+        /// <summary>
+        /// The subset of <see cref="_imageIndices"/>'s keys that occur two or
+        /// more times in <see cref="DocumentSpec.Content"/>, keyed the same
+        /// way, by reference identity rather than <see cref="ImageSpec"/>'s
+        /// own value equality: see the remark on
+        /// <see cref="Generation.SpecRenderer.RenderContext"/>'s own
+        /// <c>ImageCache</c> for why reference identity, not value equality,
+        /// is the right rule for "is this the same image" here, and why
+        /// stating it with an explicit comparer rather than leaning on
+        /// <see cref="ImageSpec"/>'s record-equality fallback is deliberate.
+        /// A member of this set is declared once, up front, by
+        /// <see cref="EmitHoistedImages"/>, exactly as <see cref="_hoistedStyles"/>
+        /// hoists a <see cref="TextStyleSpec"/> used more than once; an image
+        /// used exactly once is left inline at its one occurrence instead,
+        /// unchanged from how every image was emitted before this member
+        /// existed.
+        /// </summary>
+        private readonly IReadOnlySet<ImageSpec> _hoistedImages = BuildHoistedImages(documentSpec);
+
         private int _listIndex;
         private int _tableIndex;
         private int _multiRunIndex;
@@ -150,6 +182,7 @@ public static class SpecCodeEmitter
             using (writer.Indent())
             {
                 EmitEmbeddedFonts();
+                EmitHoistedImages();
                 EmitHoistedStyles();
 
                 // Consulted only by the one Document.Add(string, TextStyle?)
@@ -313,6 +346,40 @@ public static class SpecCodeEmitter
             {
                 writer.Line();
             }
+        }
+
+        /// <summary>
+        /// Declares one <c>var imageN = Loader.Load(Images[N]);</c> local, up
+        /// front, for every <see cref="ImageSpec"/> reference used two or
+        /// more times in <see cref="DocumentSpec.Content"/> (<see cref="_hoistedImages"/>),
+        /// mirroring <see cref="EmitHoistedStyles"/> exactly: a shared
+        /// occurrence gets one declaration here, reused by every later
+        /// <see cref="EmitImage"/> call site rather than re-decoded, so the
+        /// compiled-and-executed snippet decodes and embeds that image once,
+        /// matching <see cref="Generation.SpecRenderer.BuildImage"/>'s own
+        /// image cache. An image used only once is left inline at its one
+        /// occurrence, unchanged from before this method existed.
+        /// </summary>
+        private void EmitHoistedImages()
+        {
+            if (_hoistedImages.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var image in _hoistedImages.OrderBy(image => _imageIndices[image]))
+            {
+                EmitImageLoadDeclaration(image);
+            }
+
+            writer.Line();
+        }
+
+        private void EmitImageLoadDeclaration(ImageSpec imageSpec)
+        {
+            var index = _imageIndices[imageSpec];
+            var loaderName = ImageLoaderName(imageSpec.Format);
+            writer.Line($"var image{index} = {loaderName}.Load(Images[{index}]);");
         }
 
         private void EmitHoistedStyles()
@@ -669,13 +736,25 @@ public static class SpecCodeEmitter
             writer.Line($"{rowVariable}.AddCell({cellVariable});");
         }
 
+        /// <summary>
+        /// Emits one content position's <c>document.Add(new LayoutImage(...))</c>.
+        /// <paramref name="imageSpec"/>'s decode is emitted inline, right
+        /// here, only the FIRST time this reference is encountered and it is
+        /// not one of <see cref="_hoistedImages"/> (used exactly once, so
+        /// hoisting it into the shared preamble would only move the
+        /// declaration, not share it); a reference used two or more times has
+        /// already been declared by <see cref="EmitHoistedImages"/>, so every
+        /// occurrence here, including the first, only references the
+        /// existing <c>imageN</c> local.
+        /// </summary>
         private void EmitImage(ImageSpec imageSpec)
         {
-            var loaderName = ImageLoaderName(imageSpec.Format);
+            var imageVariable = $"image{_imageIndices[imageSpec]}";
 
-            var imageVariable = $"image{_imageIndex}";
-            writer.Line($"var {imageVariable} = {loaderName}.Load(Images[{_imageIndex}]);");
-            _imageIndex++;
+            if (!_hoistedImages.Contains(imageSpec))
+            {
+                EmitImageLoadDeclaration(imageSpec);
+            }
 
             List<string> initializers = [];
 
@@ -933,6 +1012,95 @@ public static class SpecCodeEmitter
         }
 
         return names;
+    }
+
+    /// <summary>
+    /// Every <see cref="ImageSpec"/> reachable through <paramref name="spec"/>'s
+    /// <see cref="DocumentSpec.Content"/>, deduplicated by REFERENCE identity,
+    /// in first-occurrence order: an instance appearing at several positions
+    /// is listed here once, at its first position. This is the single
+    /// definition of which occurrence is "the same image" and which is a new
+    /// one; <see cref="SpecAssets.FromSpec"/> calls it to decide how many
+    /// byte arrays <c>Images</c> holds and in what order, and
+    /// <see cref="Emitter"/>'s own <c>BuildImageIndices</c> calls it to assign
+    /// the identical index to the identical instance, so the two cannot
+    /// silently disagree about which <c>Images[N]</c> entry an occurrence
+    /// reads. <see cref="Generation.SpecRenderer.RenderContext"/>'s own
+    /// <c>ImageCache</c> answers the same question, independently, by the
+    /// same rule (reference identity); see its remark for why value equality
+    /// is the wrong rule here even though <see cref="ImageSpec"/>'s own
+    /// record equality happens to fall back to something close to it.
+    /// </summary>
+    internal static IReadOnlyList<ImageSpec> DistinctContentImagesByReference(DocumentSpec spec)
+    {
+        var seen = new HashSet<ImageSpec>(ReferenceEqualityComparer.Instance);
+        List<ImageSpec> distinct = [];
+
+        foreach (var image in spec.Content.OfType<ImageSpec>())
+        {
+            if (seen.Add(image))
+            {
+                distinct.Add(image);
+            }
+        }
+
+        return distinct;
+    }
+
+    /// <summary>
+    /// Assigns the asset index <see cref="Emitter"/> uses for
+    /// <c>imageN</c>/<c>Images[N]</c> to every distinct <see cref="ImageSpec"/>
+    /// reference <see cref="DistinctContentImagesByReference"/> finds, in the
+    /// same order: index 0 is that list's first entry, and so on. Kept
+    /// separate from <see cref="BuildHoistedImages"/> because every distinct
+    /// image needs an index (even one used only once, to name its inline
+    /// declaration and its <c>Images[N]</c> read), while only a repeated one
+    /// needs hoisting.
+    /// </summary>
+    private static Dictionary<ImageSpec, int> BuildImageIndices(DocumentSpec spec)
+    {
+        var indices = new Dictionary<ImageSpec, int>(ReferenceEqualityComparer.Instance);
+        var distinct = DistinctContentImagesByReference(spec);
+
+        for (var i = 0; i < distinct.Count; i++)
+        {
+            indices.Add(distinct[i], i);
+        }
+
+        return indices;
+    }
+
+    /// <summary>
+    /// The subset of <see cref="DistinctContentImagesByReference"/>'s result
+    /// that occurs two or more times in <paramref name="spec"/>'s
+    /// <see cref="DocumentSpec.Content"/>, keyed the same way, by reference
+    /// identity. Mirrors <see cref="BuildHoistedStyleNames"/>'s "used more
+    /// than once" rule, applied to images instead of styles, and existing for
+    /// the identical reason: <see cref="Emitter.EmitHoistedImages"/> declares
+    /// each of these once, up front, so a repeated reference is decoded, and
+    /// embedded, once rather than once per occurrence, matching
+    /// <see cref="Generation.SpecRenderer.RenderContext"/>'s own <c>ImageCache</c>.
+    /// </summary>
+    private static IReadOnlySet<ImageSpec> BuildHoistedImages(DocumentSpec spec)
+    {
+        var counts = new Dictionary<ImageSpec, int>(ReferenceEqualityComparer.Instance);
+
+        foreach (var image in spec.Content.OfType<ImageSpec>())
+        {
+            counts[image] = counts.TryGetValue(image, out var count) ? count + 1 : 1;
+        }
+
+        var hoisted = new HashSet<ImageSpec>(ReferenceEqualityComparer.Instance);
+
+        foreach (var (image, count) in counts)
+        {
+            if (count > 1)
+            {
+                hoisted.Add(image);
+            }
+        }
+
+        return hoisted;
     }
 
     /// <summary>

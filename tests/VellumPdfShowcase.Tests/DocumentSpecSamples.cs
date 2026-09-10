@@ -1045,4 +1045,45 @@ internal static class DocumentSpecSamples
             ],
         };
     }
+
+    /// <summary>
+    /// HIGH finding fix (the image cache): one <see cref="ImageSpec"/>
+    /// INSTANCE placed at three positions in <see cref="DocumentSpec.Content"/>.
+    /// <see cref="Generation.SpecRenderer"/> decodes and embeds that shared
+    /// instance once and reuses it at all three positions; the matching
+    /// change in <see cref="Generation.SpecCodeEmitter"/> hoists its
+    /// <c>Loader.Load(Images[N])</c> call into one declaration, reused by
+    /// every <c>document.Add</c> site, instead of decoding it three times.
+    /// Without both sides agreeing on that, this sample's round trip fails on
+    /// the byte comparison, rather than on anything either consumer's own
+    /// exception contract documents; see CLAUDE.md's round-trip invariant.
+    /// A second, value-equal but reference-DISTINCT <see cref="ImageSpec"/>
+    /// carrying byte-for-byte identical content sits alongside it, used only
+    /// once, to pin that the cache and the hoisting are keyed by REFERENCE
+    /// identity, not by <see cref="ImageSpec"/>'s own record equality: the
+    /// two must NOT collapse into a single decode or a single <c>Images[N]</c>
+    /// entry, even though every scalar member and every byte of
+    /// <see cref="ImageSpec.Bytes"/> match.
+    /// </summary>
+    public static DocumentSpec RepeatedImageInstance()
+    {
+        var style = new TextStyleSpec { Font = FontSpec.FromStandard14(Standard14.Helvetica) };
+        var shared = new ImageSpec { Format = ImageFormat.Png, Bytes = OnePixelPng, Width = 20, AltText = "Shared pixel." };
+        var valueEqualButDistinct = new ImageSpec { Format = ImageFormat.Png, Bytes = OnePixelPng, Width = 20, AltText = "Shared pixel." };
+
+        return new DocumentSpec
+        {
+            Page = new PageSizeSpec(300, 300),
+            DefaultTextStyle = style,
+            Content =
+            [
+                new HeadingSpec { Text = "Repeated image instance", Level = 0 },
+                shared,
+                ParagraphSpec.FromText("Between two occurrences of the same shared image instance.", style),
+                shared,
+                valueEqualButDistinct,
+                shared,
+            ],
+        };
+    }
 }

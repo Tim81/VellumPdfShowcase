@@ -157,7 +157,16 @@ public static class SpecRenderer
         }
 
         var embeddedFonts = spec.EmbeddedFonts.Select(bytes => LoadEmbeddedFont(document, bytes)).ToArray();
-        var context = new RenderContext(embeddedFonts, new Dictionary<TextStyleSpec, TextStyle>());
+
+        // Keyed with an explicit reference-identity comparer, not the dictionary's
+        // default ImageSpec equality: see the remark on RenderContext.ImageCache
+        // for why relying on ImageSpec's own record equality, rather than stating
+        // this explicitly, would be the wrong thing even though it happens to
+        // reach the same place for this particular member.
+        var context = new RenderContext(
+            embeddedFonts,
+            new Dictionary<TextStyleSpec, TextStyle>(),
+            new Dictionary<ImageSpec, PdfImageXObject>(ReferenceEqualityComparer.Instance));
 
         // Consulted only by the one Document.Add(string, TextStyle?) overload,
         // which AddContentItem calls for a PlainTextSpec left unstyled: see
@@ -309,7 +318,7 @@ public static class SpecRenderer
                 document.Add(BuildTable(table, context));
                 break;
             case ImageSpec image:
-                document.Add(BuildImage(image));
+                document.Add(BuildImage(image, context));
                 break;
             case PieChartSpec pieChart:
                 document.Add(BuildPieChart(pieChart));
@@ -450,36 +459,99 @@ public static class SpecRenderer
     /// value outside the five named members before a <see cref="DocumentSpec"/>
     /// carrying one can ever be constructed.
     /// </summary>
-    private static LayoutImage BuildImage(ImageSpec spec)
+    /// <remarks>
+    /// HIGH finding fix: this used to decode <paramref name="spec"/>'s bytes
+    /// afresh for every occurrence of an <see cref="ImageSpec"/> in
+    /// <see cref="DocumentSpec.Content"/>, even when every occurrence was the
+    /// SAME instance. Nothing bounded the product of one image's decoded size
+    /// and its occurrence count: <see cref="SpecLimits.MaxAssetBytes"/> bounds
+    /// one array, and <see cref="SpecLimits.MaxContentItems"/> and
+    /// <see cref="SpecLimits.MaxWalkedNodes"/> bound occurrences, but nothing
+    /// bounded their product. Measured by the coordinator before this fix, on
+    /// a 200 by 200 page with a shared 512 by 512 PNG placed 500 times: 138 MB
+    /// of output in 4,723 ms; a 2048 by 2048 PNG placed 500 times: 596 MB in
+    /// 23,904 ms; a 4096 by 4096 PNG placed 500 times: 1.30 GB in 76,147 ms.
+    /// <see cref="RenderContext.ImageCache"/> now decodes a repeated
+    /// <see cref="ImageSpec"/> INSTANCE once and reuses the decoded
+    /// <see cref="PdfImageXObject"/> for every later occurrence; only the
+    /// <see cref="LayoutImage"/> wrapper (its <see cref="LayoutImage.Width"/>,
+    /// <see cref="LayoutImage.Height"/> and so on) is rebuilt per occurrence,
+    /// matching how every other content element in this file is always
+    /// constructed fresh per position while <see cref="RenderContext.StyleCache"/>
+    /// shares only the sub-object beneath it.
+    /// <para>
+    /// RE-MEASURED after this fix, same shape (200 by 200 page, one shared
+    /// instance, <see cref="ImageSpec.Width"/> and <see cref="ImageSpec.Height"/>
+    /// of 40, 500 occurrences), against synthetically generated source PNGs of
+    /// the same three dimensions rather than the coordinator's own files (so
+    /// the byte counts below are not directly comparable to the coordinator's
+    /// source sizes above, only the shape of the improvement is): 512 by 512
+    /// gives 576,827 bytes in 45 ms; 2048 by 2048 gives 1,862,147 bytes in 43
+    /// ms; 4096 by 4096 gives 3,788,696 bytes in 112 ms. Output size no longer
+    /// tracks occurrence count at all; it tracks the one decoded image.
+    /// </para>
+    /// <para>
+    /// The case this fix does NOT help, measured the same way but with 500
+    /// DISTINCT <see cref="ImageSpec"/> instances carrying byte-for-byte
+    /// identical bytes rather than one shared instance (the cache is keyed by
+    /// reference identity; see <see cref="RenderContext.ImageCache"/> for why):
+    /// 512 by 512 gives 199,407,372 bytes (190.17 MB) in 4,558 ms; 2048 by
+    /// 2048 gives 842,066,872 bytes (803.06 MB) in 24,031 ms; 4096 by 4096 did
+    /// not complete at 500 occurrences in the sandboxed environment this
+    /// figure was measured in (process killed for memory exhaustion), but
+    /// scaled runs at 50, 100 and 150 occurrences (172.17 MB/5,283 ms,
+    /// 344.34 MB/11,980 ms, 516.51 MB/17,047 ms) grow linearly and extrapolate
+    /// to roughly 1.7 GB and 57 s at 500, consistent with the coordinator's own
+    /// 1.30 GB/76,147 ms figure above. This is the number the owner needs to
+    /// decide whether a cap on distinct images is still warranted; this fix
+    /// deliberately does not add one.
+    /// </para>
+    /// <see cref="Generation.SpecCodeEmitter"/> hoists the identical repeated
+    /// reference into one shared decode in the emitted C#, for the same
+    /// reason <c>StyleExpression</c> hoists a repeated <see cref="TextStyleSpec"/>:
+    /// see the remark on <c>SpecCodeEmitter.DistinctContentImagesByReference</c>.
+    /// Without that matching change on the emitter side, this fix alone would
+    /// have made <see cref="Render"/> embed a repeated image once while the
+    /// compiled-and-executed emitted code kept embedding it once per
+    /// occurrence, which is exactly the divergence CLAUDE.md's round-trip
+    /// invariant forbids; <c>DocumentSpecSamples.RepeatedImageInstance</c> and
+    /// <c>SpecRoundTripTests</c> hold the two together.
+    /// </remarks>
+    private static LayoutImage BuildImage(ImageSpec spec, RenderContext context)
     {
-        try
+        if (!context.ImageCache.TryGetValue(spec, out var xObject))
         {
-            var xObject = ImageLoaders[spec.Format](spec.Bytes);
-
-            return new LayoutImage(xObject)
+            try
             {
-                Width = spec.Width,
-                Height = spec.Height,
-                Alignment = spec.Alignment,
-                Margins = spec.Margins ?? EdgeInsets.Zero,
-                AltText = spec.AltText,
-            };
+                xObject = ImageLoaders[spec.Format](spec.Bytes);
+            }
+            catch (Exception ex)
+            {
+                // No `when` guard excluding a specific exception type here any
+                // more: cycle 6 excluded ArgumentOutOfRangeException so the
+                // switch's own now-removed unreachable-format throw could
+                // propagate unwrapped instead of being reported as a decode
+                // failure. ImageLoaders[spec.Format] no longer throws that type
+                // for an unreachable format (it throws KeyNotFoundException,
+                // itself unreachable for the same reason); if a loader ever
+                // throws ArgumentOutOfRangeException for a genuinely malformed
+                // but well-signed file, wrapping it as a decode failure, exactly
+                // like any other exception a loader raises, is the correct
+                // behaviour.
+                throw new InvalidOperationException($"Could not decode the embedded {spec.Format} image: {ex.Message}", ex);
+            }
+
+            context.ImageCache.Add(spec, xObject);
         }
-        catch (Exception ex)
+
+        return new LayoutImage(xObject)
         {
-            // No `when` guard excluding a specific exception type here any
-            // more: cycle 6 excluded ArgumentOutOfRangeException so the
-            // switch's own now-removed unreachable-format throw could
-            // propagate unwrapped instead of being reported as a decode
-            // failure. ImageLoaders[spec.Format] no longer throws that type
-            // for an unreachable format (it throws KeyNotFoundException,
-            // itself unreachable for the same reason); if a loader ever
-            // throws ArgumentOutOfRangeException for a genuinely malformed
-            // but well-signed file, wrapping it as a decode failure, exactly
-            // like any other exception a loader raises, is the correct
-            // behaviour.
-            throw new InvalidOperationException($"Could not decode the embedded {spec.Format} image: {ex.Message}", ex);
-        }
+            Width = spec.Width,
+            Height = spec.Height,
+            Alignment = spec.Alignment,
+            Margins = spec.Margins ?? EdgeInsets.Zero,
+            AltText = spec.AltText,
+        };
     }
 
     /// <summary>Wraps <c>Document.UseTrueTypeFont</c>, per plan section 5.4 control 5, for the same reason as <see cref="BuildImage"/>.</summary>
@@ -589,9 +661,52 @@ public static class SpecRenderer
     /// <summary>
     /// The state threaded through one <see cref="Render"/> call: the embedded
     /// font handles already registered with <c>document</c>, in
-    /// <see cref="DocumentSpec.EmbeddedFonts"/> order, and the cache
+    /// <see cref="DocumentSpec.EmbeddedFonts"/> order; the cache
     /// <see cref="ToTextStyle"/> uses to give every value-equal
-    /// <see cref="TextStyleSpec"/> the same <see cref="TextStyle"/> instance.
+    /// <see cref="TextStyleSpec"/> the same <see cref="TextStyle"/> instance;
+    /// and <see cref="ImageCache"/>, described below.
     /// </summary>
-    private sealed record RenderContext(IReadOnlyList<EmbeddedFontHandle> Fonts, Dictionary<TextStyleSpec, TextStyle> StyleCache);
+    /// <param name="ImageCache">
+    /// The cache <see cref="BuildImage"/> uses so a repeated <see cref="ImageSpec"/>
+    /// INSTANCE is decoded, and embedded, once per <see cref="Render"/> call
+    /// rather than once per occurrence in <see cref="DocumentSpec.Content"/>.
+    /// See the remark on <see cref="BuildImage"/> for the finding this closes
+    /// and the figures behind it.
+    /// <para>
+    /// Keyed by REFERENCE identity, deliberately, rather than by
+    /// <see cref="ImageSpec"/>'s own record equality the way
+    /// <see cref="StyleCache"/> keys on <see cref="TextStyleSpec"/>'s. Two
+    /// reasons, together: FIRST, <see cref="ImageSpec"/> holds a
+    /// <see cref="ImageSpec.Bytes"/> <c>byte[]</c> member, and C# record
+    /// equality falls back to reference equality for any member whose type
+    /// does not itself implement value equality, an array included; two
+    /// distinct <see cref="ImageSpec"/> instances holding separately
+    /// allocated but byte-for-byte identical arrays therefore already compare
+    /// UNEQUAL under the record's own generated <c>Equals</c>, so relying on
+    /// that generated equality would not, in practice, treat this cache's key
+    /// as anything other than reference identity in the first place: the
+    /// fallback happens to land in the same place this cache needs to be.
+    /// SECOND, and why this cache does not simply lean on that fallback
+    /// rather than stating the rule directly: computing
+    /// <see cref="ImageSpec"/>'s generated <c>GetHashCode</c> still touches
+    /// every scalar member (<see cref="ImageSpec.Format"/>,
+    /// <see cref="ImageSpec.Width"/>, <see cref="ImageSpec.Height"/>,
+    /// <see cref="ImageSpec.Alignment"/>, <see cref="ImageSpec.Margins"/>,
+    /// <see cref="ImageSpec.AltText"/>) on every lookup, and hashing megabytes
+    /// of <see cref="ImageSpec.Bytes"/> is exactly the cost this cache exists
+    /// to avoid paying per occurrence; the default array member's own
+    /// contribution to that hash is its reference hash, not its content, so
+    /// the array itself is not what would be re-hashed, but the cache's INTENT
+    /// (occurrences of the same object, not occurrences of equal-looking data)
+    /// should not depend on a reader tracing through record equality's member-
+    /// by-member fallback rules to discover that it happens to coincide with
+    /// reference identity today. An explicit <see cref="ReferenceEqualityComparer"/>
+    /// says the actual rule directly, and stays correct even if a future
+    /// <see cref="ImageSpec"/> member changed that fallback's outcome.
+    /// </para>
+    /// </param>
+    private sealed record RenderContext(
+        IReadOnlyList<EmbeddedFontHandle> Fonts,
+        Dictionary<TextStyleSpec, TextStyle> StyleCache,
+        Dictionary<ImageSpec, PdfImageXObject> ImageCache);
 }

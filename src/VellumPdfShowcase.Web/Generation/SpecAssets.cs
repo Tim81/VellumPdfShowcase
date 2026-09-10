@@ -21,8 +21,20 @@ public sealed class SpecAssets
     /// <summary>
     /// Builds the assets a <see cref="DocumentSpec"/> requires, in the same
     /// order <see cref="SpecCodeEmitter"/> assigns them indices: embedded fonts
-    /// in <see cref="DocumentSpec.EmbeddedFonts"/> order, and images in the
-    /// order their <see cref="ImageSpec"/> items appear in <see cref="DocumentSpec.Content"/>.
+    /// in <see cref="DocumentSpec.EmbeddedFonts"/> order, and images in
+    /// <see cref="SpecCodeEmitter.DistinctContentImagesByReference"/> order,
+    /// which is <see cref="DocumentSpec.Content"/> order deduplicated by
+    /// REFERENCE identity: an <see cref="ImageSpec"/> instance used at
+    /// several positions contributes only its FIRST occurrence's bytes here,
+    /// once, exactly as <see cref="Generation.SpecRenderer"/>'s own image
+    /// cache decodes and embeds a repeated instance once rather than once per
+    /// occurrence. <see cref="Emitter"/>'s per-image numbering calls the
+    /// identical method, so the index an occurrence's emitted <c>Images[N]</c>
+    /// reads always names the entry this method produced for the SAME
+    /// instance; a caller that called <c>OfType&lt;ImageSpec&gt;()</c> here
+    /// directly, undeduplicated, the way this method used to, would silently
+    /// disagree with the emitter about how many entries <c>Images</c> holds
+    /// the moment any sample repeats an instance.
     /// </summary>
     /// <remarks>
     /// Every array below is a fresh defensive copy, not the array already
@@ -37,7 +49,7 @@ public sealed class SpecAssets
     public static SpecAssets FromSpec(DocumentSpec spec) => new()
     {
         EmbeddedFonts = [.. spec.EmbeddedFonts.Select(Clone)],
-        Images = [.. spec.Content.OfType<ImageSpec>().Select(image => Clone(image.Bytes))],
+        Images = [.. SpecCodeEmitter.DistinctContentImagesByReference(spec).Select(image => Clone(image.Bytes))],
         IccProfile = spec.OutputIntent is PdfAOutputIntentSpec pdfA ? Clone(pdfA.IccProfile) : null,
     };
 
