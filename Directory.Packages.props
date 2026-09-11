@@ -6,18 +6,36 @@
 
   <ItemGroup>
     <!-- VellumPdf -->
-    <PackageVersion Include="VellumPdf.Layout" Version="2.3.0" />
-    <PackageVersion Include="VellumPdf.Conformance" Version="2.3.0" />
+    <PackageVersion Include="VellumPdf.Layout" Version="2.3.1" />
+    <PackageVersion Include="VellumPdf.Conformance" Version="2.3.1" />
 
     <!-- Blazor WebAssembly -->
-    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.12" />
 
     <!-- Testing -->
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
+
+    <!--
+      Branch coverage for the emitter-branch gate (eng/check-emitter-branch-coverage.ps1).
+      coverlet.collector, above, is the VSTest data collector and never activates
+      under the native Microsoft.Testing.Platform host this project runs.
+      coverlet.MTP is coverlet's
+      own Microsoft.Testing.Platform integration and instruments the test host
+      directly, with no VSTest handshake in the path.
+    -->
+    <PackageVersion Include="coverlet.MTP" Version="10.0.1" />
+
+    <!--
+      Roslyn scripting for the round-trip test only (tests/VellumPdfShowcase.Tests).
+      Compiles the C# that SpecCodeEmitter produces and executes it, so that the
+      test can assert its output against SpecRenderer's. Never referenced by
+      src/VellumPdfShowcase.Web, so it never reaches the published Blazor bundle.
+    -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.9.0" />
   </ItemGroup>
 
 </Project>

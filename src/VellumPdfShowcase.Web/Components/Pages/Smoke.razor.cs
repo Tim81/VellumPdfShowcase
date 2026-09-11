@@ -25,7 +25,7 @@ public partial class Smoke
     private const string SrgbIccProfilePath = "icc/sRGB2014.icc";
 
     private bool _disposed;
-    private IJSObjectReference? _module;
+    private Task<IJSObjectReference>? _moduleTask;
     private byte[]? _fontBytes;
     private byte[]? _iccProfileBytes;
 
@@ -35,6 +35,8 @@ public partial class Smoke
     private bool _hardCodedSupportsInline = true;
     private long _hardCodedElapsedMs;
     private string? _hardCodedError;
+    private bool _busyHardCodedDownload;
+    private string? _hardCodedDownloadError;
 
     private bool _busyPdfA;
     private byte[]? _pdfABytes;
@@ -44,35 +46,84 @@ public partial class Smoke
     private long _preflightElapsedMs;
     private PreflightResult? _preflightResult;
     private string? _pdfAError;
+    private bool _busyPdfADownload;
+    private string? _pdfADownloadError;
 
-    private async Task<IJSObjectReference> GetModuleAsync() =>
-        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/pdfInterop.js");
+    /// <summary>
+    /// Caches the import as a <see cref="Task{TResult}"/> rather than the
+    /// resolved <see cref="IJSObjectReference"/>. The null-coalescing
+    /// assignment below is one synchronous statement with no <c>await</c>
+    /// between reading <c>_moduleTask</c> and writing it, so two handlers
+    /// racing at an earlier await point both observe the same cached task
+    /// instead of each starting its own import. Caching the resolved
+    /// reference behind a plain <c>_module ??= await ...</c> would not have
+    /// this property: the read-await-write spans an await, so a second
+    /// caller can still see the field unset and import a second, orphaned
+    /// module reference.
+    /// </summary>
+    /// <remarks>
+    /// NOTE: a task caches its FAILURE as durably as its result, which a
+    /// resolved reference does not, so <see cref="GetModuleIfActiveAsync"/>
+    /// evicts a faulted task rather than leaving it in the field.
+    ///
+    /// NOTE also what that eviction does NOT buy, because the obvious claim
+    /// for it is false and was measured rather than assumed. The browser
+    /// records a failed dynamic import in its own module map, keyed by
+    /// specifier: a second <c>import()</c> of the same path fails immediately
+    /// with no further network request. Measured directly in the running
+    /// application, with the module's response aborted once and then allowed
+    /// through, the second import failed identically while the request count
+    /// stayed at one. So evicting the .NET-side task cannot rescue a failed
+    /// fetch of this module, and neither could caching the resolved reference
+    /// instead. Only a full page load, which builds a new module map, does
+    /// that. The eviction is worth keeping for a fault that never reached the
+    /// module map, which means a failure on the .NET side of the call rather
+    /// than in the fetch, and it is not worth describing as a recovery path
+    /// for a fetch that failed.
+    /// </remarks>
+    private Task<IJSObjectReference> GetModuleAsync() =>
+        _moduleTask ??= JS.InvokeAsync<IJSObjectReference>("import", "./js/pdfInterop.js").AsTask();
 
     /// <summary>
     /// Resolves the interop module, guarding against the component having been
     /// disposed while the import (or an earlier await in the caller) was in
-    /// flight. If disposal happened first, any module reference this call
-    /// itself just imported is disposed here rather than left dangling on the
-    /// disposed component, and <see langword="null"/> is returned so the
-    /// caller stops without touching component state or creating a blob URL.
+    /// flight. If disposal happened first, <see cref="DisposeAsync"/> has
+    /// already awaited the same cached task and disposed the module itself,
+    /// so this returns <see langword="null"/> without touching component
+    /// state or creating a blob URL.
     /// </summary>
+    /// <remarks>
+    /// A faulted import is evicted from the cache before the exception reaches
+    /// the caller's own handler, so the next click issues a fresh
+    /// <c>import()</c> rather than re-throwing a task that failed minutes ago.
+    /// See <see cref="GetModuleAsync"/> for the limit of what that recovers:
+    /// a failed FETCH of the module is cached by the browser itself and is
+    /// beyond reach either way.
+    ///
+    /// The eviction is conditional on the cache still holding the SAME task
+    /// this call awaited. A handler that already started a fresh import must
+    /// not have it discarded by an older failure landing afterwards.
+    /// </remarks>
     private async Task<IJSObjectReference?> GetModuleIfActiveAsync()
     {
-        var module = await GetModuleAsync();
+        var moduleTask = GetModuleAsync();
 
-        if (!_disposed)
+        IJSObjectReference module;
+        try
         {
-            return module;
+            module = await moduleTask;
+        }
+        catch
+        {
+            if (ReferenceEquals(_moduleTask, moduleTask))
+            {
+                _moduleTask = null;
+            }
+
+            throw;
         }
 
-        if (_module is not null)
-        {
-            var leaked = _module;
-            _module = null;
-            await leaked.DisposeAsync();
-        }
-
-        return null;
+        return _disposed ? null : module;
     }
 
     private async Task GenerateHardCodedAsync()
@@ -84,6 +135,11 @@ public partial class Smoke
 
         _busyHardCoded = true;
         _hardCodedError = null;
+
+        // The document about to replace the current one has never been downloaded,
+        // so a download failure recorded against the previous one no longer
+        // describes anything on screen.
+        _hardCodedDownloadError = null;
         StateHasChanged();
 
         try
@@ -111,7 +167,7 @@ public partial class Smoke
             }
 
             var previousUrl = _hardCodedBlobUrl;
-            var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
+            using var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
             var newUrl = await module.InvokeAsync<string>("createBlobUrl", streamRef);
 
             if (_disposed)
@@ -163,6 +219,7 @@ public partial class Smoke
 
         _busyPdfA = true;
         _pdfAError = null;
+        _pdfADownloadError = null;
         StateHasChanged();
 
         try
@@ -208,7 +265,7 @@ public partial class Smoke
             }
 
             var previousUrl = _pdfABlobUrl;
-            var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
+            using var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
             var newUrl = await module.InvokeAsync<string>("createBlobUrl", streamRef);
 
             if (_disposed)
@@ -281,28 +338,82 @@ public partial class Smoke
         }
     }
 
-    private async Task DownloadAsync(byte[]? bytes, string fileName)
+    private Task DownloadHardCodedAsync() =>
+        DownloadAsync(
+            _hardCodedBytes,
+            "smoke-hardcoded.pdf",
+            () => _busyHardCodedDownload,
+            busy => _busyHardCodedDownload = busy,
+            error => _hardCodedDownloadError = error);
+
+    private Task DownloadPdfAAsync() =>
+        DownloadAsync(
+            _pdfABytes,
+            "smoke-pdfa2b.pdf",
+            () => _busyPdfADownload,
+            busy => _busyPdfADownload = busy,
+            error => _pdfADownloadError = error);
+
+    /// <summary>
+    /// Downloads a generated document through the interop module. Wrapped in
+    /// the same try/catch/finally shape as <see cref="GenerateHardCodedAsync"/>
+    /// and <see cref="GeneratePdfAAsync"/>, so a <see cref="JSException"/> or a
+    /// <see cref="JSDisconnectedException"/> from a disposal interleaving at
+    /// the await boundary surfaces as a displayed error instead of an
+    /// unhandled exception in an event handler, which is what drives the
+    /// Blazor error bar. Guarded against re-entrancy with the same busy-flag
+    /// pattern as generation, since each click pins another full copy of the
+    /// document in a blob URL for ten seconds before revocation.
+    /// </summary>
+    private async Task DownloadAsync(
+        byte[]? bytes,
+        string fileName,
+        Func<bool> isBusy,
+        Action<bool> setBusy,
+        Action<string?> setError)
     {
-        if (bytes is null || _disposed)
+        if (bytes is null || _disposed || isBusy())
         {
             return;
         }
 
-        var module = await GetModuleIfActiveAsync();
-        if (module is null)
-        {
-            return;
-        }
+        setBusy(true);
+        setError(null);
+        StateHasChanged();
 
-        var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
-        await module.InvokeVoidAsync("downloadBytes", streamRef, fileName);
+        try
+        {
+            var module = await GetModuleIfActiveAsync();
+            if (module is null)
+            {
+                return;
+            }
+
+            using var streamRef = new DotNetStreamReference(new MemoryStream(bytes));
+            await module.InvokeVoidAsync("downloadBytes", streamRef, fileName);
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+            {
+                setError(ex.ToString());
+            }
+        }
+        finally
+        {
+            if (!_disposed)
+            {
+                setBusy(false);
+                StateHasChanged();
+            }
+        }
     }
 
     private static byte[] BuildHardCodedDocument()
     {
         using var document = new Document();
 
-        document.Add(new Heading("VellumPdf Showcase Runtime Test") { Level = 1 });
+        document.Add(new Heading("VellumPdf Showcase Runtime Test") { Level = 0 });
         document.Add(new Paragraph(
             "This document was generated by VellumPdf.Layout, running inside a WebAssembly module in this browser tab. No server received this request."));
 
@@ -359,7 +470,7 @@ public partial class Smoke
         var bodyStyle = new TextStyle { FontRef = fontHandle, FontSize = 11 };
         document.SetDefaultFont(bodyStyle);
 
-        document.Add(new Heading("PDF/A-2b Conformance Sample", headingStyle) { Level = 1, Language = "en" });
+        document.Add(new Heading("PDF/A-2b Conformance Sample", headingStyle) { Level = 0, Language = "en" });
         document.Add(new Paragraph(
             "This document embeds a Liberation Sans face and declares an sRGB output intent. VellumPdf.Conformance validates the result against the PDF/A-2b profile immediately below, in this browser.",
             bodyStyle));
@@ -382,13 +493,25 @@ public partial class Smoke
         await RevokeBlobUrlAsync(_hardCodedBlobUrl);
         await RevokeBlobUrlAsync(_pdfABlobUrl);
 
-        if (_module is null)
+        var moduleTask = _moduleTask;
+        _moduleTask = null;
+        if (moduleTask is null)
         {
             return;
         }
 
-        var module = _module;
-        _module = null;
+        IJSObjectReference module;
+        try
+        {
+            module = await moduleTask;
+        }
+        catch
+        {
+            // The import itself never completed; there is no module reference
+            // to dispose, and nothing further to clean up.
+            return;
+        }
+
         await module.DisposeAsync();
     }
 }

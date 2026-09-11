@@ -2,6 +2,24 @@
 
   <PropertyGroup>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!--
+      The WebAssembly runtime pack is not a central package reference. The SDK
+      selects it from the runtime it bundles, so an SDK update moves it without
+      any change to this repository, and a servicing release reaches the SDK
+      before its packs reach nuget.org. That gap is not hypothetical: SDK 10.0.401
+      bundled runtime 10.0.12 while 10.0.11 was still the newest published pack,
+      and restore failed with NU1102 and NU1103 on a tree that had built four days
+      earlier and had not changed. The 10.0.12 packs published later the same day.
+
+      Pinning the version holds the runtime pack to the same release as the
+      framework packages, so the build is reproducible across SDK bands and cannot
+      lose a race against the package feed.
+
+      NOTE: raise this together with the ILLink pin in Directory.Build.targets and
+      the versions in Directory.Packages.props, never on its own, and only to a
+      version published on nuget.org.
+    -->
+    <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
     <TrimMode>full</TrimMode>
     <CompressionEnabled>false</CompressionEnabled>
     <!--
@@ -15,7 +33,15 @@
     <UseSystemResourceKeys>false</UseSystemResourceKeys>
     <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
     <RunAOTCompilation>false</RunAOTCompilation>
-    <DebuggerSupport>false</DebuggerSupport>
+    <!--
+      Left unset for Debug: both launch profiles (Properties/launchSettings.json)
+      configure inspectUri for the in-browser debug proxy at
+      /_framework/debug/ws-proxy, which requires debugger support to be built
+      in. Forcing this false unconditionally, as before, applied to Debug
+      builds too and silently broke that proxy. Only the Release (published)
+      configuration trims it.
+    -->
+    <DebuggerSupport Condition="'$(Configuration)' != 'Debug'">false</DebuggerSupport>
     <EventSourceSupport>false</EventSourceSupport>
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
     <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
@@ -25,8 +51,14 @@
       that a real `dotnet publish` with the trim analyzer disabled links cleanly and that the
       linker (not just the build-time analyzer) raises nothing equivalent for this component.
       Scoped to this one diagnostic so the analyzer still watches VellumPdf usage.
+
+      IL2110 fires on the framework LayoutView component's own Razor-generated display class
+      (App_razor.g.cs, the NotFound branch's `<LayoutView Layout="@typeof(MainLayout)">`), the
+      same category of framework-generated-code false positive as IL2111 above: the analyzer
+      cannot follow DynamicallyAccessedMembers through the compiler's closure field. Verified
+      the same way, with a real `dotnet publish`, that the linker raises nothing equivalent.
     -->
-    <NoWarn>$(NoWarn);IL2111</NoWarn>
+    <NoWarn>$(NoWarn);IL2111;IL2110</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

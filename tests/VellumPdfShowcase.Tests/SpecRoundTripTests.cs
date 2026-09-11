@@ -1,0 +1,457 @@
+using System.Reflection;
+using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Scripting;
+using Microsoft.CodeAnalysis.Scripting;
+using VellumPdf.Reader;
+using VellumPdfShowcase.Web.Generation;
+using VellumPdfShowcase.Web.Model;
+using DocumentConformance = VellumPdf.Document.PdfConformance;
+using PreflightConformance = VellumPdf.Conformance.PdfConformance;
+
+namespace VellumPdfShowcase.Tests;
+
+/// <summary>
+/// The central test of the round-trip invariant: compile the C# that
+/// <see cref="SpecCodeEmitter"/> produces with Roslyn, execute it, and assert
+/// that the resulting PDF matches what <see cref="SpecRenderer"/> produced from
+/// the same <see cref="DocumentSpec"/>. This is what keeps the two from
+/// silently drifting apart; neither reads the other; this test is the only
+/// thing that reads both.
+/// </summary>
+/// <remarks>
+/// Roslyn scripting lives only in this test project. <c>src/VellumPdfShowcase.Web</c>
+/// never references <c>Microsoft.CodeAnalysis.*</c>, so none of it reaches the
+/// published Blazor bundle; the publish check in the verification pipeline
+/// confirms this directly by inspecting <c>publish/wwwroot/_framework</c>.
+/// </remarks>
+public class SpecRoundTripTests
+{
+    /// <summary>
+    /// Every sample in <see cref="SampleCorpus"/>, round-tripped: the emitted
+    /// C# is compiled and executed, and its PDF compared against
+    /// <see cref="SpecRenderer"/>'s own output for the same specification.
+    /// </summary>
+    /// <remarks>
+    /// This was nineteen hand-written call sites, one per sample, while the
+    /// symmetry guard discovered its corpus reflectively. A sample added to
+    /// <see cref="DocumentSpecSamples"/> was therefore covered by one suite
+    /// automatically and by this one only if someone also added a call site.
+    /// Each sample's own reason for existing is documented on its factory,
+    /// which is where the removed comments pointed anyway.
+    /// <para>
+    /// An encrypted sample takes the encrypted assertion path, because its
+    /// output cannot be compared even in normalised form until both sides are
+    /// decrypted: the encryption key derives in part from the random
+    /// <c>/ID</c>. See the remark on <see cref="AssertEncryptedRoundTripAsync"/>.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SampleNames))]
+    public async Task RoundTrip_Sample_MatchesSpecRenderer(string sampleName)
+    {
+        var spec = SampleCorpus.Invoke(sampleName);
+
+        if (spec.Encryption is null)
+        {
+            await AssertRoundTripAsync(spec);
+        }
+        else
+        {
+            await AssertEncryptedRoundTripAsync(spec);
+        }
+    }
+
+    /// <summary>The shared corpus, so this suite and the symmetry guard cannot drift apart.</summary>
+    public static TheoryData<string> SampleNames() => SampleCorpus.AllSampleNames();
+
+    /// <summary>
+    /// The structural guard: every <see cref="DocumentSpecSamples"/> member
+    /// that returns a <see cref="DocumentSpec"/> claiming a conformance
+    /// profile is preflighted, found by reflection rather than by a list of
+    /// call sites someone has to remember to extend. Before this test
+    /// existed, five samples claimed a profile
+    /// (<see cref="DocumentSpecSamples.PdfA2bWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfA2uWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfA2aWithOutputIntent"/>,
+    /// <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/> and
+    /// <see cref="DocumentSpecSamples.CmykOutputIntent"/>) but only the
+    /// first three were ever preflighted, at three separate named
+    /// <c>[Fact]</c> call sites; the last two claimed a profile and were
+    /// never checked at all. A future sample that claims a profile is
+    /// automatically included here the moment it is added to
+    /// <see cref="DocumentSpecSamples"/>, with no second call site to
+    /// remember. Those three original named facts have since been removed:
+    /// every sample they covered claims a profile, so this theory already
+    /// preflights each of them, and the separate facts were doing the same
+    /// work a second time.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SampleNamesClaimingConformance))]
+    public async Task Sample_ClaimingConformance_IsPreflightCompliant(string sampleName) =>
+        await AssertPreflightCompliantAsync(InvokeSample(sampleName));
+
+    /// <summary>
+    /// Every sample claiming a conformance profile, checked directly against
+    /// its own <see cref="HeadingSpec.Level"/> values rather than against a
+    /// preflight verdict. Measured directly: raising the heading level in the
+    /// PDF/UA-1 sample, or deleting that sample's <see cref="DocumentMetadataSpec.Title"/>,
+    /// turns <see cref="Sample_ClaimingConformance_IsPreflightCompliant"/> red,
+    /// because ISO 14289-1:2014 clauses 7.4.2 and 7.1 are genuinely enforced
+    /// by preflight against PDF/UA-1. The IDENTICAL heading change against a
+    /// PDF/A-2a or PDF/A-2b sample leaves that same theory fully green,
+    /// because PDF/A preflight carries no heading-hierarchy rule at all (see
+    /// the remark on <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/>).
+    /// That is not a defect in the library; ISO 19005-2:2011 clause 6.7.3.3
+    /// carries only a requirement that the structure hierarchy exist and be
+    /// rooted, plus a recommendation about granularity, so a sub-heading with
+    /// no top-level heading above it passing PDF/A-2a is plausibly correct.
+    /// The defect was on this side: every sample claiming PDF/A carried no
+    /// guard on its own heading order, so it could regress silently, which is
+    /// exactly how a sub-heading came to serve as a document's sole heading
+    /// in several sample sites and survive review. This test closes that gap
+    /// independently of what any profile's preflight rules happen to check,
+    /// for every sample claiming any profile, present or future.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SampleNamesClaimingConformance))]
+    public void Sample_ClaimingConformance_HasValidHeadingHierarchy(string sampleName)
+    {
+        var levels = InvokeSample(sampleName).Content.OfType<HeadingSpec>().Select(heading => heading.Level).ToList();
+        var violation = HeadingHierarchyViolation(levels);
+
+        Assert.True(violation is null, violation is null ? null : $"{sampleName} {violation}");
+    }
+
+    /// <summary>
+    /// Extracted so the rule itself can be exercised directly
+    /// against a crafted level sequence, independently of whether any
+    /// SAMPLE happens to contain one. Before this fix, every conformance-
+    /// claiming sample had at most one heading (four had exactly one, one
+    /// had none), so the loop below never ran for any of them: the whole
+    /// rule was provably dead code that an absurd replacement comparison
+    /// left the suite green under. <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/>
+    /// now carries a genuine three-level hierarchy, so the loop runs for
+    /// real on every test run; <see cref="HeadingHierarchyRuleTests"/> below
+    /// proves the rule itself, independently of that or any other sample,
+    /// by feeding it a sequence that skips a level directly.
+    /// </summary>
+    /// <returns><see langword="null"/> when <paramref name="levels"/> is a valid hierarchy; otherwise a message naming the violation.</returns>
+    internal static string? HeadingHierarchyViolation(IReadOnlyList<int> levels)
+    {
+        if (levels.Count == 0)
+        {
+            return null;
+        }
+
+        if (levels[0] != SpecLimits.MinHeadingLevel)
+        {
+            return $"starts at heading level {levels[0]}, not {SpecLimits.MinHeadingLevel}.";
+        }
+
+        var deepestSeen = levels[0];
+        foreach (var level in levels.Skip(1))
+        {
+            if (level > deepestSeen + 1)
+            {
+                return $"jumps from a deepest heading level of {deepestSeen} to {level}, skipping a level.";
+            }
+
+            deepestSeen = Math.Max(deepestSeen, level);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Every public, parameterless, <see cref="DocumentSpec"/>-returning
+    /// method on <see cref="DocumentSpecSamples"/> whose result claims a
+    /// conformance profile other than <see cref="DocumentConformance.None"/>.
+    /// Returns names rather than constructed specs: xUnit theory data must be
+    /// serialisable across discovery and execution, which a plain
+    /// <see cref="DocumentSpec"/> is not.
+    /// </summary>
+    public static TheoryData<string> SampleNamesClaimingConformance()
+    {
+        TheoryData<string> names = [];
+
+        foreach (var name in SampleFactoryMethods()
+            .Where(method => ((DocumentSpec)method.Invoke(null, DefaultArguments(method))!).Conformance != DocumentConformance.None)
+            .Select(method => method.Name))
+        {
+            names.Add(name);
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// Every public, static, <see cref="DocumentSpec"/>-returning method on
+    /// <see cref="DocumentSpecSamples"/> that a factory-style call site can
+    /// invoke with no arguments: either genuinely parameterless, or every
+    /// parameter optional. A plain parameter-count-zero check silently
+    /// skipped the latter shape, so a sample factory taking an all-optional
+    /// parameter would neither be preflighted here nor reachable by
+    /// <see cref="InvokeSample"/>, with no error to say so.
+    /// </summary>
+    private static IEnumerable<MethodInfo> SampleFactoryMethods() => SampleCorpus.FactoryMethods();
+
+    private static object?[] DefaultArguments(MethodInfo method) => SampleCorpus.DefaultArguments(method);
+
+    private static DocumentSpec InvokeSample(string sampleName) => SampleCorpus.Invoke(sampleName);
+
+    /// <summary>
+    /// The isolated-surrogate arm of <c>SpecCodeEmitter.Literal</c> cannot be
+    /// proven by the round-trip byte comparison above: measured directly,
+    /// Roslyn compiles a raw isolated surrogate sitting unescaped inside an
+    /// ordinary string literal without complaint, and the resulting runtime
+    /// string is byte-identical to what escaping it would have produced, so
+    /// <see cref="RoundTrip_ControlCharactersAndLineSeparators_MatchesSpecRenderer"/>
+    /// stays green whether or not that arm runs. What the arm actually
+    /// guards, per the remark on <c>Literal</c>, is that the DISPLAYED
+    /// snippet remains valid text once re-encoded as UTF-8, which an isolated
+    /// surrogate cannot survive. This test checks that directly: the emitted
+    /// snippet must decode back to itself after a UTF-8 round trip, which
+    /// fails the instant a raw isolated surrogate reaches the output, since
+    /// <see cref="Encoding.UTF8"/> substitutes U+FFFD for one on encoding.
+    /// </summary>
+    [Fact]
+    public void Emit_ControlCharactersAndLineSeparators_TextSurvivesUtf8RoundTrip()
+    {
+        var code = SpecCodeEmitter.Emit(DocumentSpecSamples.ControlCharactersAndLineSeparators());
+        var roundTripped = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(code));
+
+        Assert.Equal(code, roundTripped);
+    }
+
+    /// <summary>
+    /// Per the remark on <see cref="EncryptionSpec"/>: the password
+    /// that actually authenticates full (owner) access is
+    /// <see cref="EncryptionSpec.OwnerPassword"/> when set, otherwise
+    /// <see cref="EncryptionSpec.UserPassword"/>; and the password that opens
+    /// the document as the (non-owner) user is <see cref="EncryptionSpec.UserPassword"/>
+    /// when set, otherwise the empty string. Both branches were previously
+    /// unreachable because every sample set both passwords, and the helper
+    /// dereferenced both with the null-forgiving operator.
+    /// </summary>
+    private static async Task AssertEncryptedRoundTripAsync(DocumentSpec spec)
+    {
+        var encryption = spec.Encryption!;
+        var ownerAuthPassword = encryption.OwnerPassword ?? encryption.UserPassword ?? "";
+        var userOpenPassword = encryption.UserPassword ?? "";
+        var userPasswordGrantsOwnerAccess = encryption.OwnerPassword is null;
+
+        var rendered = SpecRenderer.Render(spec);
+        var scripted = await RunEmittedCodeAsync(spec);
+
+        AssertEncryptionMatchesSpec(rendered, encryption, ownerAuthPassword);
+        AssertEncryptionMatchesSpec(scripted, encryption, ownerAuthPassword);
+        AssertPasswordAuthenticates(rendered, userOpenPassword, userPasswordGrantsOwnerAccess);
+        AssertPasswordAuthenticates(scripted, userOpenPassword, userPasswordGrantsOwnerAccess);
+
+        var decryptedRendered = DecryptWithPassword(rendered, ownerAuthPassword);
+        var decryptedScripted = DecryptWithPassword(scripted, ownerAuthPassword);
+
+        Assert.Equal(PdfNormalization.Normalize(decryptedRendered), PdfNormalization.Normalize(decryptedScripted));
+    }
+
+    private static async Task AssertRoundTripAsync(DocumentSpec spec)
+    {
+        var rendered = SpecRenderer.Render(spec);
+        var scripted = await RunEmittedCodeAsync(spec);
+
+        Assert.Equal(PdfNormalization.Normalize(rendered), PdfNormalization.Normalize(scripted));
+    }
+
+    /// <summary>
+    /// Preflights BOTH the rendered bytes and the scripted (emitted-and-executed)
+    /// bytes for <paramref name="spec"/>, against the profile
+    /// <see cref="DocumentSpec.Conformance"/> claims. The site's whole claim is
+    /// that the displayed code produces the document shown beside it, so both
+    /// must be conformant, not only the one the preview shows: a divergence
+    /// between the two would previously surface only as a byte-comparison
+    /// failure in <see cref="AssertRoundTripAsync"/>, which says nothing about
+    /// whether either side is actually valid PDF/A or PDF/UA.
+    /// </summary>
+    private static async Task AssertPreflightCompliantAsync(DocumentSpec spec)
+    {
+        var profile = ConformanceMapping.ToPreflightProfile(spec.Conformance);
+        Assert.NotNull(profile);
+
+        var rendered = SpecRenderer.Render(spec);
+        AssertPreflightCompliant(rendered, profile.Value, "Rendered");
+
+        var scripted = await RunEmittedCodeAsync(spec);
+        AssertPreflightCompliant(scripted, profile.Value, "Scripted");
+    }
+
+    private static void AssertPreflightCompliant(byte[] bytes, PreflightConformance profile, string label)
+    {
+        var result = VellumPdf.Conformance.PdfPreflight.Validate(bytes, profile);
+        Assert.True(result.IsCompliant, $"{label} bytes were not preflight compliant:\n" + string.Join('\n', result.Assertions.Select(a => a.ToString())));
+    }
+
+    /// <summary>
+    /// Reads the <c>/Encrypt</c> dictionary of <paramref name="pdf"/> directly,
+    /// through <paramref name="ownerAuthPassword"/>, and asserts its
+    /// <c>Permissions</c> and <c>EncryptMetadata</c> match what
+    /// <paramref name="encryption"/> claims, and that the password used to
+    /// open it actually authenticated as the owner. Opening with the
+    /// password that authenticates as owner (rather than the user password)
+    /// guarantees full access regardless of which permissions are in force.
+    /// </summary>
+    /// <remarks>
+    /// Transposing <c>UserPassword</c> and <c>OwnerPassword</c> in the spec
+    /// would leave every assertion here green if neither this method nor
+    /// <see cref="AssertPasswordAuthenticates"/> asked which role actually
+    /// authenticated; <c>Permissions</c> and <c>EncryptMetadata</c>
+    /// are document-level and unaffected by which password is which.
+    /// <see cref="VellumPdf.Encryption.PdfEncryptionInfo.IsOwnerAccess"/> pins that: it is
+    /// <see langword="true"/> here because <paramref name="ownerAuthPassword"/>
+    /// is, by construction, whichever password actually grants owner access
+    /// (see the remark on <see cref="AssertEncryptedRoundTripAsync"/>). A
+    /// negative assertion (this password does not also authenticate as the
+    /// user password) is deliberately not made: at R&lt;=4 an owner password
+    /// always also authenticates as the user password by specification, so
+    /// that assertion would be false generally and would pass today only
+    /// because <c>PdfEncryptionSettings</c> is fixed at AES-256 V5/R6.
+    /// </remarks>
+    private static void AssertEncryptionMatchesSpec(byte[] pdf, EncryptionSpec encryption, string ownerAuthPassword)
+    {
+        using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = ownerAuthPassword });
+        var info = reader.Encryption;
+
+        Assert.NotNull(info);
+        Assert.True(info!.IsOwnerAccess);
+        Assert.Equal(encryption.Permissions, info.Permissions);
+        Assert.Equal(encryption.EncryptMetadata, info.EncryptMetadata);
+    }
+
+    /// <summary>
+    /// Opens <paramref name="pdf"/> with <paramref name="password"/> and
+    /// asserts whether it authenticates as owner matches
+    /// <paramref name="expectOwnerAccess"/>. Neither <c>/U</c> nor <c>/UE</c>
+    /// stores the plaintext user password, so this is the only way to
+    /// confirm the password actually baked into the PDF matches the one the
+    /// spec claims, short of decrypting: authenticating with a wrong
+    /// password throws <see cref="VellumPdf.Reader.PdfPasswordException"/>.
+    /// </summary>
+    /// <remarks>
+    /// See the remark on <see cref="AssertEncryptedRoundTripAsync"/>:
+    /// <paramref name="expectOwnerAccess"/> is <see langword="true"/> only
+    /// when <see cref="EncryptionSpec.OwnerPassword"/> is unset, which is
+    /// exactly when the library authenticates the user password as owner.
+    /// Otherwise this method catches the user and owner passwords being
+    /// transposed, which the mere fact of authenticating does not.
+    /// </remarks>
+    private static void AssertPasswordAuthenticates(byte[] pdf, string password, bool expectOwnerAccess)
+    {
+        using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = password });
+        Assert.NotNull(reader.Encryption);
+        Assert.Equal(expectOwnerAccess, reader.Encryption!.IsOwnerAccess);
+    }
+
+    private static async Task<byte[]> RunEmittedCodeAsync(DocumentSpec spec)
+    {
+        var code = SpecCodeEmitter.Emit(spec);
+        var assets = SpecAssets.FromSpec(spec);
+
+        var references = new[]
+        {
+            typeof(object).Assembly,
+            typeof(Enumerable).Assembly,
+            typeof(MemoryStream).Assembly,
+            typeof(VellumPdf.Layout.Document).Assembly,
+            Assembly.Load("VellumPdf.Kernel"),
+            Assembly.Load("System.Runtime"),
+            Assembly.Load("System.Collections"),
+        };
+
+        var options = ScriptOptions.Default.WithReferences(references);
+        var script = CSharpScript.Create<byte[]>(code, options, globalsType: typeof(SpecAssets));
+
+        var diagnostics = script.Compile();
+        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.True(errors.Count == 0, $"Emitted code failed to compile:\n{string.Join('\n', errors)}\n\n{code}");
+
+        var state = await script.RunAsync(assets);
+        return state.ReturnValue ?? throw new InvalidOperationException("The emitted script did not return a value.");
+    }
+
+    private static byte[] DecryptWithPassword(byte[] pdf, string password)
+    {
+        using var reader = PdfReader.Open(pdf, new PdfReaderOptions { Password = password });
+        using var stream = new MemoryStream();
+        reader.SaveDecrypted(stream);
+        return stream.ToArray();
+    }
+}
+
+/// <summary>
+/// Proves <see cref="SpecRoundTripTests.HeadingHierarchyViolation"/>
+/// actually detects a skipped level, independently of any
+/// <see cref="DocumentSpecSamples"/> member. Before this test existed, every
+/// sample claiming a conformance profile had at most one heading, so
+/// <see cref="SpecRoundTripTests.Sample_ClaimingConformance_HasValidHeadingHierarchy"/>'s
+/// own loop over headings after the first never ran for any of them;
+/// replacing its comparison with an absurd one (for instance, always true)
+/// left the whole suite green. These tests exercise the rule directly, and
+/// <see cref="DocumentSpecSamples.PdfUA1WithOutputIntent"/> now separately
+/// carries a genuine three-level hierarchy so the loop also runs for real on
+/// every ordinary test run.
+/// </summary>
+public class HeadingHierarchyRuleTests
+{
+    [Fact]
+    public void SkippedLevel_IsDetected()
+    {
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([0, 2]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("skipping a level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SkippedLevelDeeperInTheHierarchy_IsDetected()
+    {
+        // A valid 0, 1 opening followed by a jump straight to 3 (skipping 2),
+        // the shape a genuine multi-level document could actually produce by
+        // accident, rather than an impossible-looking single-step case.
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([0, 1, 3]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("skipping a level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FirstHeadingNotAtMinimumLevel_IsDetected()
+    {
+        var violation = SpecRoundTripTests.HeadingHierarchyViolation([1]);
+
+        Assert.NotNull(violation);
+        Assert.Contains("starts at heading level", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoHeadings_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([]));
+    }
+
+    [Fact]
+    public void SingleTopLevelHeading_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([0]));
+    }
+
+    /// <summary>
+    /// A genuine multi-level hierarchy, including a return to a shallower
+    /// level followed by descending again: valid because 2 never exceeds the
+    /// deepest level seen so far (2) plus one.
+    /// </summary>
+    [Fact]
+    public void GenuineMultiLevelHierarchyWithReturnToShallower_IsNotAViolation()
+    {
+        Assert.Null(SpecRoundTripTests.HeadingHierarchyViolation([0, 1, 2, 1, 2]));
+    }
+}
