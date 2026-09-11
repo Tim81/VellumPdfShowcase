@@ -48,6 +48,13 @@
     private string? _error;
     private bool _disposed;
 
+    /// <summary>
+    /// Increments on every parameter set that changes the document, so a URL
+    /// created by a superseded run is revoked rather than assigned.
+    /// </summary>
+    private int _generation;
+
+
     /// <summary>The bytes to show. Null renders the empty state.</summary>
     [Parameter]
     public byte[]? Bytes { get; set; }
@@ -74,13 +81,18 @@
             return;
         }
 
-        _shownBytes = Bytes;
+        var token = ++_generation;
+        var bytes = Bytes;
+
+        _shownBytes = bytes;
         _error = null;
 
         var previousUrl = _blobUrl;
         _blobUrl = null;
 
-        if (Bytes is not null)
+        string? newUrl = null;
+
+        if (bytes is not null)
         {
             try
             {
@@ -88,16 +100,32 @@
 
                 if (_supportsInline)
                 {
-                    _blobUrl = await Interop.CreateBlobUrlAsync(Bytes);
+                    newUrl = await Interop.CreateBlobUrlAsync(bytes);
                 }
             }
             catch (Exception ex)
             {
-                _error = $"The preview could not be prepared: {ex.Message}";
+                if (!_disposed && token == _generation)
+                {
+                    _error = $"The preview could not be prepared: {ex.Message}";
+                }
             }
         }
 
-        // Revoked after the new URL is in hand, so no URL is ever dropped while
+        // A URL created by a run that has been superseded, or by one that finished
+        // after disposal, belongs to nothing on screen. Revoking it here is the
+        // only remaining opportunity: DisposeAsync has already run, or is about to
+        // revoke a different URL.
+        if (_disposed || token != _generation)
+        {
+            await Interop.RevokeBlobUrlAsync(newUrl);
+            await Interop.RevokeBlobUrlAsync(previousUrl);
+            return;
+        }
+
+        _blobUrl = newUrl;
+
+        // Revoked only after the new URL is in hand, so no URL is dropped while
         // nothing holds a reference to it.
         await Interop.RevokeBlobUrlAsync(previousUrl);
     }

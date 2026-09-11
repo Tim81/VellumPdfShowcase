@@ -108,6 +108,15 @@
     private bool _disposed;
 
     /// <summary>
+    /// Increments on every request, so a run can tell whether it is still the one
+    /// the visitor is waiting for. Returning early while a run was in flight
+    /// DISCARDED the newer request, leaving the page showing one document under
+    /// the controls of another, permanently.
+    /// </summary>
+    private int _generation;
+
+
+    /// <summary>
     /// The capability to preselect, so that "open in the playground" from a detail
     /// page arrives on the capability the visitor was looking at.
     /// </summary>
@@ -127,16 +136,17 @@
 
     private async Task GenerateAsync()
     {
-        if (_busy)
-        {
-            return;
-        }
-
         var capability = CapabilityCatalog.Find(_selectedId);
         if (capability is null || !capability.IsDemonstrable)
         {
             return;
         }
+
+        // Captured with the capability, so the shape applied is the one chosen at
+        // the same moment rather than whatever the controls read later.
+        var token = ++_generation;
+        var pageSize = PageSizes.First(candidate => candidate.Name == _pageSize);
+        var margin = _marginPoints;
 
         _busy = true;
         _error = null;
@@ -154,12 +164,12 @@
                 assetBytes[path] = await Loader.LoadAsync(path);
             }
 
-            if (_disposed)
+            if (_disposed || token != _generation)
             {
                 return;
             }
 
-            var spec = Reshape(capability.Build!(new CapabilityAssets(assetBytes)));
+            var spec = Reshape(capability.Build!(new CapabilityAssets(assetBytes)), pageSize, margin);
 
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var bytes = SpecRenderer.Render(spec);
@@ -167,7 +177,7 @@
 
             var code = SpecCodeEmitter.Emit(spec);
 
-            if (_disposed)
+            if (_disposed || token != _generation)
             {
                 return;
             }
@@ -178,16 +188,20 @@
         }
         catch (Exception ex)
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _bytes = null;
                 _code = null;
+
+                // Cleared with the document it described, so a stale timing does
+                // not sit beside the error as though something had succeeded.
+                _elapsedMs = 0;
                 _error = $"That specification could not be generated: {ex.Message}";
             }
         }
         finally
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _busy = false;
                 StateHasChanged();
@@ -204,16 +218,12 @@
     /// overrides the two properties it offers. Every validator on those properties
     /// runs again on the copy, because they are enforced in the initialiser.
     /// </remarks>
-    private DocumentSpec Reshape(DocumentSpec spec)
-    {
-        var size = PageSizes.First(candidate => candidate.Name == _pageSize);
-
-        return spec with
+    private static DocumentSpec Reshape(DocumentSpec spec, NamedPageSize size, int marginPoints) =>
+        spec with
         {
             Page = new PageSizeSpec(size.Width, size.Height),
-            Margins = new EdgeInsets(_marginPoints),
+            Margins = new EdgeInsets(marginPoints),
         };
-    }
 
     private async Task DownloadAsync()
     {

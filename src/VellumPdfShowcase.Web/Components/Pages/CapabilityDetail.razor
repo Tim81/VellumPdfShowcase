@@ -46,7 +46,7 @@ else
         <PdfPreview Bytes="_bytes"
                     Title="@($"{_capability.Title} rendered as PDF")"
                     FileName="@FileName"
-                    EmptyMessage="Generating…" />
+                    EmptyMessage="@(_error is null ? "Generating…" : "Nothing was generated.")" />
 
         <ApiTree Spec="_spec" />
 
@@ -71,6 +71,22 @@ else
     private bool _busy;
     private string? _error;
     private bool _disposed;
+
+    /// <summary>
+    /// Increments on every request, so a run can tell whether it is still the one
+    /// the visitor is waiting for.
+    /// </summary>
+    /// <remarks>
+    /// The previous arrangement returned early while a run was in flight, which
+    /// DISCARDED the newer request and left the page showing the older document
+    /// under the newer controls, permanently. Superseding rather than dropping is
+    /// what keeps the controls and the content agreeing. Every input is captured
+    /// into a local before the first await for the same reason: a field re-read
+    /// afterwards is the newer value, and pairing it with the older run's work is
+    /// how the two came apart.
+    /// </remarks>
+    private int _generation;
+
 
     /// <summary>The capability identifier from the route.</summary>
     [Parameter]
@@ -103,10 +119,16 @@ else
 
     private async Task GenerateAsync()
     {
-        if (_capability is null || _busy)
+        // Captured once. Re-reading the field after an await pairs the NEW
+        // capability's Build with the OLD capability's fetched assets, which
+        // surfaced as the catalogue accusing itself of an undeclared asset.
+        var capability = _capability;
+        if (capability is null)
         {
             return;
         }
+
+        var token = ++_generation;
 
         _busy = true;
         _error = null;
@@ -119,13 +141,13 @@ else
             // freeze rather than to work.
             await Task.Delay(1);
 
-            var assets = await LoadRequiredAssetsAsync(_capability);
-            if (_disposed)
+            var assets = await LoadRequiredAssetsAsync(capability);
+            if (_disposed || token != _generation)
             {
                 return;
             }
 
-            var spec = _capability.Build!(assets);
+            var spec = capability.Build!(assets);
             var bytes = SpecRenderer.Render(spec);
             var code = SpecCodeEmitter.Emit(spec);
 
@@ -133,7 +155,7 @@ else
                 ? null
                 : PreflightRunner.Run(bytes, spec.Conformance);
 
-            if (_disposed)
+            if (_disposed || token != _generation)
             {
                 return;
             }
@@ -145,7 +167,7 @@ else
         }
         catch (Exception ex)
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _spec = null;
                 _bytes = null;
@@ -156,7 +178,7 @@ else
         }
         finally
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _busy = false;
                 StateHasChanged();

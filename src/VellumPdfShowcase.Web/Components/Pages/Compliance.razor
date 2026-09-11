@@ -123,25 +123,38 @@
     private string? _error;
     private bool _disposed;
 
+    /// <summary>
+    /// Increments on every request, so a run can tell whether it is still the one
+    /// the visitor is waiting for.
+    /// </summary>
+    private int _generation;
+
+
     protected override Task OnInitializedAsync() => ValidateAsync();
 
     private async Task ValidateAsync()
     {
-        if (_busy)
-        {
-            return;
-        }
+        // The coverage matrix describes the SELECTED profile and nothing else, so
+        // it is refreshed before any early return. Refreshing it only past a busy
+        // guard left the heading, the prose and the caption naming one profile
+        // while the figures and the rows below them belonged to another. That is
+        // a false statement about the rule engine, sitting beside the paragraph
+        // that says what the engine is.
+        var profile = _profile;
+        _coverage = PreflightRunner.Coverage(profile);
+        _checks = PreflightRunner.Checks(profile);
 
         var capability = CapabilityCatalog.Find(_capabilityId);
         if (capability is null || !capability.IsDemonstrable)
         {
+            StateHasChanged();
             return;
         }
 
+        var token = ++_generation;
+
         _busy = true;
         _error = null;
-        _coverage = PreflightRunner.Coverage(_profile);
-        _checks = PreflightRunner.Checks(_profile);
         StateHasChanged();
 
         try
@@ -154,7 +167,7 @@
                 assetBytes[path] = await Loader.LoadAsync(path);
             }
 
-            if (_disposed)
+            if (_disposed || token != _generation)
             {
                 return;
             }
@@ -162,19 +175,22 @@
             var spec = capability.Build!(new CapabilityAssets(assetBytes));
             var bytes = SpecRenderer.Render(spec);
 
-            // Validated against the profile the visitor selected, which need not
-            // be the one the document claims. Seeing a document fail a profile it
-            // was not built for is informative rather than a defect.
-            var report = PreflightRunner.Run(bytes, _profile);
+            // Validated against the profile captured with this request, not the
+            // field, which the selector may already have changed.
+            //
+            // NOTE the document need not claim the profile it is checked against.
+            // Seeing a document fail a profile it was not built for is
+            // informative rather than a defect.
+            var report = PreflightRunner.Run(bytes, profile);
 
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _report = report;
             }
         }
         catch (Exception ex)
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _report = null;
                 _error = $"That document could not be generated: {ex.Message}";
@@ -182,7 +198,7 @@
         }
         finally
         {
-            if (!_disposed)
+            if (!_disposed && token == _generation)
             {
                 _busy = false;
                 StateHasChanged();

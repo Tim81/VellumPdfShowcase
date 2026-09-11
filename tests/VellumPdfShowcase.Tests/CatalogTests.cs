@@ -73,6 +73,7 @@ public partial class CapabilityCatalogTests
             Assert.StartsWith("https://", capability.TrackingUri, StringComparison.Ordinal);
             Assert.Null(capability.Build);
             Assert.False(capability.IsDemonstrable);
+            Assert.Null(capability.BrowserLimitation);
         }
     }
 
@@ -84,6 +85,70 @@ public partial class CapabilityCatalogTests
             Assert.NotNull(capability.Build);
             Assert.True(capability.IsDemonstrable);
             Assert.Null(capability.Milestone);
+            Assert.Null(capability.BrowserLimitation);
+        }
+    }
+
+    /// <summary>
+    /// An entry the browser cannot execute states why, and is not offered to any
+    /// page, while keeping a specification the suite still exercises.
+    /// </summary>
+    [Fact]
+    public void EveryBrowserUnavailableEntryExplainsItselfAndIsNotOffered()
+    {
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.Status == CapabilityStatus.UnavailableInBrowser))
+        {
+            Assert.False(string.IsNullOrWhiteSpace(capability.BrowserLimitation), $"{capability.Id} states no limitation");
+            Assert.False(capability.IsDemonstrable, $"{capability.Id} is offered to pages it cannot run on");
+            Assert.True(capability.IsBuildable, $"{capability.Id} has no specification left to test");
+        }
+    }
+
+    /// <summary>
+    /// The guard for the defect this status exists because of.
+    /// </summary>
+    /// <remarks>
+    /// The test suite runs on desktop .NET and the site runs on browser-wasm, so a
+    /// capability can pass every test here and fail in every visitor's tab. That
+    /// happened: the encryption entry was marked available and shipped, and three
+    /// pages reported "Algorithm 'Aes' is not supported on this platform" while
+    /// the suite stayed green.
+    ///
+    /// The list below is the browser runtime's known gaps, each established by
+    /// running the real site rather than by reading documentation. A capability
+    /// whose specification uses one of them must not be offered to a page. Adding
+    /// a gap here is how the next one gets caught before a visitor finds it.
+    /// </remarks>
+    [Fact]
+    public void NoDemonstrableCapabilityUsesSomethingTheBrowserRuntimeLacks()
+    {
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+        {
+            var spec = capability.Build!(Load(capability));
+
+            // Encryption needs AES, which browser-wasm does not carry. Measured on
+            // the running site, not inferred.
+            Assert.True(
+                spec.Encryption is null,
+                $"{capability.Id} is offered to pages but encrypts, which fails on the browser runtime. "
+                    + "Mark it UnavailableInBrowser.");
+        }
+    }
+
+    /// <summary>
+    /// The specification of an entry the browser cannot run is still held to the
+    /// same standard, on the runtime that can run it. Otherwise reclassifying an
+    /// entry would quietly remove it from test.
+    /// </summary>
+    [Fact]
+    public void EveryBuildableEntryRendersOnThisRuntime()
+    {
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsBuildable && !c.IsDemonstrable))
+        {
+            var spec = capability.Build!(Load(capability));
+
+            Assert.NotEmpty(SpecRenderer.Render(spec));
+            Assert.NotEmpty(SpecCodeEmitter.Emit(spec));
         }
     }
 

@@ -112,6 +112,21 @@ public static class CapabilityCatalog
             Title = "Encryption and permissions",
             Summary = "A document encrypted with a user password and a restricted permission set.",
             Category = CapabilityCategory.Documents,
+
+            // The library encrypts perfectly well; the browser cannot. Saving an
+            // encrypted document raises "Algorithm 'Aes' is not supported on this
+            // platform" on the browser-wasm runtime, which does not carry the AES
+            // implementation the encryption path needs.
+            //
+            // NOTE this entry keeps its Build. The specification is valid and the
+            // test suite, which runs on desktop .NET, still renders it, so the
+            // document stays under test even though no page here generates it.
+            // That is also why this was not caught: the suite runs on a runtime
+            // the site does not.
+            Status = CapabilityStatus.UnavailableInBrowser,
+            BrowserLimitation =
+                "Encryption needs AES, which the browser's .NET runtime does not provide. "
+                + "The library encrypts normally on a server or a desktop application.",
             Build = _ => Encrypted(),
         },
 

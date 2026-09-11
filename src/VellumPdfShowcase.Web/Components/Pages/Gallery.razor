@@ -23,7 +23,7 @@
         <ul class="card-grid">
             @foreach (var capability in CapabilityCatalog.All.Where(c => c.Category == category))
             {
-                <li class="card @(capability.Status == CapabilityStatus.Planned ? "card-planned" : "card-available")">
+                <li class="card @CardClass(capability)">
                     <h3>
                         @if (capability.IsDemonstrable)
                         {
@@ -50,6 +50,17 @@
                             }
                         </p>
                     }
+
+                    @* A capability the library has but this runtime cannot execute
+                       says which, and says that the limitation is the browser's
+                       rather than the library's. Presenting it as planned would be
+                       false, and presenting it as available would be worse. *@
+                    @if (capability.Status == CapabilityStatus.UnavailableInBrowser)
+                    {
+                        <p class="card-milestone">
+                            Not demonstrable in a browser. @capability.BrowserLimitation
+                        </p>
+                    }
                 </li>
             }
         </ul>
@@ -57,6 +68,18 @@
 }
 
 @code {
+    /// <summary>
+    /// The card's own class, which is what makes an entry that cannot be shown
+    /// here visually distinct from one that can.
+    /// </summary>
+    private static string CardClass(Capability capability) => capability.Status switch
+    {
+        CapabilityStatus.Available => "card-available",
+        CapabilityStatus.UnavailableInBrowser => "card-unavailable",
+        CapabilityStatus.Planned => "card-planned",
+        _ => "card-planned",
+    };
+
     /// <summary>
     /// The category as a heading rather than as the enumeration member spells it.
     /// </summary>

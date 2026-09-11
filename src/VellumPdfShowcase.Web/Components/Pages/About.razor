@@ -110,7 +110,7 @@
     // Read from the assemblies actually loaded rather than written by hand, so
     // this page cannot state a version the site is not running. The informational
     // version carries the package version; the assembly version does not.
-    private static string LayoutVersion { get; } = VersionOf(typeof(VellumPdf.Document.PdfConformance));
+    private static string LayoutVersion { get; } = VersionOf(typeof(VellumPdf.Layout.Elements.PieSlice));
 
     private static string ConformanceVersion { get; } = VersionOf(typeof(VellumPdf.Conformance.PdfPreflight));
 

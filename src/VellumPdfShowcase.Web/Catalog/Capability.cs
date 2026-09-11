@@ -2,11 +2,23 @@ using VellumPdfShowcase.Web.Model;
 
 namespace VellumPdfShowcase.Web.Catalog;
 
-/// <summary>Where a capability stands in the library, which decides how its card reads.</summary>
+/// <summary>Where a capability stands, which decides how its card reads.</summary>
+/// <remarks>
+/// NOTE there are three states and not two, because "the library can do this" and
+/// "this site can show you" are different claims. A capability the library
+/// supports on a server but that the browser runtime cannot execute is neither
+/// available here nor planned; presenting it as either would be false.
+/// </remarks>
 public enum CapabilityStatus
 {
     /// <summary>Shipped in the pinned package and demonstrated here by a real document.</summary>
     Available,
+
+    /// <summary>
+    /// Shipped in the pinned package, but not executable on the browser runtime
+    /// this site runs on. The card states the limitation.
+    /// </summary>
+    UnavailableInBrowser,
 
     /// <summary>Not in the pinned package. The card states the milestone and links to the tracking issue.</summary>
     Planned,
@@ -84,6 +96,13 @@ public sealed record Capability
     public string? TrackingUri { get; init; }
 
     /// <summary>
+    /// Why the browser runtime cannot execute this, stated for the visitor. Set
+    /// exactly when <see cref="Status"/> is
+    /// <see cref="CapabilityStatus.UnavailableInBrowser"/>.
+    /// </summary>
+    public string? BrowserLimitation { get; init; }
+
+    /// <summary>
     /// The assets <see cref="Build"/> will read, fetched before it is called and
     /// only then.
     /// </summary>
@@ -95,6 +114,18 @@ public sealed record Capability
     /// </summary>
     public Func<CapabilityAssets, DocumentSpec>? Build { get; init; }
 
-    /// <summary>Whether this entry can produce a document at all.</summary>
+    /// <summary>
+    /// Whether a page on THIS site may generate this. An entry with a valid
+    /// specification that the browser runtime cannot execute is deliberately not
+    /// demonstrable, so no page attempts it and no card links to it.
+    /// </summary>
     public bool IsDemonstrable => Status == CapabilityStatus.Available && Build is not null;
+
+    /// <summary>
+    /// Whether <see cref="Build"/> can be called at all, on any runtime. An entry
+    /// that is unavailable in the browser still has a specification worth holding
+    /// to the same standard, so the test suite, which runs on desktop, exercises
+    /// it even though no page does.
+    /// </summary>
+    public bool IsBuildable => Build is not null;
 }
