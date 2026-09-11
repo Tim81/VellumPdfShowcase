@@ -1,0 +1,97 @@
+@using VellumPdf.Conformance
+
+@*
+    Reports one preflight run.
+
+    NOTE the wording here matters more than the code. The engine is
+    VellumPdf.Conformance, running in this browser. It is NOT veraPDF, and nothing
+    on this page may imply that veraPDF is executing. A statement about the
+    engine's provenance belongs beside the coverage matrix, where it is plainly
+    about the engine, and not beside a verdict, where it would read as being about
+    this run.
+*@
+
+<div class="preflight-panel">
+    @if (Report is null)
+    {
+        <p class="preflight-empty">@EmptyMessage</p>
+    }
+    else if (Report.Error is not null)
+    {
+        @* A validator that could not read the bytes has reported nothing about
+           the document. Presenting that as "not compliant" would attribute a
+           failure of the reader to the document. *@
+        <p class="preflight-verdict preflight-unreadable" role="alert">
+            The validator could not read these bytes, so there is no verdict.
+        </p>
+        <p class="preflight-error">@Report.Error</p>
+    }
+    else
+    {
+        <p class="preflight-verdict @(Report.IsCompliant ? "preflight-pass" : "preflight-fail")">
+            @if (Report.IsCompliant)
+            {
+                <text>Compliant with @ProfileName(Report.Profile).</text>
+            }
+            else
+            {
+                <text>Not compliant with @ProfileName(Report.Profile).</text>
+            }
+        </p>
+
+        <p class="preflight-timing">Validated in @Report.ElapsedMilliseconds ms, in this browser.</p>
+
+        @if (Report.Assertions.Count == 0)
+        {
+            <p>No assertions were raised.</p>
+        }
+        else
+        {
+            <table class="preflight-table">
+                <caption>Assertions against @ProfileName(Report.Profile)</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Rule</th>
+                        <th scope="col">Clause</th>
+                        <th scope="col">Severity</th>
+                        <th scope="col">Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var assertion in Report.Assertions)
+                    {
+                        <tr>
+                            <td>@assertion.RuleId</td>
+                            <td>@assertion.Clause</td>
+                            <td>@assertion.Severity</td>
+                            <td>@assertion.Message</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    /// <summary>The run to report. Null renders the empty state.</summary>
+    [Parameter]
+    public PreflightReport? Report { get; set; }
+
+    /// <summary>What to say before anything has been validated.</summary>
+    [Parameter]
+    public string EmptyMessage { get; set; } = "Generate a document to validate it.";
+
+    /// <summary>
+    /// The profile as a reader would write it, rather than as the enumeration
+    /// member spells it.
+    /// </summary>
+    private static string ProfileName(PdfConformance profile) => profile switch
+    {
+        PdfConformance.PdfA2B => "PDF/A-2b",
+        PdfConformance.PdfA2U => "PDF/A-2u",
+        PdfConformance.PdfA2A => "PDF/A-2a",
+        PdfConformance.PdfUA1 => "PDF/UA-1",
+        _ => profile.ToString(),
+    };
+}

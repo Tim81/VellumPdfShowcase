@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using VellumPdfShowcase.Web;
 using VellumPdfShowcase.Web.Assets;
+using VellumPdfShowcase.Web.Interop;
 using VellumPdfShowcase.Web.Model;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -22,5 +23,9 @@ builder.Services.AddScoped(sp => new HttpClient
 // Scoped rather than transient, so the cache inside it survives navigation
 // between capability pages and each asset is fetched at most once per session.
 builder.Services.AddScoped<AssetLoader>();
+
+// Scoped so that one module reference serves every page in a session, rather
+// than each page importing the module for itself.
+builder.Services.AddScoped<PdfInterop>();
 
 await builder.Build().RunAsync();

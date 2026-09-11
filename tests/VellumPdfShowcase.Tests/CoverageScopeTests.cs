@@ -45,8 +45,10 @@ public class CoverageScopeTests
     [
         "VellumPdfShowcase.Web",
         "VellumPdfShowcase.Web.Assets",
+        "VellumPdfShowcase.Web.Catalog",
         "VellumPdfShowcase.Web.Model",
         "VellumPdfShowcase.Web.Generation",
+        "VellumPdfShowcase.Web.Interop",
         "VellumPdfShowcase.Web.Components",
         "VellumPdfShowcase.Web.Components.Layout",
         "VellumPdfShowcase.Web.Components.Pages",

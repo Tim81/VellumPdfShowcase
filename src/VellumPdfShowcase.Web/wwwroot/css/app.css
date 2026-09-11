@@ -120,6 +120,203 @@ code {
     border: 1px solid #ccc;
 }
 
+/* Step 6: the catalogue, its three-panel views and the shared components. */
+
+.lede {
+    font-size: 1.1rem;
+    max-width: 60ch;
+}
+
+.card-grid {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    gap: 1rem;
+}
+
+.card {
+    border: 1px solid #d7d7d7;
+    border-radius: 6px;
+    padding: 1rem;
+    background: #fff;
+}
+
+.card h3 {
+    margin-top: 0;
+    font-size: 1.05rem;
+}
+
+/* A planned capability is visually distinct from a shipped one, so the grid
+   shows the shape of the whole library without misleading anyone about which
+   parts exist today. */
+.card-planned {
+    background: #f6f6f4;
+    border-style: dashed;
+    color: #4a4a4a;
+}
+
+/* Distinct from both: the library has this, the browser cannot run it. */
+.card-unavailable {
+    background: #fbf8f2;
+    border-color: #d9c9a3;
+    color: #4a4a4a;
+}
+
+.card-milestone {
+    font-size: 0.85rem;
+    margin-bottom: 0;
+}
+
+.three-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.pdf-preview-frame {
+    width: 100%;
+    height: 520px;
+    border: 1px solid #ccc;
+}
+
+.pdf-preview-fallback,
+.pdf-preview-empty,
+.api-tree-empty,
+.code-panel-empty,
+.preflight-empty {
+    border: 1px dashed #ccc;
+    padding: 1rem;
+    color: #555;
+}
+
+.code-panel-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+/* The snippet is rendered as text inside <pre><code>. It scrolls rather than
+   wrapping, because wrapped C# is harder to copy correctly by eye. */
+.code-panel-body {
+    max-height: 520px;
+    overflow: auto;
+    background: #1c2026;
+    color: #eaeaea;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.api-tree ul {
+    list-style: none;
+    padding-left: 1rem;
+    border-left: 1px solid #e0e0e0;
+}
+
+.api-tree-root {
+    padding-left: 0;
+    border-left: none;
+}
+
+.api-tree-type {
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+}
+
+.api-tree-detail {
+    color: #555;
+    margin-left: 0.5rem;
+}
+
+.preflight-verdict {
+    font-weight: 600;
+}
+
+.preflight-pass {
+    color: #14622f;
+}
+
+.preflight-fail {
+    color: #8a1b1b;
+}
+
+.preflight-unreadable {
+    color: #7a4a00;
+}
+
+.preflight-table,
+.coverage-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.preflight-table th,
+.preflight-table td,
+.coverage-table th,
+.coverage-table td {
+    border-bottom: 1px solid #e2e2e2;
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    vertical-align: top;
+}
+
+/* The provenance note sits apart from the verdict deliberately: it describes the
+   rule engine, not the run above it, and the two must not read as one claim. */
+.provenance {
+    background: #f4f6f8;
+    border-left: 3px solid #99a;
+    padding: 0.75rem;
+    font-size: 0.9rem;
+    max-width: 70ch;
+}
+
+.controls label,
+.controls-inline label {
+    display: block;
+    margin-bottom: 0.75rem;
+}
+
+.controls-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: end;
+}
+
+.button {
+    display: inline-block;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #1b6ec2;
+    border-radius: 4px;
+    background: #1b6ec2;
+    color: #fff;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.button-quiet {
+    background: #fff;
+    color: #1b6ec2;
+}
+
+.error {
+    color: #8a1b1b;
+}
+
+.timing {
+    color: #555;
+    font-size: 0.85rem;
+}
+
 button[aria-disabled="true"] {
     cursor: not-allowed;
     opacity: 0.6;

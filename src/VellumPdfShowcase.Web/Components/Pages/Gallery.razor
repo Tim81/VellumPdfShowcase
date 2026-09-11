@@ -1,0 +1,99 @@
+@page "/"
+
+<PageTitle>VellumPdf showcase</PageTitle>
+
+<h1>VellumPdf</h1>
+
+<p class="lede">
+    A capability catalogue for the VellumPdf library. Every document on this site
+    is generated in your own browser, by the real library compiled to WebAssembly.
+    There is no server, and nothing you enter leaves this tab.
+</p>
+
+<p>
+    <a class="button" href="playground">Open the playground</a>
+    <a class="button button-quiet" href="compliance">Check conformance</a>
+</p>
+
+@foreach (var category in CapabilityCatalog.Categories)
+{
+    <section class="category">
+        <h2>@CategoryName(category)</h2>
+
+        <ul class="card-grid">
+            @foreach (var capability in CapabilityCatalog.All.Where(c => c.Category == category))
+            {
+                <li class="card @CardClass(capability)">
+                    <h3>
+                        @if (capability.IsDemonstrable)
+                        {
+                            <a href="@($"capability/{capability.Id}")">@capability.Title</a>
+                        }
+                        else
+                        {
+                            @capability.Title
+                        }
+                    </h3>
+
+                    <p>@capability.Summary</p>
+
+                    @* A planned card states the milestone and links to where it is
+                       tracked, so the visitor sees the shape of the whole library
+                       rather than only its finished parts. *@
+                    @if (capability.Status == CapabilityStatus.Planned)
+                    {
+                        <p class="card-milestone">
+                            Planned for @capability.Milestone.
+                            @if (capability.TrackingUri is not null)
+                            {
+                                <a href="@capability.TrackingUri" rel="noopener noreferrer" target="_blank">Tracking issue</a>
+                            }
+                        </p>
+                    }
+
+                    @* A capability the library has but this runtime cannot execute
+                       says which, and says that the limitation is the browser's
+                       rather than the library's. Presenting it as planned would be
+                       false, and presenting it as available would be worse. *@
+                    @if (capability.Status == CapabilityStatus.UnavailableInBrowser)
+                    {
+                        <p class="card-milestone">
+                            Not demonstrable in a browser. @capability.BrowserLimitation
+                        </p>
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    /// <summary>
+    /// The card's own class, which is what makes an entry that cannot be shown
+    /// here visually distinct from one that can.
+    /// </summary>
+    private static string CardClass(Capability capability) => capability.Status switch
+    {
+        CapabilityStatus.Available => "card-available",
+        CapabilityStatus.UnavailableInBrowser => "card-unavailable",
+        CapabilityStatus.Planned => "card-planned",
+
+        // NOTE: a status this method has not been taught is NOT presented as
+        // planned. Saying "planned for" about something whose standing is unknown
+        // is the false claim the enumeration exists to prevent.
+        _ => "card-unknown",
+    };
+
+    /// <summary>
+    /// The category as a heading rather than as the enumeration member spells it.
+    /// </summary>
+    private static string CategoryName(CapabilityCategory category) => category switch
+    {
+        CapabilityCategory.Text => "Text and typography",
+        CapabilityCategory.Layout => "Layout",
+        CapabilityCategory.Graphics => "Graphics",
+        CapabilityCategory.Documents => "Documents",
+        CapabilityCategory.Conformance => "Conformance",
+        _ => category.ToString(),
+    };
+}

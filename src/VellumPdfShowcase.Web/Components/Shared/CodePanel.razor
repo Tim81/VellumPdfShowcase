@@ -1,0 +1,69 @@
+@inject IJSRuntime JS
+
+@*
+    Shows the C# the emitter produced, with a control that copies it.
+
+    NOTE the code is rendered as TEXT, inside <pre><code>, and never through
+    MarkupString, innerHTML, or a syntax highlighter fed unencoded input. The
+    emitted snippet carries visitor text verbatim, so this element is the one
+    place on the site where visitor input and markup would otherwise meet. There
+    is deliberately no highlighting: every highlighter worth using takes a string
+    and returns markup, which is exactly the shape this must not have.
+*@
+
+<div class="code-panel">
+    <div class="code-panel-header">
+        <h3>@Title</h3>
+        <button type="button" class="button button-quiet" disabled="@(string.IsNullOrEmpty(Code))" @onclick="CopyAsync">
+            @_copyLabel
+        </button>
+    </div>
+
+    @if (string.IsNullOrEmpty(Code))
+    {
+        <p class="code-panel-empty">@EmptyMessage</p>
+    }
+    else
+    {
+        <pre class="code-panel-body"><code>@Code</code></pre>
+    }
+</div>
+
+@code {
+    private const string Idle = "Copy";
+
+    private string _copyLabel = Idle;
+
+    /// <summary>The snippet to display. Rendered as text, never as markup.</summary>
+    [Parameter]
+    public string? Code { get; set; }
+
+    /// <summary>The heading above the panel.</summary>
+    [Parameter]
+    public string Title { get; set; } = "Generated C#";
+
+    /// <summary>What to say when there is nothing to show yet.</summary>
+    [Parameter]
+    public string EmptyMessage { get; set; } = "Nothing generated yet.";
+
+    private async Task CopyAsync()
+    {
+        if (string.IsNullOrEmpty(Code))
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Code);
+            _copyLabel = "Copied";
+        }
+        catch
+        {
+            // The clipboard API is unavailable outside a secure context, and a
+            // browser may refuse the write outright. Neither is an error worth an
+            // alert: the snippet is on screen and can be selected by hand.
+            _copyLabel = "Copy failed";
+        }
+    }
+}

@@ -1,0 +1,246 @@
+@page "/compliance"
+@using VellumPdf.Conformance
+@using VellumPdf.Conformance.Coverage
+@inject AssetLoader Loader
+@implements IDisposable
+
+@*
+    Generates a document, validates it against a chosen profile, and reports both
+    the verdict and the rule coverage behind it.
+
+    NOTE the wording on this page requires more care than its code. Two statements
+    sit near each other and must never be confused:
+
+      1. The verdict below is produced by VellumPdf.Conformance running in this
+         browser, over bytes generated in this browser.
+
+      2. The coverage figures further down describe the rule ENGINE, not this run,
+         and the parity claim about veraPDF is a claim about how the engine was
+         validated during the library's own development. veraPDF is not executing
+         here and the page must never suggest otherwise.
+*@
+
+<PageTitle>Conformance</PageTitle>
+
+<h1>Conformance</h1>
+
+<p class="lede">
+    A document is generated and validated here, in your browser, against the
+    profile you choose.
+</p>
+
+<section class="controls-inline">
+    <label>
+        Document
+        <select @bind="_capabilityId" @bind:after="ValidateAsync">
+            @foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+            {
+                <option value="@capability.Id">@capability.Title</option>
+            }
+        </select>
+    </label>
+
+    <label>
+        Profile
+        <select @bind="_profile" @bind:after="ValidateAsync">
+            @foreach (var profile in PreflightRunner.SelectableProfiles)
+            {
+                <option value="@profile">@ProfileName(profile)</option>
+            }
+        </select>
+    </label>
+
+    <button type="button" class="button" disabled="@_busy" @onclick="ValidateAsync">
+        @(_busy ? "Validating…" : "Validate")
+    </button>
+</section>
+
+@if (_error is not null)
+{
+    <p class="error" role="alert">@_error</p>
+}
+
+@* Reachable mid-run since the verdict is cleared when a request is claimed, so
+   the message must not tell the visitor to do what the page is already doing. *@
+<PreflightPanel Report="_report" EmptyMessage="@EmptyPanelMessage" />
+
+<section class="coverage">
+    <h2>Rule coverage for @ProfileName(_profile)</h2>
+
+    <p>
+        These figures describe the rule engine itself, not the document above. Of
+        @_coverage.Total checks catalogued for this profile, @_coverage.Implemented
+        are implemented, @_coverage.Partial partial, @_coverage.Deferred deferred
+        and @_coverage.OutOfScope out of scope.
+    </p>
+
+    <p class="provenance">
+        NOTE: veraPDF is not running on this page. Nothing here executes veraPDF,
+        and no result above comes from it. What the library records, and enforces
+        in its own continuous integration, is that each rule is cross-validated
+        against veraPDF on both its passing and its failing path during the
+        library's development. That is a statement about how the engine was built,
+        and it is not a statement about this run.
+    </p>
+
+    <table class="coverage-table">
+        <caption>Catalogued checks for @ProfileName(_profile)</caption>
+        <thead>
+            <tr>
+                <th scope="col">Test</th>
+                <th scope="col">Clause</th>
+                <th scope="col">Status</th>
+                <th scope="col">Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var check in _checks)
+            {
+                <tr>
+                    <td>@check.TestId</td>
+                    <td>@check.Clause</td>
+                    <td>@check.Status</td>
+                    <td>@check.Note</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+@code {
+    // Opens on a document that actually claims a profile, paired with that
+    // profile. Defaulting to the first demonstrable capability opened the page on
+    // "Not compliant with PDF/A-2b" for a document that never claimed PDF/A at
+    // all, which reads as a failure of the library rather than as the mismatch it
+    // is. A visitor may still select any pairing.
+    private string _capabilityId =
+        CapabilityCatalog.All.First(c => c.IsDemonstrable && c.Category == CapabilityCategory.Conformance).Id;
+    private PdfConformance _profile = PdfConformance.PdfA2B;
+
+    private PreflightReport? _report;
+    private CoverageSummary _coverage = PreflightRunner.Coverage(PdfConformance.PdfA2B);
+    private IReadOnlyList<ConformanceCheck> _checks = PreflightRunner.Checks(PdfConformance.PdfA2B);
+
+    private bool _busy;
+    private string? _error;
+    private bool _disposed;
+
+    /// <summary>
+    /// What the verdict panel says while it holds no verdict, which depends on
+    /// why it holds none.
+    /// </summary>
+    private string EmptyPanelMessage =>
+        _busy ? "Validating…"
+        : _error is not null ? "Nothing was validated."
+        : "Generate a document to validate it.";
+
+    /// <summary>
+    /// Increments on every request, so a run can tell whether it is still the one
+    /// the visitor is waiting for.
+    /// </summary>
+    private int _generation;
+
+
+    protected override Task OnInitializedAsync() => ValidateAsync();
+
+    private async Task ValidateAsync()
+    {
+        // The coverage matrix describes the SELECTED profile and nothing else, so
+        // it is refreshed before any early return. Refreshing it only past a busy
+        // guard left the heading, the prose and the caption naming one profile
+        // while the figures and the rows below them belonged to another. That is
+        // a false statement about the rule engine, sitting beside the paragraph
+        // that says what the engine is.
+        var profile = _profile;
+        _coverage = PreflightRunner.Coverage(profile);
+        _checks = PreflightRunner.Checks(profile);
+
+        // The verdict belongs to the previous selection and says nothing about
+        // which document it judged, so leaving it standing asserts the new
+        // document's compliance for as long as the new run takes. Cleared for the
+        // same reason the coverage is refreshed here rather than later.
+        _report = null;
+
+        var capability = CapabilityCatalog.Find(_capabilityId);
+        if (capability is null || !capability.IsDemonstrable)
+        {
+            // Supersede and release before returning. Clearing the verdict while
+            // leaving a run in flight would let that run repopulate the verdict
+            // this call just cleared.
+            _generation++;
+            _busy = false;
+            StateHasChanged();
+            return;
+        }
+
+        var token = ++_generation;
+
+        _busy = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(1);
+
+            Dictionary<string, byte[]> assetBytes = [];
+            foreach (var path in capability.RequiredAssets)
+            {
+                assetBytes[path] = await Loader.LoadAsync(path);
+            }
+
+            if (_disposed || token != _generation)
+            {
+                return;
+            }
+
+            var spec = capability.Build!(new CapabilityAssets(assetBytes));
+            var bytes = SpecRenderer.Render(spec);
+
+            // Validated against the profile captured with this request, not the
+            // field, which the selector may already have changed.
+            //
+            // NOTE the document need not claim the profile it is checked against.
+            // Seeing a document fail a profile it was not built for is
+            // informative rather than a defect.
+            var report = PreflightRunner.Run(bytes, profile);
+
+            if (!_disposed && token == _generation)
+            {
+                _report = report;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed && token == _generation)
+            {
+                _report = null;
+                _error = $"That document could not be generated: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (!_disposed && token == _generation)
+            {
+                _busy = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private static string ProfileName(PdfConformance profile) => profile switch
+    {
+        PdfConformance.PdfA2B => "PDF/A-2b",
+        PdfConformance.PdfA2U => "PDF/A-2u",
+        PdfConformance.PdfA2A => "PDF/A-2a",
+        PdfConformance.PdfUA1 => "PDF/UA-1",
+        _ => profile.ToString(),
+    };
+
+    /// <summary>
+    /// Generation spans awaits, so a component disposed part way through must
+    /// stop writing to its own state. Without this the flag the generation path
+    /// reads would never become true.
+    /// </summary>
+    public void Dispose() => _disposed = true;
+}

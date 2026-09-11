@@ -1,0 +1,296 @@
+@page "/capability/{Id}"
+@inject AssetLoader Loader
+@inject PdfInterop Interop
+@implements IDisposable
+
+@*
+    The three-panel detail view: what the library produced, what it was made of,
+    and the C# that would produce it.
+
+    NOTE the panels are three views of ONE specification. The bytes come from
+    SpecRenderer and the snippet from SpecCodeEmitter, both reading the same
+    object, which is the only arrangement under which the page is honest about
+    what the snippet would build.
+*@
+
+@if (_capability is null)
+{
+    <PageTitle>Capability not found</PageTitle>
+    <h1>Capability not found</h1>
+    <p role="alert">There is no capability with the identifier <code>@Id</code>.</p>
+    <p><a href="">Back to the catalogue</a></p>
+}
+else if (!_capability.IsDemonstrable)
+{
+    @* Reached only by typing or following a stale link, since no card links here.
+       It must still explain itself rather than attempting to generate: doing so
+       produced a raw platform exception in the visitor's tab, with nothing to say
+       the limitation was the browser's rather than the library's. *@
+    <PageTitle>@_capability.Title</PageTitle>
+
+    <h1>@_capability.Title</h1>
+    <p class="lede">@_capability.Summary</p>
+
+    @* Each status states its own case. NOTE there is no fallback that assumes
+       "planned": asserting a milestone for something whose standing is unknown is
+       the false claim the enumeration exists to prevent, and the gallery refuses
+       it for the same reason. *@
+    @if (_capability.Status == CapabilityStatus.UnavailableInBrowser)
+    {
+        <p role="alert">
+            This cannot be demonstrated in a browser. @_capability.BrowserLimitation
+        </p>
+    }
+    else if (_capability.Status == CapabilityStatus.Planned)
+    {
+        <p role="alert">
+            The pinned release of the library does not do this yet.
+            @if (_capability.Milestone is not null)
+            {
+                <text>It is planned for @_capability.Milestone. </text>
+            }
+            @if (_capability.TrackingUri is not null)
+            {
+                <a href="@_capability.TrackingUri" rel="noopener noreferrer" target="_blank">Tracking issue</a>
+            }
+        </p>
+    }
+    else
+    {
+        <p role="alert">This capability cannot be demonstrated here.</p>
+    }
+
+    <p><a href="">Back to the catalogue</a></p>
+}
+else
+{
+    <PageTitle>@_capability.Title</PageTitle>
+
+    <h1>@_capability.Title</h1>
+    <p class="lede">@_capability.Summary</p>
+
+    <p class="actions">
+        <button type="button" class="button" disabled="@_busy" @onclick="GenerateAsync">
+            @(_busy ? "Generating…" : "Regenerate")
+        </button>
+        <button type="button" class="button button-quiet" disabled="@(_bytes is null)" @onclick="DownloadAsync">
+            Download
+        </button>
+        <a class="button button-quiet" href="@($"playground?capability={_capability.Id}")">Open in the playground</a>
+    </p>
+
+    @if (_error is not null)
+    {
+        <p class="error" role="alert">@_error</p>
+    }
+
+    <div class="three-panel">
+        <PdfPreview Bytes="_bytes"
+                    Title="@($"{_capability.Title} rendered as PDF")"
+                    FileName="@FileName"
+                    EmptyMessage="@EmptyPanelMessage" />
+
+        <ApiTree Spec="_spec" EmptyMessage="@EmptyPanelMessage" />
+
+        <CodePanel Code="@_code" EmptyMessage="@EmptyPanelMessage" />
+    </div>
+
+    @if (_report is not null)
+    {
+        <section>
+            <h2>Conformance</h2>
+            <PreflightPanel Report="_report" />
+        </section>
+    }
+}
+
+@code {
+    private Capability? _capability;
+    private DocumentSpec? _spec;
+    private byte[]? _bytes;
+    private string? _code;
+    private PreflightReport? _report;
+    private bool _busy;
+    private string? _error;
+    private bool _disposed;
+
+    /// <summary>
+    /// Increments on every request, so a run can tell whether it is still the one
+    /// the visitor is waiting for.
+    /// </summary>
+    /// <remarks>
+    /// The previous arrangement returned early while a run was in flight, which
+    /// DISCARDED the newer request and left the page showing the older document
+    /// under the newer controls, permanently. Superseding rather than dropping is
+    /// what keeps the controls and the content agreeing. Every input is captured
+    /// into a local before the first await for the same reason: a field re-read
+    /// afterwards is the newer value, and pairing it with the older run's work is
+    /// how the two came apart.
+    /// </remarks>
+    private int _generation;
+
+
+    /// <summary>The capability identifier from the route.</summary>
+    [Parameter]
+    public string? Id { get; set; }
+
+    private string FileName => $"{_capability?.Id ?? "document"}.pdf";
+
+    /// <summary>
+    /// What an empty panel says, shared by all three so they cannot disagree with
+    /// each other or with the button. Two of them previously carried the
+    /// component default and read "Nothing generated yet." while generation was
+    /// in progress.
+    /// </summary>
+    private string EmptyPanelMessage =>
+        _busy ? "Generating…"
+        : _error is not null ? "Nothing was generated."
+        : "Nothing generated yet.";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var found = CapabilityCatalog.Find(Id);
+
+        // Navigating between two capabilities reuses this component instance, so
+        // the previous document has to be cleared or it would be shown under the
+        // new heading until generation finished.
+        if (!ReferenceEquals(found, _capability))
+        {
+            // Supersede whatever is in flight for the PREVIOUS capability, even
+            // when this one will not be generated. The component instance is
+            // reused across capabilities, so a run that is not marked stale would
+            // write the old capability's results into the new one's page.
+            _generation++;
+
+            // Released here as well. The superseded run's own finally is gated on
+            // holding the current token, so once the token moves nothing else
+            // clears this, and the flag would stay set on a page that has decided
+            // not to generate at all.
+            _busy = false;
+
+            _capability = found;
+            _spec = null;
+            _bytes = null;
+            _code = null;
+            _report = null;
+            _error = null;
+
+            if (_capability is { IsDemonstrable: true })
+            {
+                await GenerateAsync();
+            }
+        }
+    }
+
+    private async Task GenerateAsync()
+    {
+        // Captured once. Re-reading the field after an await pairs the NEW
+        // capability's Build with the OLD capability's fetched assets, which
+        // surfaced as the catalogue accusing itself of an undeclared asset.
+        var capability = _capability;
+        if (capability is null || !capability.IsDemonstrable)
+        {
+            return;
+        }
+
+        var token = ++_generation;
+
+        _busy = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            // Yield first, so the browser paints the busy state before generation
+            // takes the single thread available. Without this the page appears to
+            // freeze rather than to work.
+            await Task.Delay(1);
+
+            var assets = await LoadRequiredAssetsAsync(capability);
+            if (_disposed || token != _generation)
+            {
+                return;
+            }
+
+            var spec = capability.Build!(assets);
+            var bytes = SpecRenderer.Render(spec);
+            var code = SpecCodeEmitter.Emit(spec);
+
+            var report = spec.Conformance == VellumPdf.Document.PdfConformance.None
+                ? null
+                : PreflightRunner.Run(bytes, spec.Conformance);
+
+            if (_disposed || token != _generation)
+            {
+                return;
+            }
+
+            _spec = spec;
+            _bytes = bytes;
+            _code = code;
+            _report = report;
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed && token == _generation)
+            {
+                _spec = null;
+                _bytes = null;
+                _code = null;
+                _report = null;
+                _error = $"This capability could not be generated: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (!_disposed && token == _generation)
+            {
+                _busy = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task<CapabilityAssets> LoadRequiredAssetsAsync(Capability capability)
+    {
+        if (capability.RequiredAssets.Count == 0)
+        {
+            return CapabilityAssets.None;
+        }
+
+        Dictionary<string, byte[]> bytes = [];
+        foreach (var path in capability.RequiredAssets)
+        {
+            bytes[path] = await Loader.LoadAsync(path);
+        }
+
+        return new CapabilityAssets(bytes);
+    }
+
+    private async Task DownloadAsync()
+    {
+        if (_bytes is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Interop.DownloadAsync(_bytes, FileName);
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+            {
+                _error = $"The download failed: {ex.Message}";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generation spans awaits, so a component disposed part way through must
+    /// stop writing to its own state. Without this the flag the generation path
+    /// reads would never become true.
+    /// </summary>
+    public void Dispose() => _disposed = true;
+}

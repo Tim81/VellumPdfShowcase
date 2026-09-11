@@ -348,7 +348,9 @@ $expectedTypes = @(
     'VellumPdfShowcase.Web.Generation.SpecRenderer',
     'VellumPdfShowcase.Web.Generation.SpecCodeEmitter',
     'VellumPdfShowcase.Web.Generation.ConformanceMapping',
-    'VellumPdfShowcase.Web.Generation.SpecAssets'
+    'VellumPdfShowcase.Web.Generation.SpecAssets',
+    'VellumPdfShowcase.Web.Generation.PreflightRunner',
+    'VellumPdfShowcase.Web.Generation.PreflightReport'
 )
 # Nested types and compiler-generated state machines appear under names such as
 # '...SpecCodeEmitter/Emitter' and '...SpecCodeEmitter/<CollectTextStyles>d__5'.
