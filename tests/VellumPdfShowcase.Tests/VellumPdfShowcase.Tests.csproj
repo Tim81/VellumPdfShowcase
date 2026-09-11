@@ -23,8 +23,9 @@
 
   <ItemGroup>
     <!-- Real assets used by the round-trip test, linked from the app's own wwwroot rather than duplicated. -->
-    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\fonts\LiberationSans-Regular.ttf" Link="TestAssets\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\icc\sRGB2014.icc" Link="TestAssets\sRGB2014.icc" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\assets\fonts\LiberationSans-Regular.ttf" Link="TestAssets\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\assets\icc\sRGB2014.icc" Link="TestAssets\sRGB2014.icc" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\VellumPdfShowcase.Web\wwwroot\assets\images\*" Link="TestAssets\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

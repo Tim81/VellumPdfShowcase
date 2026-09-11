@@ -44,3 +44,7 @@ Thumbs.db
 ## Cloudflare / Wrangler
 .wrangler/
 .dev.vars
+
+# Python bytecode cache, from eng/ tooling scripts.
+__pycache__/
+*.py[cod]

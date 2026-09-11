@@ -44,6 +44,7 @@ public class CoverageScopeTests
     private static readonly string[] KnownNamespaces =
     [
         "VellumPdfShowcase.Web",
+        "VellumPdfShowcase.Web.Assets",
         "VellumPdfShowcase.Web.Model",
         "VellumPdfShowcase.Web.Generation",
         "VellumPdfShowcase.Web.Components",

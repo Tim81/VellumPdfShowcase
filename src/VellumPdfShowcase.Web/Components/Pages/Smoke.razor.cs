@@ -5,6 +5,7 @@ using VellumPdf.Layout;
 using VellumPdf.Layout.Core;
 using VellumPdf.Layout.Elements;
 using VellumPdf.Layout.Elements.Table;
+using VellumPdfShowcase.Web.Assets;
 using DocumentConformance = VellumPdf.Document.PdfConformance;
 using PreflightConformance = VellumPdf.Conformance.PdfConformance;
 
@@ -17,12 +18,10 @@ public partial class Smoke
     // (VellumPdf.Document.PdfConformance) and PdfPreflight.Validate
     // (VellumPdf.Conformance.PdfConformance) are two distinct enum types with
     // no conversion between them; both are referenced explicitly below.
-    private const string LiberationSansPath = "fonts/LiberationSans-Regular.ttf";
-
-    // ICC v2 profile "sRGB2014.icc", published by the International Color
-    // Consortium at https://registry.color.org/rgb-registry/srgbprofiles.
-    // Licence recorded at wwwroot/icc/LICENSE.txt.
-    private const string SrgbIccProfilePath = "icc/sRGB2014.icc";
+    // Both assets, and the licence of each, are named in ShowcaseAssets and
+    // recorded in wwwroot/assets/LICENSES.md.
+    private const string LiberationSansPath = ShowcaseAssets.LiberationSansRegular;
+    private const string SrgbIccProfilePath = ShowcaseAssets.SrgbIccProfile;
 
     private bool _disposed;
     private Task<IJSObjectReference>? _moduleTask;
@@ -230,13 +229,13 @@ public partial class Smoke
                 return;
             }
 
-            _fontBytes ??= await Http.GetByteArrayAsync(LiberationSansPath);
+            _fontBytes ??= await Loader.LoadAsync(LiberationSansPath);
             if (_disposed)
             {
                 return;
             }
 
-            _iccProfileBytes ??= await Http.GetByteArrayAsync(SrgbIccProfilePath);
+            _iccProfileBytes ??= await Loader.LoadAsync(SrgbIccProfilePath);
             if (_disposed)
             {
                 return;
