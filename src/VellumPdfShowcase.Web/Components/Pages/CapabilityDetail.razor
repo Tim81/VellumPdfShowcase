@@ -88,11 +88,11 @@ else
         <PdfPreview Bytes="_bytes"
                     Title="@($"{_capability.Title} rendered as PDF")"
                     FileName="@FileName"
-                    EmptyMessage="@(_error is null ? "Generating…" : "Nothing was generated.")" />
+                    EmptyMessage="@EmptyPanelMessage" />
 
-        <ApiTree Spec="_spec" />
+        <ApiTree Spec="_spec" EmptyMessage="@EmptyPanelMessage" />
 
-        <CodePanel Code="@_code" />
+        <CodePanel Code="@_code" EmptyMessage="@EmptyPanelMessage" />
     </div>
 
     @if (_report is not null)
@@ -136,6 +136,17 @@ else
 
     private string FileName => $"{_capability?.Id ?? "document"}.pdf";
 
+    /// <summary>
+    /// What an empty panel says, shared by all three so they cannot disagree with
+    /// each other or with the button. Two of them previously carried the
+    /// component default and read "Nothing generated yet." while generation was
+    /// in progress.
+    /// </summary>
+    private string EmptyPanelMessage =>
+        _busy ? "Generating…"
+        : _error is not null ? "Nothing was generated."
+        : "Nothing generated yet.";
+
     protected override async Task OnParametersSetAsync()
     {
         var found = CapabilityCatalog.Find(Id);
@@ -150,6 +161,12 @@ else
             // reused across capabilities, so a run that is not marked stale would
             // write the old capability's results into the new one's page.
             _generation++;
+
+            // Released here as well. The superseded run's own finally is gated on
+            // holding the current token, so once the token moves nothing else
+            // clears this, and the flag would stay set on a page that has decided
+            // not to generate at all.
+            _busy = false;
 
             _capability = found;
             _spec = null;

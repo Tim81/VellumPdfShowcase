@@ -164,6 +164,11 @@
         var capability = CapabilityCatalog.Find(_capabilityId);
         if (capability is null || !capability.IsDemonstrable)
         {
+            // Supersede and release before returning. Clearing the verdict while
+            // leaving a run in flight would let that run repopulate the verdict
+            // this call just cleared.
+            _generation++;
+            _busy = false;
             StateHasChanged();
             return;
         }
