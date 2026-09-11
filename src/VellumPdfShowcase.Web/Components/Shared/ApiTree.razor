@@ -1,0 +1,146 @@
+@using VellumPdfShowcase.Web.Model
+
+@*
+    Shows the shape of a specification as a tree, so a reader can see which Layout
+    objects the document is made of without reading the generated C#.
+
+    NOTE every label is rendered as text. Node labels include visitor-supplied
+    strings, truncated, and must never become markup.
+*@
+
+<div class="api-tree">
+    <h3>@Title</h3>
+
+    @if (Spec is null)
+    {
+        <p class="api-tree-empty">@EmptyMessage</p>
+    }
+    else
+    {
+        <ul class="api-tree-root">
+            @foreach (var node in Describe(Spec))
+            {
+                @RenderNode(node)
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    /// <summary>The specification to describe. Null renders the empty state.</summary>
+    [Parameter]
+    public DocumentSpec? Spec { get; set; }
+
+    /// <summary>The heading above the tree.</summary>
+    [Parameter]
+    public string Title { get; set; } = "Layout objects";
+
+    /// <summary>What to say when there is nothing to describe.</summary>
+    [Parameter]
+    public string EmptyMessage { get; set; } = "Nothing generated yet.";
+
+    /// <summary>One line of the tree: a type, an optional detail, and its children.</summary>
+    private sealed record Node(string TypeName, string? Detail, IReadOnlyList<Node> Children);
+
+    private RenderFragment RenderNode(Node node) =>
+        @<li>
+            <span class="api-tree-type">@node.TypeName</span>
+            @if (node.Detail is not null)
+            {
+                <span class="api-tree-detail">@node.Detail</span>
+            }
+            @if (node.Children.Count > 0)
+            {
+                <ul>
+                    @foreach (var child in node.Children)
+                    {
+                        @RenderNode(child)
+                    }
+                </ul>
+            }
+        </li>;
+
+    /// <summary>
+    /// Describes the document as the objects the library would be given. The
+    /// shape follows the specification rather than the rendered output, because
+    /// the specification is what the emitted C# constructs.
+    /// </summary>
+    private static IReadOnlyList<Node> Describe(DocumentSpec spec)
+    {
+        List<Node> nodes =
+        [
+            new Node("Document", $"{spec.Page.WidthPoints:0.##} by {spec.Page.HeightPoints:0.##} points", []),
+        ];
+
+        if (spec.EmbeddedFonts.Count > 0)
+        {
+            nodes.Add(new Node("EmbeddedFonts", $"{spec.EmbeddedFonts.Count} face(s)", []));
+        }
+
+        if (spec.Conformance != VellumPdf.Document.PdfConformance.None)
+        {
+            nodes.Add(new Node("Conformance", spec.Conformance.ToString(), []));
+        }
+
+        // OutputIntentSpec is abstract with two concrete shapes, and only the
+        // PDF/A one carries an identifier worth showing. The CMYK one is named by
+        // its type alone.
+        if (spec.OutputIntent is not null)
+        {
+            var detail = spec.OutputIntent switch
+            {
+                PdfAOutputIntentSpec pdfA => pdfA.OutputConditionIdentifier,
+                _ => null,
+            };
+
+            nodes.Add(new Node(spec.OutputIntent.GetType().Name, detail, []));
+        }
+
+        if (spec.Encryption is not null)
+        {
+            nodes.Add(new Node("Encryption", spec.Encryption.Permissions.ToString(), []));
+        }
+
+        if (spec.Header is not null)
+        {
+            nodes.Add(new Node("Header", Truncate(spec.Header.Template), []));
+        }
+
+        if (spec.Footer is not null)
+        {
+            nodes.Add(new Node("Footer", Truncate(spec.Footer.Template), []));
+        }
+
+        nodes.Add(new Node("Content", $"{spec.Content.Count} item(s)", [.. spec.Content.Select(DescribeItem)]));
+
+        return nodes;
+    }
+
+    private static Node DescribeItem(ContentItemSpec item) => item switch
+    {
+        HeadingSpec heading => new Node("Heading", $"level {heading.Level}: {Truncate(heading.Text)}", []),
+        ParagraphSpec paragraph => new Node("Paragraph", $"{paragraph.Runs.Count} run(s)", [.. paragraph.Runs.Select(run => new Node("TextRun", Truncate(run.Text), []))]),
+        PlainTextSpec text => new Node("Text", Truncate(text.Text), []),
+        ListSpec list => new Node("List", $"{list.Style}, {list.Items.Count} item(s)", [.. list.Items.Select(DescribeListItem)]),
+        TableSpec table => new Node("Table", $"{table.Rows.Count} row(s)", [.. table.Rows.Select(row => new Node("Row", $"{row.Cells.Count} cell(s){(row.IsHeader ? ", header" : string.Empty)}", []))]),
+        ImageSpec image => new Node("Image", $"{image.Format}, {image.Bytes.Length:N0} bytes", []),
+        PieChartSpec chart => new Node("PieChart", $"{chart.Slices.Count} slice(s), diameter {chart.Diameter:0.##}", []),
+        LineSeparatorSpec separator => new Node("LineSeparator", $"width {separator.LineWidth:0.##}", []),
+
+        // Unreachable while DocumentSpec refuses an unrecognised content item at
+        // construction, which it does. Present so this switch is total and a new
+        // content type shows as itself rather than silently vanishing from the
+        // tree, which is the failure the round trip forbids.
+        _ => new Node(item.GetType().Name, null, []),
+    };
+
+    private static Node DescribeListItem(ListItemSpec item) =>
+        new("ListItem", Truncate(item.Text), [.. item.Children.Select(DescribeListItem)]);
+
+    /// <summary>
+    /// Shortens a label so one long string cannot push the tree off the page.
+    /// The full text is available in the generated C# beside it.
+    /// </summary>
+    private static string Truncate(string value) =>
+        value.Length <= 60 ? value : string.Concat(value.AsSpan(0, 57), "...");
+}

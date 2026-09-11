@@ -1,0 +1,244 @@
+@page "/playground"
+@inject AssetLoader Loader
+@inject PdfInterop Interop
+@implements IDisposable
+
+@*
+    Three columns: what to build on the left, the result in the middle, the code
+    on the right.
+
+    NOTE the affordances here are deliberately constrained. Page size comes from a
+    list and font size from a set, rather than from free numeric entry. The model
+    accepts far more than these controls offer, because the model's job is to be
+    faithful to the library; it is this page's job to keep a visitor from asking
+    for a document that takes twenty seconds to lay out in their own tab. Widening
+    a control here is a decision about that budget, not a cosmetic change.
+*@
+
+<PageTitle>Playground</PageTitle>
+
+<h1>Playground</h1>
+
+<p class="lede">
+    Choose a capability and adjust it. Everything is generated in this tab, and the
+    C# on the right is what would produce the document in the middle.
+</p>
+
+<div class="three-panel">
+    <section class="controls">
+        <h2>Specification</h2>
+
+        <label>
+            Capability
+            <select @bind="_selectedId" @bind:after="GenerateAsync">
+                @foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+                {
+                    <option value="@capability.Id">@capability.Title</option>
+                }
+            </select>
+        </label>
+
+        <label>
+            Page size
+            <select @bind="_pageSize" @bind:after="GenerateAsync">
+                @foreach (var size in PageSizes)
+                {
+                    <option value="@size.Name">@size.Name</option>
+                }
+            </select>
+        </label>
+
+        <label>
+            Margin
+            <select @bind="_marginPoints" @bind:after="GenerateAsync">
+                @foreach (var margin in Margins)
+                {
+                    <option value="@margin">@margin points</option>
+                }
+            </select>
+        </label>
+
+        <p class="actions">
+            <button type="button" class="button" disabled="@_busy" @onclick="GenerateAsync">
+                @(_busy ? "Generating…" : "Generate")
+            </button>
+            <button type="button" class="button button-quiet" disabled="@(_bytes is null)" @onclick="DownloadAsync">
+                Download
+            </button>
+        </p>
+
+        @if (_elapsedMs > 0)
+        {
+            <p class="timing">Generated in @_elapsedMs ms.</p>
+        }
+
+        @if (_error is not null)
+        {
+            <p class="error" role="alert">@_error</p>
+        }
+    </section>
+
+    <PdfPreview Bytes="_bytes" FileName="playground.pdf" EmptyMessage="Choose a capability to generate one." />
+
+    <CodePanel Code="@_code" />
+</div>
+
+@code {
+    private sealed record NamedPageSize(string Name, double Width, double Height);
+
+    private static readonly NamedPageSize[] PageSizes =
+    [
+        new("A4", 595.28, 841.89),
+        new("Letter", 612, 792),
+        new("A5", 419.53, 595.28),
+        new("Legal", 612, 1008),
+    ];
+
+    private static readonly int[] Margins = [36, 48, 64, 72, 96];
+
+    private string _selectedId = CapabilityCatalog.All.First(c => c.IsDemonstrable).Id;
+    private string _pageSize = "A4";
+    private int _marginPoints = 64;
+
+    private byte[]? _bytes;
+    private string? _code;
+    private long _elapsedMs;
+    private bool _busy;
+    private string? _error;
+    private bool _disposed;
+
+    /// <summary>
+    /// The capability to preselect, so that "open in the playground" from a detail
+    /// page arrives on the capability the visitor was looking at.
+    /// </summary>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "capability")]
+    public string? RequestedCapability { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (CapabilityCatalog.Find(RequestedCapability) is { IsDemonstrable: true } requested)
+        {
+            _selectedId = requested.Id;
+        }
+
+        await GenerateAsync();
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        var capability = CapabilityCatalog.Find(_selectedId);
+        if (capability is null || !capability.IsDemonstrable)
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            // The macrotask yield is what keeps this page from appearing frozen.
+            // Generation runs on the one thread the browser gives it.
+            await Task.Delay(1);
+
+            Dictionary<string, byte[]> assetBytes = [];
+            foreach (var path in capability.RequiredAssets)
+            {
+                assetBytes[path] = await Loader.LoadAsync(path);
+            }
+
+            if (_disposed)
+            {
+                return;
+            }
+
+            var spec = Reshape(capability.Build!(new CapabilityAssets(assetBytes)));
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var bytes = SpecRenderer.Render(spec);
+            stopwatch.Stop();
+
+            var code = SpecCodeEmitter.Emit(spec);
+
+            if (_disposed)
+            {
+                return;
+            }
+
+            _bytes = bytes;
+            _code = code;
+            _elapsedMs = stopwatch.ElapsedMilliseconds;
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+            {
+                _bytes = null;
+                _code = null;
+                _error = $"That specification could not be generated: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (!_disposed)
+            {
+                _busy = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies the page controls to the capability's own specification.
+    /// </summary>
+    /// <remarks>
+    /// A record <c>with</c> expression rather than a rebuild, so the capability
+    /// stays the single description of what it demonstrates and this page only
+    /// overrides the two properties it offers. Every validator on those properties
+    /// runs again on the copy, because they are enforced in the initialiser.
+    /// </remarks>
+    private DocumentSpec Reshape(DocumentSpec spec)
+    {
+        var size = PageSizes.First(candidate => candidate.Name == _pageSize);
+
+        return spec with
+        {
+            Page = new PageSizeSpec(size.Width, size.Height),
+            Margins = new EdgeInsets(_marginPoints),
+        };
+    }
+
+    private async Task DownloadAsync()
+    {
+        if (_bytes is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Interop.DownloadAsync(_bytes, "playground.pdf");
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+            {
+                _error = $"The download failed: {ex.Message}";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generation spans awaits, so a component disposed part way through must
+    /// stop writing to its own state. Without this the flag the generation path
+    /// reads would never become true.
+    /// </summary>
+    public void Dispose() => _disposed = true;
+}

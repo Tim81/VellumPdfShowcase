@@ -1,0 +1,72 @@
+@page "/"
+
+<PageTitle>VellumPdf showcase</PageTitle>
+
+<h1>VellumPdf</h1>
+
+<p class="lede">
+    A capability catalogue for the VellumPdf library. Every document on this site
+    is generated in your own browser, by the real library compiled to WebAssembly.
+    There is no server, and nothing you enter leaves this tab.
+</p>
+
+<p>
+    <a class="button" href="playground">Open the playground</a>
+    <a class="button button-quiet" href="compliance">Check conformance</a>
+</p>
+
+@foreach (var category in CapabilityCatalog.Categories)
+{
+    <section class="category">
+        <h2>@CategoryName(category)</h2>
+
+        <ul class="card-grid">
+            @foreach (var capability in CapabilityCatalog.All.Where(c => c.Category == category))
+            {
+                <li class="card @(capability.Status == CapabilityStatus.Planned ? "card-planned" : "card-available")">
+                    <h3>
+                        @if (capability.IsDemonstrable)
+                        {
+                            <a href="@($"capability/{capability.Id}")">@capability.Title</a>
+                        }
+                        else
+                        {
+                            @capability.Title
+                        }
+                    </h3>
+
+                    <p>@capability.Summary</p>
+
+                    @* A planned card states the milestone and links to where it is
+                       tracked, so the visitor sees the shape of the whole library
+                       rather than only its finished parts. *@
+                    @if (capability.Status == CapabilityStatus.Planned)
+                    {
+                        <p class="card-milestone">
+                            Planned for @capability.Milestone.
+                            @if (capability.TrackingUri is not null)
+                            {
+                                <a href="@capability.TrackingUri" rel="noopener noreferrer" target="_blank">Tracking issue</a>
+                            }
+                        </p>
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    /// <summary>
+    /// The category as a heading rather than as the enumeration member spells it.
+    /// </summary>
+    private static string CategoryName(CapabilityCategory category) => category switch
+    {
+        CapabilityCategory.Text => "Text and typography",
+        CapabilityCategory.Layout => "Layout",
+        CapabilityCategory.Graphics => "Graphics",
+        CapabilityCategory.Documents => "Documents",
+        CapabilityCategory.Conformance => "Conformance",
+        _ => category.ToString(),
+    };
+}
