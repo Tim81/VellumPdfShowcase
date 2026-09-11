@@ -144,6 +144,12 @@
         _coverage = PreflightRunner.Coverage(profile);
         _checks = PreflightRunner.Checks(profile);
 
+        // The verdict belongs to the previous selection and says nothing about
+        // which document it judged, so leaving it standing asserts the new
+        // document's compliance for as long as the new run takes. Cleared for the
+        // same reason the coverage is refreshed here rather than later.
+        _report = null;
+
         var capability = CapabilityCatalog.Find(_capabilityId);
         if (capability is null || !capability.IsDemonstrable)
         {

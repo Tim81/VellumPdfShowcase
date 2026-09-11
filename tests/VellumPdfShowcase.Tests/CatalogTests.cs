@@ -136,6 +136,33 @@ public partial class CapabilityCatalogTests
     }
 
     /// <summary>
+    /// The other direction of the same rule: an entry withdrawn from the site for
+    /// a browser limitation must actually use the thing the browser lacks.
+    /// </summary>
+    /// <remarks>
+    /// Without this the gate is one-directional. A review demonstrated that a
+    /// perfectly working capability could be marked unavailable with an invented
+    /// excuse and the suite would stay green, one test quieter than before. An
+    /// excuse that nothing checks is not a reason.
+    /// </remarks>
+    [Fact]
+    public void EveryBrowserUnavailableEntryActuallyUsesSomethingTheBrowserLacks()
+    {
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.Status == CapabilityStatus.UnavailableInBrowser))
+        {
+            var spec = capability.Build!(Load(capability));
+
+            // The same single gap the forward check names. Both lists move
+            // together: a gap added to one belongs in the other.
+            Assert.True(
+                spec.Encryption is not null,
+                $"{capability.Id} is withheld for a browser limitation, but its specification uses nothing "
+                    + "the browser runtime lacks. Either the entry belongs back on the site, or this list "
+                    + "needs the gap it actually hits.");
+        }
+    }
+
+    /// <summary>
     /// The specification of an entry the browser cannot run is still held to the
     /// same standard, on the runtime that can run it. Otherwise reclassifying an
     /// entry would quietly remove it from test.

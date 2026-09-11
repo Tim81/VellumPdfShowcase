@@ -77,7 +77,11 @@
         CapabilityStatus.Available => "card-available",
         CapabilityStatus.UnavailableInBrowser => "card-unavailable",
         CapabilityStatus.Planned => "card-planned",
-        _ => "card-planned",
+
+        // NOTE: a status this method has not been taught is NOT presented as
+        // planned. Saying "planned for" about something whose standing is unknown
+        // is the false claim the enumeration exists to prevent.
+        _ => "card-unknown",
     };
 
     /// <summary>

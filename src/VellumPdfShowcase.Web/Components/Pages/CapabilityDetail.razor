@@ -20,6 +20,40 @@
     <p role="alert">There is no capability with the identifier <code>@Id</code>.</p>
     <p><a href="">Back to the catalogue</a></p>
 }
+else if (!_capability.IsDemonstrable)
+{
+    @* Reached only by typing or following a stale link, since no card links here.
+       It must still explain itself rather than attempting to generate: doing so
+       produced a raw platform exception in the visitor's tab, with nothing to say
+       the limitation was the browser's rather than the library's. *@
+    <PageTitle>@_capability.Title</PageTitle>
+
+    <h1>@_capability.Title</h1>
+    <p class="lede">@_capability.Summary</p>
+
+    @if (_capability.Status == CapabilityStatus.UnavailableInBrowser)
+    {
+        <p role="alert">
+            This cannot be demonstrated in a browser. @_capability.BrowserLimitation
+        </p>
+    }
+    else
+    {
+        <p role="alert">
+            The pinned release of the library does not do this yet.
+            @if (_capability.Milestone is not null)
+            {
+                <text>It is planned for @_capability.Milestone.</text>
+            }
+            @if (_capability.TrackingUri is not null)
+            {
+                <a href="@_capability.TrackingUri" rel="noopener noreferrer" target="_blank">Tracking issue</a>
+            }
+        </p>
+    }
+
+    <p><a href="">Back to the catalogue</a></p>
+}
 else
 {
     <PageTitle>@_capability.Title</PageTitle>
@@ -110,7 +144,7 @@ else
             _report = null;
             _error = null;
 
-            if (_capability is not null)
+            if (_capability is { IsDemonstrable: true })
             {
                 await GenerateAsync();
             }
@@ -123,7 +157,7 @@ else
         // capability's Build with the OLD capability's fetched assets, which
         // surfaced as the catalogue accusing itself of an undeclared asset.
         var capability = _capability;
-        if (capability is null)
+        if (capability is null || !capability.IsDemonstrable)
         {
             return;
         }

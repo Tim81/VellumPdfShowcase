@@ -145,15 +145,28 @@
         // Captured with the capability, so the shape applied is the one chosen at
         // the same moment rather than whatever the controls read later.
         var token = ++_generation;
-        var pageSize = PageSizes.First(candidate => candidate.Name == _pageSize);
+        var pageSizeName = _pageSize;
         var margin = _marginPoints;
 
         _busy = true;
         _error = null;
+
+        // The previous document is not this one. Leaving it on screen shows one
+        // capability's snippet and preview under another's controls for as long
+        // as the new run takes, which is the same defect as the stale verdict on
+        // the conformance page.
+        _bytes = null;
+        _code = null;
+        _elapsedMs = 0;
         StateHasChanged();
 
         try
         {
+            // Resolved inside the try. Outside it, a throw would escape an async
+            // event handler into the Blazor error bar, and would leave _busy set
+            // on a run that had already superseded the previous one.
+            var pageSize = PageSizes.First(candidate => candidate.Name == pageSizeName);
+
             // The macrotask yield is what keeps this page from appearing frozen.
             // Generation runs on the one thread the browser gives it.
             await Task.Delay(1);
