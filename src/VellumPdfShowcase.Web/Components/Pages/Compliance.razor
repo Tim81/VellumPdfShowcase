@@ -60,7 +60,9 @@
     <p class="error" role="alert">@_error</p>
 }
 
-<PreflightPanel Report="_report" />
+@* Reachable mid-run since the verdict is cleared when a request is claimed, so
+   the message must not tell the visitor to do what the page is already doing. *@
+<PreflightPanel Report="_report" EmptyMessage="@EmptyPanelMessage" />
 
 <section class="coverage">
     <h2>Rule coverage for @ProfileName(_profile)</h2>
@@ -122,6 +124,15 @@
     private bool _busy;
     private string? _error;
     private bool _disposed;
+
+    /// <summary>
+    /// What the verdict panel says while it holds no verdict, which depends on
+    /// why it holds none.
+    /// </summary>
+    private string EmptyPanelMessage =>
+        _busy ? "Validating…"
+        : _error is not null ? "Nothing was validated."
+        : "Generate a document to validate it.";
 
     /// <summary>
     /// Increments on every request, so a run can tell whether it is still the one

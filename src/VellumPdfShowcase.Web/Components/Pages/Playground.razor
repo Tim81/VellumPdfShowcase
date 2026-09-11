@@ -78,9 +78,12 @@
         }
     </section>
 
-    <PdfPreview Bytes="_bytes" FileName="playground.pdf" EmptyMessage="Choose a capability to generate one." />
+    @* The message has to follow the state. Clearing the previous document on
+       every request made this panel reachable mid-run, where an instruction to
+       generate something is a false statement about what the page is doing. *@
+    <PdfPreview Bytes="_bytes" FileName="playground.pdf" EmptyMessage="@EmptyPanelMessage" />
 
-    <CodePanel Code="@_code" />
+    <CodePanel Code="@_code" EmptyMessage="@EmptyPanelMessage" />
 </div>
 
 @code {
@@ -95,6 +98,15 @@
     ];
 
     private static readonly int[] Margins = [36, 48, 64, 72, 96];
+
+    /// <summary>
+    /// What an empty panel says, which depends on why it is empty: a run in
+    /// progress, a run that failed, or nothing having been asked for yet.
+    /// </summary>
+    private string EmptyPanelMessage =>
+        _busy ? "Generating…"
+        : _error is not null ? "Nothing was generated."
+        : "Choose a capability to generate one.";
 
     private string _selectedId = CapabilityCatalog.All.First(c => c.IsDemonstrable).Id;
     private string _pageSize = "A4";

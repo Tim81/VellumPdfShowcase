@@ -150,6 +150,10 @@ public partial class CapabilityCatalogTests
     {
         foreach (var capability in CapabilityCatalog.All.Where(c => c.Status == CapabilityStatus.UnavailableInBrowser))
         {
+            // Stated rather than dereferenced, so an entry with no Build fails
+            // with this rule's own message instead of a null reference.
+            Assert.True(capability.IsBuildable, $"{capability.Id} has no specification to check the excuse against");
+
             var spec = capability.Build!(Load(capability));
 
             // The same single gap the forward check names. Both lists move

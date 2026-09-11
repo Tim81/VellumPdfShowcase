@@ -31,25 +31,33 @@ else if (!_capability.IsDemonstrable)
     <h1>@_capability.Title</h1>
     <p class="lede">@_capability.Summary</p>
 
+    @* Each status states its own case. NOTE there is no fallback that assumes
+       "planned": asserting a milestone for something whose standing is unknown is
+       the false claim the enumeration exists to prevent, and the gallery refuses
+       it for the same reason. *@
     @if (_capability.Status == CapabilityStatus.UnavailableInBrowser)
     {
         <p role="alert">
             This cannot be demonstrated in a browser. @_capability.BrowserLimitation
         </p>
     }
-    else
+    else if (_capability.Status == CapabilityStatus.Planned)
     {
         <p role="alert">
             The pinned release of the library does not do this yet.
             @if (_capability.Milestone is not null)
             {
-                <text>It is planned for @_capability.Milestone.</text>
+                <text>It is planned for @_capability.Milestone. </text>
             }
             @if (_capability.TrackingUri is not null)
             {
                 <a href="@_capability.TrackingUri" rel="noopener noreferrer" target="_blank">Tracking issue</a>
             }
         </p>
+    }
+    else
+    {
+        <p role="alert">This capability cannot be demonstrated here.</p>
     }
 
     <p><a href="">Back to the catalogue</a></p>
@@ -137,6 +145,12 @@ else
         // new heading until generation finished.
         if (!ReferenceEquals(found, _capability))
         {
+            // Supersede whatever is in flight for the PREVIOUS capability, even
+            // when this one will not be generated. The component instance is
+            // reused across capabilities, so a run that is not marked stale would
+            // write the old capability's results into the new one's page.
+            _generation++;
+
             _capability = found;
             _spec = null;
             _bytes = null;
