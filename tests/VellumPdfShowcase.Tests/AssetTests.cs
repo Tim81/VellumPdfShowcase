@@ -15,33 +15,147 @@ namespace VellumPdfShowcase.Tests;
 /// from the returned bytes alone.
 /// </summary>
 /// <summary>
-/// Content of a stated size that counts the bytes actually pulled out of it, and
-/// never materialises them. The count is the only way to tell a cap that
-/// declines an oversized body from one that reads it whole and objects
-/// afterwards; both raise the same exception.
+/// A read-only stream that produces <paramref name="length"/> bytes on demand and
+/// counts what was actually taken. It never holds the body, so the count reflects
+/// what the consumer read rather than what the harness buffered.
 /// </summary>
-internal sealed class CountingContent(long length) : HttpContent
+internal sealed class GeneratedStream(long length) : Stream
 {
     public long BytesPulled { get; private set; }
 
-    protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+    public override bool CanRead => true;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => false;
+
+    public override long Length => length;
+
+    public override long Position
     {
-        var chunk = new byte[64 * 1024];
-        while (BytesPulled < length)
-        {
-            var take = (int)Math.Min(chunk.Length, length - BytesPulled);
-            await stream.WriteAsync(chunk.AsMemory(0, take));
-            BytesPulled += take;
-        }
+        get => BytesPulled;
+        set => throw new NotSupportedException();
     }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        var take = (int)Math.Min(count, length - BytesPulled);
+        if (take <= 0)
+        {
+            return 0;
+        }
+
+        Array.Clear(buffer, offset, take);
+        BytesPulled += take;
+        return take;
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}
+
+/// <summary>
+/// Content of a given size that counts the bytes actually pulled out of it and
+/// never materialises them. The count is the only way to tell a cap that declines
+/// an oversized body from one that reads it whole and objects afterwards, because
+/// both raise the same exception.
+/// </summary>
+/// <remarks>
+/// <paramref name="declareLength"/> is the whole point of the type. A body whose
+/// length is declared is refused by the header check, which is a different branch
+/// from the one that counts the body as it arrives. A review found that every
+/// test claiming to cover the counting branch in fact declared a length, so the
+/// counting branch could be deleted outright with the suite green.
+/// </remarks>
+internal sealed class CountingContent(long length, bool declareLength) : HttpContent
+{
+    private readonly GeneratedStream _stream = new(length);
+
+    public long BytesPulled => _stream.BytesPulled;
+
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(_stream);
+
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+        _stream.CopyToAsync(stream);
 
     protected override bool TryComputeLength(out long computedLength)
     {
         computedLength = length;
-        return true;
+        return declareLength;
     }
 }
 
+/// <summary>
+/// Content that yields a few bytes and then fails, standing in for a connection
+/// reset part way through a body.
+/// </summary>
+internal sealed class TornContent : HttpContent
+{
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new TornStream());
+
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+        new TornStream().CopyToAsync(stream);
+
+    protected override bool TryComputeLength(out long computedLength)
+    {
+        computedLength = 0;
+        return false;
+    }
+
+    private sealed class TornStream : Stream
+    {
+        private bool _served;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_served)
+            {
+                throw new IOException("the connection was reset");
+            }
+
+            _served = true;
+            Array.Clear(buffer, offset, 16);
+            return 16;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
+
+/// <summary>
+/// Answers from a fixed table, and counts how many times each path was actually
+/// requested. The count is the whole point: the claim under test is that an asset
+/// is fetched once and reused, which cannot be observed from the bytes alone.
+/// </summary>
 internal sealed class CountingHandler(Dictionary<string, byte[]> files) : HttpMessageHandler
 {
     public Dictionary<string, int> Requests { get; } = [];
@@ -54,8 +168,8 @@ internal sealed class CountingHandler(Dictionary<string, byte[]> files) : HttpMe
     /// <summary>When positive, the first N requests for any path throw before answering.</summary>
     public int FailFirst { get; set; }
 
-    /// <summary>When set, every path is answered with a body of this size that counts what is read.</summary>
-    public CountingContent? Oversized { get; init; }
+    /// <summary>When set, every path is answered with this content instead of the table.</summary>
+    public HttpContent? Body { get; init; }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -68,9 +182,9 @@ internal sealed class CountingHandler(Dictionary<string, byte[]> files) : HttpMe
             throw new HttpRequestException("the network is unavailable");
         }
 
-        if (Oversized is not null)
+        if (Body is not null)
         {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = Oversized });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = Body });
         }
 
         if (!files.TryGetValue(path, out var bytes))
@@ -212,13 +326,22 @@ public class AssetLoaderTests
     }
 
     /// <summary>
-    /// The negative control for the check above: a server that declares nothing,
-    /// or lies, is still held to the cap by the length actually received.
+    /// The real negative control for the check above: a server that declares
+    /// NOTHING is still held to the cap, by the length actually received.
     /// </summary>
+    /// <remarks>
+    /// A review found that the earlier version of this test used content that
+    /// computed its own <c>Content-Length</c>, so the header check refused it
+    /// first and the counting branch was never entered. The counting branch could
+    /// then be deleted outright with the whole suite green. Undeclared length is
+    /// the entire point of this case; do not replace the content with anything
+    /// that declares one.
+    /// </remarks>
     [Fact]
     public async Task LoadAsync_UndeclaredBodyBeyondTheCap_IsStillRefused()
     {
-        var handler = new CountingHandler(new() { ["assets/x.bin"] = new byte[SpecLimits.MaxAssetBytes + 1] });
+        var body = new CountingContent(SpecLimits.MaxAssetBytes + 1L, declareLength: false);
+        var handler = new CountingHandler([]) { Body = body };
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => Build(handler).LoadAsync("assets/x.bin"));
@@ -227,28 +350,75 @@ public class AssetLoaderTests
     }
 
     /// <summary>
+    /// The boundary, on the branch that counts: exactly the cap is admitted, and
+    /// one byte more is refused. Without this pair the counting branch could be
+    /// off by one in either direction unnoticed.
+    /// </summary>
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(-1, true)]
+    [InlineData(1, false)]
+    public async Task LoadAsync_UndeclaredBodyAtTheBoundary(int offset, bool admitted)
+    {
+        var body = new CountingContent(SpecLimits.MaxAssetBytes + (long)offset, declareLength: false);
+        var handler = new CountingHandler([]) { Body = body };
+        var loader = Build(handler);
+
+        if (admitted)
+        {
+            Assert.Equal(SpecLimits.MaxAssetBytes + offset, (await loader.LoadAsync("assets/x.bin")).Length);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => loader.LoadAsync("assets/x.bin"));
+        }
+    }
+
+    /// <summary>
     /// The cap must DECLINE an oversized asset, not read it whole and object
     /// afterwards. Asserting that an exception is raised cannot tell those apart,
     /// because both raise one. This measures the bytes the loader actually pulled
-    /// out of the response.
+    /// out of the response, on the undeclared path, which is the only one where
+    /// the body is read at all.
     /// </summary>
     /// <remarks>
     /// A review found the original loader buffering 21.1 MB before its own
     /// "refuse before reading the body" check ran, while the test of the day
-    /// passed, because the test observed only the exception. The budget below is
-    /// the cap plus a small allowance for the read buffer and for however much a
-    /// transport hands over in one go; the defect it exists to catch overshoots
-    /// by the entire size of the body, not by a buffer.
+    /// passed, because that test observed only the exception. The budget below is
+    /// the cap plus an allowance for the read buffer; the defect it exists to
+    /// catch overshoots by the entire size of the body.
     /// </remarks>
     [Fact]
     public async Task LoadAsync_OversizedBody_IsAbandonedRatherThanBuffered()
     {
-        var oversized = new CountingContent(SpecLimits.MaxAssetBytes * 4L);
-        var handler = new CountingHandler([]) { Oversized = oversized };
+        var body = new CountingContent(SpecLimits.MaxAssetBytes * 4L, declareLength: false);
+        var handler = new CountingHandler([]) { Body = body };
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => Build(handler).LoadAsync("assets/huge.bin"));
 
-        Assert.InRange(oversized.BytesPulled, 0, SpecLimits.MaxAssetBytes + (4 * 1024 * 1024));
+        Assert.InRange(body.BytesPulled, 0, SpecLimits.MaxAssetBytes + (4 * 1024 * 1024));
+    }
+
+    /// <summary>
+    /// A body that fails part way through must surface as the documented type,
+    /// naming the asset, rather than as whatever the transport raised.
+    /// </summary>
+    /// <remarks>
+    /// Reading the body outside the block that wraps the request is what exposed
+    /// this: before the loader streamed, the transfer happened inside that block
+    /// and was wrapped by it. A torn body reached the caller as a bare
+    /// <c>HttpRequestException</c> saying only "Error while copying content to a
+    /// stream", with no indication of which asset had failed.
+    /// </remarks>
+    [Fact]
+    public async Task LoadAsync_BodyTornMidTransfer_NamesTheAsset()
+    {
+        var handler = new CountingHandler([]) { Body = new TornContent() };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Build(handler).LoadAsync("assets/torn.bin"));
+
+        Assert.Contains("assets/torn.bin", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -382,9 +552,11 @@ public class ShowcaseAssetTests
 
         foreach (var file in Directory.EnumerateFiles(assets, "*", SearchOption.AllDirectories))
         {
-            // The licence documents themselves are text, not assets this site
-            // hands to a parser, and each states its own terms by existing.
-            if (Path.GetExtension(file) is ".md" or ".txt")
+            // The licence documents themselves are not assets this site hands to
+            // a parser. They are skipped by NAME rather than by extension: a
+            // review pointed out that skipping every .txt would let a real image
+            // named "stray-image.txt" ship unlicensed and unnoticed.
+            if (Path.GetFileName(file) is "LICENSES.md" or "LICENSE.txt")
             {
                 continue;
             }

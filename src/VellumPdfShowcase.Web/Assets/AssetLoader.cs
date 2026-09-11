@@ -30,9 +30,15 @@ public sealed class AssetLoader(HttpClient http)
 {
     /// <summary>
     /// How much is read at a time while the body is being counted against the
-    /// cap. It bounds the overshoot: the tab holds at most the bytes accepted
-    /// so far plus one buffer, never the whole of an oversized response.
+    /// cap. It bounds the overshoot: the read stops within one buffer of the cap
+    /// rather than after the whole of an oversized response has arrived.
     /// </summary>
+    /// <remarks>
+    /// NOTE the accumulating buffer is a <see cref="MemoryStream"/>, which
+    /// doubles as it grows, so the peak is a small multiple of the cap rather
+    /// than the cap exactly. That is bounded, which is the property this exists
+    /// for, but it is not the same claim.
+    /// </remarks>
     private const int ReadChunkBytes = 64 * 1024;
 
     private readonly Dictionary<string, Task<byte[]>> _cache = [];
@@ -142,6 +148,24 @@ public sealed class AssetLoader(HttpClient http)
     }
 
     private static async Task<byte[]> ReadCappedAsync(string path, HttpResponseMessage response)
+    {
+        try
+        {
+            return await ReadCappedCoreAsync(path, response);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            // NOTE: reading the body no longer happens inside the block that
+            // wraps the request, because the request now returns as soon as the
+            // headers arrive. A transfer that fails part way through would
+            // otherwise reach the caller as a bare transport exception naming no
+            // asset, outside the contract this class documents.
+            throw new InvalidOperationException(
+                $"The asset '{path}' could not be fetched: the transfer failed part way through. {ex.Message}", ex);
+        }
+    }
+
+    private static async Task<byte[]> ReadCappedCoreAsync(string path, HttpResponseMessage response)
     {
         using var stream = await response.Content.ReadAsStreamAsync();
 
