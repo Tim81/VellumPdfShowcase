@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Net;
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using VellumPdfShowcase.Web.Model;
 
 namespace VellumPdfShowcase.Web.Assets;
@@ -26,6 +28,13 @@ namespace VellumPdfShowcase.Web.Assets;
 /// </remarks>
 public sealed class AssetLoader(HttpClient http)
 {
+    /// <summary>
+    /// How much is read at a time while the body is being counted against the
+    /// cap. It bounds the overshoot: the tab holds at most the bytes accepted
+    /// so far plus one buffer, never the whole of an oversized response.
+    /// </summary>
+    private const int ReadChunkBytes = 64 * 1024;
+
     private readonly Dictionary<string, Task<byte[]>> _cache = [];
 
     /// <summary>
@@ -78,10 +87,21 @@ public sealed class AssetLoader(HttpClient http)
 
     private async Task<byte[]> FetchAsync(string path)
     {
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+
+        // Both of these are required for the cap below to bound anything, and
+        // each addresses a different layer. Without ResponseHeadersRead,
+        // HttpClient buffers the whole body before the call returns. Without
+        // response streaming, the browser handler materialises it inside
+        // SendAsync regardless of what HttpClient was asked for, so on the
+        // runtime this application actually ships to, omitting either one makes
+        // every check below post-hoc: the tab already holds the bytes.
+        request.SetBrowserResponseStreamingEnabled(true);
+
         HttpResponseMessage response;
         try
         {
-            response = await http.GetAsync(path);
+            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         }
         catch (HttpRequestException ex)
         {
@@ -102,9 +122,8 @@ public sealed class AssetLoader(HttpClient http)
                     $"The asset '{path}' could not be fetched: the server answered {(int)response.StatusCode} {response.ReasonPhrase}.");
             }
 
-            // Refuse on the declared length before reading a body, where the
-            // server declares one. This is the only check that can decline an
-            // oversized asset without first holding all of it in the tab.
+            // Refuse on the declared length first, which costs nothing and
+            // avoids transferring a body that is already known to be too large.
             var declaredLength = response.Content.Headers.ContentLength;
             if (declaredLength > SpecLimits.MaxAssetBytes)
             {
@@ -112,14 +131,47 @@ public sealed class AssetLoader(HttpClient http)
                     $"The asset '{path}' declares {declaredLength:N0} bytes, beyond the {SpecLimits.MaxAssetBytes:N0} byte cap.");
             }
 
-            var bytes = await response.Content.ReadAsByteArrayAsync();
-
-            // A server need not declare a length, and need not tell the truth
-            // when it does, so the real length is checked as well.
-            return bytes.Length > SpecLimits.MaxAssetBytes
-                ? throw new InvalidOperationException(
-                    $"The asset '{path}' is {bytes.Length:N0} bytes, beyond the {SpecLimits.MaxAssetBytes:N0} byte cap.")
-                : bytes;
+            // NOTE: a server need not declare a length, and need not tell the
+            // truth when it does, so the declared length cannot be the only
+            // check. The body is counted as it arrives and abandoned the moment
+            // it passes the cap, rather than being read whole and measured
+            // afterwards, which would let an undeclared body of any size into
+            // the tab before anything objected.
+            return await ReadCappedAsync(path, response);
         }
+    }
+
+    private static async Task<byte[]> ReadCappedAsync(string path, HttpResponseMessage response)
+    {
+        using var stream = await response.Content.ReadAsStreamAsync();
+
+        // Sized from the declared length when there is one, so the ordinary case
+        // does not grow its buffer repeatedly, and clamped so that a false
+        // declaration cannot make this allocation the denial of service the cap
+        // exists to prevent.
+        var expected = (int)Math.Clamp(response.Content.Headers.ContentLength ?? 0, 0, SpecLimits.MaxAssetBytes);
+        using var accumulated = new MemoryStream(expected);
+
+        var buffer = ArrayPool<byte>.Shared.Rent(ReadChunkBytes);
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(buffer.AsMemory(0, ReadChunkBytes))) > 0)
+            {
+                if (accumulated.Length + read > SpecLimits.MaxAssetBytes)
+                {
+                    throw new InvalidOperationException(
+                        $"The asset '{path}' exceeds the {SpecLimits.MaxAssetBytes:N0} byte cap, and was abandoned before it was read in full.");
+                }
+
+                accumulated.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return accumulated.ToArray();
     }
 }
