@@ -22,7 +22,13 @@ namespace VellumPdfShowcase.Tests;
 /// </remarks>
 public class RouteManifestTests
 {
-    private sealed record Route(string Path, string Heading, string[] Expect, string[] Reject, string? Text);
+    private sealed record Route(
+        string Path,
+        string Heading,
+        string[] Expect,
+        string[] Reject,
+        string? Text,
+        IReadOnlyDictionary<string, int> ExpectAtLeast);
 
     private sealed record Manifest(IReadOnlyList<Route> Routes);
 
@@ -47,11 +53,22 @@ public class RouteManifestTests
                 element.TryGetProperty("heading", out var h) ? h.GetString() ?? string.Empty : string.Empty,
                 ReadStrings(element, "expect"),
                 ReadStrings(element, "reject"),
-                element.TryGetProperty("text", out var text) ? text.GetString() : null));
+                element.TryGetProperty("text", out var text) ? text.GetString() : null,
+                ReadCounts(element)));
         }
 
         Assert.NotEmpty(routes);
         return new Manifest(routes);
+    }
+
+    private static IReadOnlyDictionary<string, int> ReadCounts(JsonElement element)
+    {
+        if (!element.TryGetProperty("expectAtLeast", out var counts))
+        {
+            return new Dictionary<string, int>();
+        }
+
+        return counts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetInt32());
     }
 
     private static string[] ReadStrings(JsonElement element, string name) =>
@@ -197,6 +214,78 @@ public class RouteManifestTests
                 route.Expect.Length + route.Reject.Length > 0 || !string.IsNullOrWhiteSpace(route.Text),
                 $"{route.Path} asserts nothing at all beyond rendering a heading");
         }
+    }
+
+    /// <summary>
+    /// Each page is held to the specific things it exists to show, rather than to
+    /// "something".
+    /// </summary>
+    /// <remarks>
+    /// A review reduced the playground to one selector, the gallery to one card
+    /// class, the about page to a one-letter substring and the runtime smoke page
+    /// to another, deleted the not-found route outright, and dropped the object
+    /// tree from every capability. All 498 tests stayed green and the harness then
+    /// drove sixteen routes and exited 0. Asserting that a route asserts SOMETHING
+    /// is close to vacuous; this names what.
+    /// </remarks>
+    [Theory]
+    [InlineData("/", ".card", ".card-planned", ".card-unavailable")]
+    [InlineData("/playground", "iframe", ".code-panel-body", "select")]
+    [InlineData("/compliance", ".preflight-pass", ".coverage-table tbody tr", ".provenance")]
+    [InlineData("/about", "table")]
+    [InlineData("/no-such-page")]
+    public void EveryFixedPageAssertsWhatItExistsToShow(string path, params string[] required)
+    {
+        var route = Load().Routes.Single(r => r.Path == path);
+
+        foreach (var selector in required)
+        {
+            Assert.Contains(selector, route.Expect);
+        }
+    }
+
+    /// <summary>
+    /// A capability route must assert the object tree as well as the preview and
+    /// the snippet, since those are the three panels the page exists to show.
+    /// </summary>
+    [Fact]
+    public void EveryDemonstrableCapabilityAssertsAllThreePanels()
+    {
+        var manifest = Load();
+
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+        {
+            var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
+
+            Assert.Contains("iframe", route.Expect);
+            Assert.Contains(".code-panel-body", route.Expect);
+            Assert.Contains(".api-tree li", route.Expect);
+        }
+    }
+
+    /// <summary>
+    /// The gallery must be held to a card for every catalogue entry, so that a
+    /// gallery rendering three cards where eleven belong is caught.
+    /// </summary>
+    /// <remarks>
+    /// The count lives in the manifest so the harness can read it, and is held to
+    /// the catalogue here so it cannot fall behind. A review removed all but one
+    /// card of each class and the harness reported success, because presence was
+    /// asserted and quantity was not.
+    /// </remarks>
+    [Fact]
+    public void TheGalleryIsHeldToOneCardPerCapability()
+    {
+        var route = Load().Routes.Single(r => r.Path == "/");
+
+        Assert.True(route.ExpectAtLeast.TryGetValue(".card", out var cards), "the gallery asserts no card count");
+        Assert.Equal(CapabilityCatalog.All.Count, cards);
+
+        Assert.True(route.ExpectAtLeast.TryGetValue(".card-planned", out var planned));
+        Assert.Equal(CapabilityCatalog.All.Count(c => c.Status == CapabilityStatus.Planned), planned);
+
+        Assert.True(route.ExpectAtLeast.TryGetValue(".card-unavailable", out var unavailable));
+        Assert.Equal(CapabilityCatalog.All.Count(c => c.Status == CapabilityStatus.UnavailableInBrowser), unavailable);
     }
 
     /// <summary>

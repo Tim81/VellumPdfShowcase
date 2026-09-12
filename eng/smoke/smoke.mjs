@@ -3,7 +3,7 @@
 //
 // This exists because of a gap nothing else in this repository closes. The test
 // suite runs on desktop .NET; the site runs on browser WebAssembly. A capability
-// that encrypts passed all 480 tests and failed in every visitor's tab with
+// that encrypts passed every test and failed in every visitor's tab with
 // "Algorithm 'Aes' is not supported on this platform", because AES is absent from
 // the browser runtime. Two other defects in the same layer were also invisible to
 // the suite: a component parameter that rendered the text "_code" instead of the
@@ -41,11 +41,22 @@
 //   one route serving another      the heading does not match the route
 //     capability's document
 //   the manifest emptied           fewer routes than the floor, before launching
+//   every preview at opacity 0     every match is hidden or positioned away
+//   every preview off screen       the same
+//   one blank PDF everywhere,      routes showing the same preview as each
+//     one snippet everywhere,        other, the same snippet as each other, and
+//     three cards where 11 belong    fewer cards than the catalogue has entries
 //
-// The last four of those were found by a review AFTER an earlier version of this
-// file was merged, and each one passed 17 of 17 at the time. The lesson is
-// recorded rather than the fix alone: presence is not visibility, an element is
-// not its contents, and a page that renders is not the page that was asked for.
+// A second review found the last three after the first eight were merged, each
+// passing 17 of 17 at the time. The lessons are recorded rather than the fixes
+// alone: presence is not visibility, visibility is not what Playwright's
+// isVisible() means, an element is not its contents, a well-formed PDF is not
+// the right PDF, and a page that renders is not the page that was asked for.
+//
+// KNOWN GAPS, stated rather than implied. Occlusion by an overlaying element is
+// not modelled. A document with the right structure but wrong content passes, so
+// long as it differs from the others. Nothing here clicks anything, so /smoke's
+// own buttons are never pressed.
 //
 // The unbroken site passes all 17 before and after each mutation.
 
@@ -196,6 +207,12 @@ async function main() {
 
   const browser = await chromium.launch();
   const failures = [];
+
+  // One entry per preview and per snippet, so that two routes claiming to
+  // demonstrate different capabilities can be held to showing different things.
+  // Every assertion before this one is satisfied by a site that serves one
+  // document and one snippet everywhere.
+  const fingerprints = [];
   let driven = 0;
 
   try {
@@ -263,6 +280,17 @@ async function main() {
       // document passed every route: the harness could tell "bytes exist" from
       // "bytes do not exist" and nothing finer.
       if ((route.expect ?? []).includes('iframe')) {
+        // The blob URL is created strictly AFTER the settle predicate goes false:
+        // the page clears its busy flag in the same block that assigns the bytes,
+        // and the preview then makes two interop round trips before it has a URL.
+        // Reading immediately therefore races the site and fails a working one.
+        // Measured: a 400 ms delay inside createBlobUrl failed nine routes.
+        await page
+          .waitForFunction(() => document.querySelector('iframe')?.src?.startsWith('blob:') === true, null, {
+            timeout: SETTLE_TIMEOUT_MS,
+          })
+          .catch(() => problems.push('no blob URL appeared for the preview'));
+
         const verdict = await page.evaluate(async () => {
           const frame = document.querySelector('iframe');
           if (!frame) {
@@ -270,7 +298,7 @@ async function main() {
           }
 
           if (!frame.src.startsWith('blob:')) {
-            return `the frame source is not a blob URL: ${frame.src.slice(0, 60)}`;
+            return `the frame source is not a blob URL: ${JSON.stringify(frame.src.slice(0, 60))}`;
           }
 
           const bytes = new Uint8Array(await (await fetch(frame.src)).arrayBuffer());
@@ -293,11 +321,29 @@ async function main() {
             return `the preview is only ${bytes.length} bytes`;
           }
 
-          return 'ok';
+          // A blank page is a well-formed PDF. What distinguishes a real
+          // document is that it draws something, which means a content stream
+          // with operators in it.
+          const body = decoder.decode(bytes);
+          if (!body.includes('/Contents')) {
+            return 'the preview has no page content at all';
+          }
+
+          // Returned rather than discarded, so the caller can tell whether two
+          // routes are showing the SAME document. A review pointed every preview
+          // at one shared blank PDF and every route passed.
+          let hash = 0;
+          for (let index = 0; index < bytes.length; index++) {
+            hash = ((hash << 5) - hash + bytes[index]) | 0;
+          }
+
+          return `ok:${bytes.length}:${hash}`;
         }).catch(error => `the preview could not be read: ${error.message}`);
 
-        if (verdict !== 'ok') {
+        if (!verdict.startsWith('ok:')) {
           problems.push(verdict);
+        } else if (route.distinct !== false) {
+          fingerprints.push({ path: route.path, kind: 'preview', value: verdict });
         }
       }
 
@@ -311,6 +357,8 @@ async function main() {
       for (const snippet of snippets) {
         if (!snippet.includes('using ') || !snippet.includes('new Document')) {
           problems.push(`the code panel does not hold C#: ${JSON.stringify(snippet.slice(0, 60))}`);
+        } else if (route.distinct !== false) {
+          fingerprints.push({ path: route.path, kind: 'snippet', value: snippet });
         }
       }
 
@@ -320,6 +368,13 @@ async function main() {
       // NOTE visibility rather than presence. `count()` is visibility-blind: one
       // line of stylesheet hiding every preview left seventeen routes passing
       // while the site showed nothing at all.
+      for (const [selector, minimum] of Object.entries(route.expectAtLeast ?? {})) {
+        const found = await page.locator(selector).count();
+        if (found < minimum) {
+          problems.push(`expected at least ${minimum} of ${selector}, found ${found}`);
+        }
+      }
+
       for (const selector of route.expect ?? []) {
         const matches = page.locator(selector);
         const count = await matches.count();
@@ -332,13 +387,57 @@ async function main() {
         // Any one of the matches being visible is enough. Taking only the first
         // would fail on a selector that also matches something the layout hides,
         // such as a navigation control collapsed at this viewport.
+        //
+        // NOTE this deliberately does NOT use Playwright's isVisible(), which
+        // means "has a box and is not visibility:hidden" and models neither
+        // opacity nor position. A review hid every preview on the site with one
+        // line of `opacity: 0` and the harness reported seventeen of seventeen
+        // passing.
+        //
+        // NOTE also that it asks whether the element sits within the DOCUMENT,
+        // not within the viewport. Content below the fold is shown; content at
+        // left:-10000px is not. Checking the viewport instead reported the
+        // gallery's own cards as hidden.
+        //
+        // Occlusion by another element is still not modelled, and is recorded in
+        // the ledger above as a known gap rather than claimed.
         let visible = false;
-        for (let index = 0; index < count && !visible; index++) {
-          visible = await matches.nth(index).isVisible().catch(() => false);
+        const handles = await matches.elementHandles();
+
+        for (const handle of handles) {
+          visible = await handle.evaluate(element => {
+            const box = element.getBoundingClientRect();
+            if (box.width < 1 || box.height < 1) {
+              return false;
+            }
+
+            const page = document.documentElement;
+            const left = box.left + scrollX;
+            const top = box.top + scrollY;
+            if (left + box.width < 0 || top + box.height < 0 || left > page.scrollWidth || top > page.scrollHeight) {
+              return false;
+            }
+
+            // Opacity compounds down the tree, so an ancestor at zero hides a
+            // child whose own computed style reads 1.
+            for (let node = element; node instanceof Element; node = node.parentElement) {
+              const style = getComputedStyle(node);
+              if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) {
+                return false;
+              }
+            }
+
+            return true;
+          }).catch(() => false);
+
+          await handle.dispose();
+          if (visible) {
+            break;
+          }
         }
 
         if (!visible) {
-          problems.push(`expected ${selector} to be visible, every match is hidden`);
+          problems.push(`expected ${selector} to be visible, every match is hidden or positioned away`);
         }
       }
 
@@ -386,6 +485,22 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
+  }
+
+  // Two routes showing the same document is not something any per-route check
+  // can see, because each of them is individually fine.
+  for (const kind of ['preview', 'snippet']) {
+    const seen = new Map();
+    for (const { path, value } of fingerprints.filter(entry => entry.kind === kind)) {
+      if (seen.has(value)) {
+        const message = `${path} shows the same ${kind} as ${seen.get(value)}`;
+        console.log(`FAIL  ${path}`);
+        console.log(`        ${message}`);
+        failures.push({ path, problems: [message] });
+      } else {
+        seen.set(value, path);
+      }
+    }
   }
 
   if (missing.length > 0) {

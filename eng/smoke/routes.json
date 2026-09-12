@@ -26,7 +26,12 @@
         ".card-unavailable"
       ],
       "text": "capability catalogue",
-      "heading": "VellumPdf"
+      "heading": "VellumPdf",
+      "expectAtLeast": {
+        ".card": 11,
+        ".card-planned": 2,
+        ".card-unavailable": 1
+      }
     },
     {
       "path": "/playground",
@@ -38,7 +43,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Playground"
+      "heading": "Playground",
+      "distinct": false
     },
     {
       "path": "/compliance",
