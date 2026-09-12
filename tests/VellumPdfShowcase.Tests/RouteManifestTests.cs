@@ -28,7 +28,8 @@ public class RouteManifestTests
         string[] Expect,
         string[] Reject,
         string? Text,
-        IReadOnlyDictionary<string, int> ExpectAtLeast);
+        IReadOnlyDictionary<string, int> ExpectAtLeast,
+        bool Distinct);
 
     private sealed record Manifest(IReadOnlyList<Route> Routes);
 
@@ -54,7 +55,8 @@ public class RouteManifestTests
                 ReadStrings(element, "expect"),
                 ReadStrings(element, "reject"),
                 element.TryGetProperty("text", out var text) ? text.GetString() : null,
-                ReadCounts(element)));
+                ReadCounts(element),
+                !element.TryGetProperty("distinct", out var distinct) || distinct.GetBoolean()));
         }
 
         Assert.NotEmpty(routes);
@@ -233,6 +235,7 @@ public class RouteManifestTests
     [InlineData("/playground", "iframe", ".code-panel-body", "select")]
     [InlineData("/compliance", ".preflight-pass", ".coverage-table tbody tr", ".provenance")]
     [InlineData("/about", "table")]
+    [InlineData("/smoke", "button:has-text('Generate')", "section")]
     [InlineData("/no-such-page")]
     public void EveryFixedPageAssertsWhatItExistsToShow(string path, params string[] required)
     {
@@ -289,6 +292,52 @@ public class RouteManifestTests
     }
 
     /// <summary>
+    /// A capability route's heading must be that capability's own title.
+    /// </summary>
+    /// <remarks>
+    /// The heading check exists to stop one route serving another's document, and
+    /// a review defeated it by simply writing the other capability's title into
+    /// the manifest. Requiring it to equal the catalogue's own title closes that:
+    /// the manifest can no longer disagree with the page it is checking.
+    /// </remarks>
+    [Fact]
+    public void EveryCapabilityRouteAssertsTheCatalogueTitle()
+    {
+        var manifest = Load();
+
+        foreach (var capability in CapabilityCatalog.All)
+        {
+            var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
+            Assert.Equal(capability.Title, route.Heading);
+        }
+    }
+
+    /// <summary>
+    /// The distinctness exemption must be spent only where it is earned.
+    /// </summary>
+    /// <remarks>
+    /// Nothing read the flag, so setting it on every route disabled the whole
+    /// distinctness gate with the suite green. The playground earns it because it
+    /// shows whichever capability is selected first, which is by construction a
+    /// document another route also shows. No other route has that excuse.
+    /// </remarks>
+    [Fact]
+    public void OnlyThePlaygroundIsExemptFromShowingSomethingOfItsOwn()
+    {
+        foreach (var route in Load().Routes)
+        {
+            if (route.Path == "/playground")
+            {
+                Assert.False(route.Distinct, "the playground shows another route's document and must be exempt");
+            }
+            else
+            {
+                Assert.True(route.Distinct, $"{route.Path} claims an exemption it has not earned");
+            }
+        }
+    }
+
+    /// <summary>
     /// The conformance routes must assert a PASSING verdict, not merely a verdict.
     /// </summary>
     /// <remarks>
@@ -331,6 +380,18 @@ public class RouteManifestTests
     /// smoke check rather than left to a reader, because removing it would be a
     /// silent change to what this site says about someone else's software.
     /// </summary>
+    /// <summary>
+    /// The not-found route asserts no selector, so the only thing distinguishing
+    /// it from any other page is its text, which is therefore pinned.
+    /// </summary>
+    [Fact]
+    public void TheNotFoundRouteIsHeldToItsMessage()
+    {
+        var route = Load().Routes.Single(r => r.Path == "/no-such-page");
+
+        Assert.Equal("Not Found", route.Text);
+    }
+
     [Fact]
     public void TheConformancePageIsHeldToItsVeraPdfStatement()
     {

@@ -53,10 +53,23 @@
 // isVisible() means, an element is not its contents, a well-formed PDF is not
 // the right PDF, and a page that renders is not the page that was asked for.
 //
-// KNOWN GAPS, stated rather than implied. Occlusion by an overlaying element is
-// not modelled. A document with the right structure but wrong content passes, so
-// long as it differs from the others. Nothing here clicks anything, so /smoke's
-// own buttons are never pressed.
+//   one real document everywhere, routes showing the same preview as each other,
+//     /ID randomised per call        caught because the fingerprint is what the
+//                                    page DRAWS, not its bytes: the library
+//                                    stamps a fresh /ID into every document, so
+//                                    hashing bytes fingerprinted the generation
+//                                    and never the document
+//   a blank but valid page          the preview draws nothing
+//   every preview clipped to
+//     nothing by an ancestor        every match is hidden or positioned away
+//
+// KNOWN GAPS, stated rather than implied, and re-checked by the review that found
+// the last of them. Occlusion by an OVERLAYING element is not modelled: a fixed,
+// opaque, full-viewport element covering the whole site still passes. Content
+// that draws the wrong thing passes, so long as it draws something and differs
+// from what the other routes draw. Nothing here clicks anything, so the runtime
+// smoke page's own buttons are never pressed and the playground's controls are
+// never operated.
 //
 // The unbroken site passes all 17 before and after each mutation.
 
@@ -158,6 +171,67 @@ function serve(directory) {
   });
 
   return { server, missing };
+}
+
+/**
+ * Whether an element is actually shown to a visitor, evaluated in the page.
+ *
+ * NOTE this deliberately does not use Playwright's isVisible(), which means "has
+ * a box and is not visibility:hidden" and models neither opacity nor position. A
+ * review hid every preview with one line of `opacity: 0` and the harness reported
+ * seventeen of seventeen passing. A later one clipped every preview to nothing
+ * with `height: 0; overflow: hidden`, which has a box, a clean ancestor chain,
+ * and is equally invisible.
+ *
+ * Horizontally the element must fall within the viewport, because this site is
+ * not meant to scroll sideways, so `left: 12000px` is as hidden as `-12000px`.
+ * Vertically it need only fall within the document, because content below the
+ * fold is shown: testing the viewport there reported the gallery's own cards as
+ * hidden.
+ *
+ * KNOWN GAP: an element covered by another is not modelled.
+ */
+function isShown(element) {
+  const box = element.getBoundingClientRect();
+  if (box.width < 2 || box.height < 2) {
+    return false;
+  }
+
+  if (box.right < 0 || box.left > innerWidth) {
+    return false;
+  }
+
+  if (box.bottom + scrollY < 0 || box.top + scrollY > document.documentElement.scrollHeight) {
+    return false;
+  }
+
+  let clip = box;
+
+  for (let node = element; node instanceof Element; node = node.parentElement) {
+    const style = getComputedStyle(node);
+
+    if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) < 0.05) {
+      return false;
+    }
+
+    // An ancestor that clips its overflow can hide a descendant entirely while
+    // the descendant keeps its own box and a clean chain above it.
+    if (node !== element && style.overflow !== 'visible') {
+      const bounds = node.getBoundingClientRect();
+      const left = Math.max(clip.left, bounds.left);
+      const top = Math.max(clip.top, bounds.top);
+      const right = Math.min(clip.right, bounds.right);
+      const bottom = Math.min(clip.bottom, bounds.bottom);
+
+      if (right - left < 2 || bottom - top < 2) {
+        return false;
+      }
+
+      clip = new DOMRect(left, top, right - left, bottom - top);
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -289,7 +363,7 @@ async function main() {
           .waitForFunction(() => document.querySelector('iframe')?.src?.startsWith('blob:') === true, null, {
             timeout: SETTLE_TIMEOUT_MS,
           })
-          .catch(() => problems.push('no blob URL appeared for the preview'));
+          .catch(() => undefined);
 
         const verdict = await page.evaluate(async () => {
           const frame = document.querySelector('iframe');
@@ -298,7 +372,7 @@ async function main() {
           }
 
           if (!frame.src.startsWith('blob:')) {
-            return `the frame source is not a blob URL: ${JSON.stringify(frame.src.slice(0, 60))}`;
+            return 'no blob URL appeared for the preview';
           }
 
           const bytes = new Uint8Array(await (await fetch(frame.src)).arrayBuffer());
@@ -314,30 +388,75 @@ async function main() {
             return 'the preview has no %%EOF, so it is truncated';
           }
 
-          // A document with a page, a font and any content at all is far larger
-          // than this. The bound is deliberately loose: its job is to catch a
-          // stub, not to pin a size that would need revisiting.
-          if (bytes.length < 500) {
-            return `the preview is only ${bytes.length} bytes`;
-          }
-
-          // A blank page is a well-formed PDF. What distinguishes a real
-          // document is that it draws something, which means a content stream
-          // with operators in it.
+          // What the page actually DRAWS, which is the only thing worth
+          // fingerprinting. Two earlier attempts were worthless: hashing the raw
+          // bytes fingerprints the generation event, because the library stamps a
+          // fresh random /ID into every document, so two routes showing the same
+          // document never collided; and testing for the string /Contents proves
+          // only that a page dictionary has that key, which a blank page does.
+          //
+          // Content streams are Flate-compressed, so they are inflated here. The
+          // browser has DecompressionStream, so this needs nothing bundled.
           const body = decoder.decode(bytes);
-          if (!body.includes('/Contents')) {
-            return 'the preview has no page content at all';
+          const operators = [];
+
+          for (let at = body.indexOf('stream'); at !== -1; at = body.indexOf('stream', at + 6)) {
+            const endsAt = body.indexOf('endstream', at);
+            if (endsAt === -1) {
+              break;
+            }
+
+            let from = at + 'stream'.length;
+            if (body.charCodeAt(from) === 13) {
+              from++;
+            }
+
+            if (body.charCodeAt(from) === 10) {
+              from++;
+            }
+
+            // The end-of-line before `endstream` is not part of the stream data.
+            // Leaving it on makes the decoder reject the whole stream as having
+            // trailing rubbish, which silently turned every document into "draws
+            // nothing".
+            let to = endsAt;
+            while (to > from && (bytes[to - 1] === 10 || bytes[to - 1] === 13)) {
+              to--;
+            }
+
+            const raw = bytes.slice(from, to);
+            if (raw.length === 0) {
+              continue;
+            }
+
+            for (const format of ['deflate', 'deflate-raw']) {
+              try {
+                const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream(format));
+                operators.push(decoder.decode(new Uint8Array(await new Response(stream).arrayBuffer())));
+                break;
+              } catch {
+                // Not this format. An uncompressed stream, such as the XMP packet,
+                // fails both and is not what identifies a page anyway.
+              }
+            }
+
+            at = endsAt;
           }
 
-          // Returned rather than discarded, so the caller can tell whether two
-          // routes are showing the SAME document. A review pointed every preview
-          // at one shared blank PDF and every route passed.
+          const drawn = operators.join('');
+
+          // A page that shows nothing has no text-showing and no path-painting
+          // operator. This is the check the previous one only claimed to be.
+          if (!/T[jJ]|Do|[fFbBS]\*?\s/.test(drawn)) {
+            return 'the preview draws nothing: no text, image or path operators in any content stream';
+          }
+
           let hash = 0;
-          for (let index = 0; index < bytes.length; index++) {
-            hash = ((hash << 5) - hash + bytes[index]) | 0;
+          for (let index = 0; index < drawn.length; index++) {
+            hash = ((hash << 5) - hash + drawn.charCodeAt(index)) | 0;
           }
 
-          return `ok:${bytes.length}:${hash}`;
+          return `ok:${drawn.length}:${hash}`;
         }).catch(error => `the preview could not be read: ${error.message}`);
 
         if (!verdict.startsWith('ok:')) {
@@ -368,10 +487,20 @@ async function main() {
       // NOTE visibility rather than presence. `count()` is visibility-blind: one
       // line of stylesheet hiding every preview left seventeen routes passing
       // while the site showed nothing at all.
+      // Counted by what is SHOWN. Counting the document instead let a review
+      // hide every card but one with a stylesheet while eleven remained in the
+      // markup, and the harness reported success.
       for (const [selector, minimum] of Object.entries(route.expectAtLeast ?? {})) {
-        const found = await page.locator(selector).count();
+        const found = await page.evaluate(
+          ({ css, shown }) => {
+            // eslint-disable-next-line no-eval
+            const predicate = eval(`(${shown})`);
+            return [...document.querySelectorAll(css)].filter(predicate).length;
+          },
+          { css: selector, shown: isShown.toString() });
+
         if (found < minimum) {
-          problems.push(`expected at least ${minimum} of ${selector}, found ${found}`);
+          problems.push(`expected at least ${minimum} of ${selector} to be shown, found ${found}`);
         }
       }
 
@@ -405,35 +534,14 @@ async function main() {
         const handles = await matches.elementHandles();
 
         for (const handle of handles) {
-          visible = await handle.evaluate(element => {
-            const box = element.getBoundingClientRect();
-            if (box.width < 1 || box.height < 1) {
-              return false;
-            }
-
-            const page = document.documentElement;
-            const left = box.left + scrollX;
-            const top = box.top + scrollY;
-            if (left + box.width < 0 || top + box.height < 0 || left > page.scrollWidth || top > page.scrollHeight) {
-              return false;
-            }
-
-            // Opacity compounds down the tree, so an ancestor at zero hides a
-            // child whose own computed style reads 1.
-            for (let node = element; node instanceof Element; node = node.parentElement) {
-              const style = getComputedStyle(node);
-              if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) {
-                return false;
-              }
-            }
-
-            return true;
-          }).catch(() => false);
-
-          await handle.dispose();
-          if (visible) {
-            break;
+          if (!visible) {
+            visible = await handle.evaluate(isShown).catch(() => false);
           }
+
+          // Disposed unconditionally rather than only for the match that
+          // answered, so an early exit does not leave the rest of the snapshot
+          // held until the context closes.
+          await handle.dispose();
         }
 
         if (!visible) {
