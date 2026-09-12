@@ -1,0 +1,13 @@
+{
+  "name": "vellumpdfshowcase-smoke",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Drives every route of the published site in a real browser. See smoke.mjs for why this exists.",
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}
