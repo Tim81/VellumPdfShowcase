@@ -46,7 +46,7 @@ function latin1(text) {
  * number, and `extraObjects` appends whatever is passed.
  */
 function build(pageContents, options = {}) {
-  const { compress = false, resources = false, contentsAsArray = false, generation = 0, extraObjects = '', typeLast = false } = options;
+  const { compress = false, resources = false, contentsAsArray = false, generation = 0, extraObjects = '', typeLast = false, spacedType = false } = options;
 
   let next = 10;
   const objects = [];
@@ -72,7 +72,7 @@ function build(pageContents, options = {}) {
       : '/Contents ' + contentNumbers[0] + ' ' + generation + ' R';
 
     const nested = resources ? '/Resources<</ProcSet[/PDF /Text]/Font<</F1 99 0 R>>/XObject<<>>>>' : '';
-    const type = '/Type/Page';
+    const type = spacedType ? '/Type /Page ' : '/Type/Page';
     const rest = '/Parent 2 0 R/MediaBox[0 0 595 842]' + nested + contents;
 
     objects.push(pageNumber + ' 0 obj<<' + (typeLast ? rest + type : type + rest) + '>>endobj\n');
@@ -134,6 +134,28 @@ const cases = [
   { name: 'a string with an escaped bracket', pdf: build(['BT /F1 12 Tf 72 700 Td (a \\) b (c) d) ET']), expect: 'draws nothing' },
   { name: 'the same label actually shown', pdf: build(['BT /F1 12 Tf 72 700 Td (b.) Tj ET']), expect: 'ok' },
   { name: 'an inline image', pdf: build(['BI /W 2 /H 2 /BPC 8 /CS /G ID  EI']), expect: 'ok' },
+
+  // Blank OPERANDS. A review rewrote every literal string on the site to spaces,
+  // leaving seven pages entirely blank with their operators, coordinates and
+  // structure intact, and every route passed. Showing nothing is not drawing.
+  { name: 'showing an empty string', pdf: build(['BT /F1 12 Tf 72 700 Td () Tj ET']), expect: 'draws nothing' },
+  { name: 'showing only spaces', pdf: build(['BT /F1 12 Tf 72 700 Td (     ) Tj ET']), expect: 'draws nothing' },
+  { name: 'showing an array of blanks', pdf: build(['BT /F1 12 Tf [( ) -200 (  )] TJ ET']), expect: 'draws nothing' },
+  { name: 'showing an array with real text in it', pdf: build(['BT /F1 12 Tf [( ) -200 (word)] TJ ET']), expect: 'ok' },
+  { name: 'showing a blank string then a real one', pdf: build(['BT /F1 12 Tf () Tj (word) Tj ET']), expect: 'ok' },
+  { name: 'a blank string beside a painted path', pdf: build(['BT () Tj ET 0 0 10 10 re f']), expect: 'ok' },
+
+  // Fixtures a review showed could not fail, each chosen to discriminate.
+  { name: 'a one-digit hex string spelling an operator', pdf: build(['BT /F1 12 Tf <66> ET']), expect: 'draws nothing' },
+  // A hex string that is SHOWN and has ink. Without this the hex branch could be
+  // disabled outright: every other hex case expects "draws nothing", which a
+  // decoder that returns nothing also produces.
+  { name: 'a hex string that is shown', pdf: build(['BT /F1 12 Tf <48656C6C6F> Tj ET']), expect: 'ok' },
+  { name: 'a hex string of spaces that is shown', pdf: build(['BT /F1 12 Tf <202020> Tj ET']), expect: 'draws nothing' },
+  { name: 'a nested string containing an operator', pdf: build(['BT /F1 12 Tf (see (b) f) ET']), expect: 'draws nothing' },
+  { name: 'an inline image without the EI operator in the set', pdf: build(['BI /W 1 /H 1 /BPC 8 /CS /G ID x']), expect: 'ok' },
+  { name: 'a stream separated by carriage returns', pdf: build(['0 0 10 10 re' + String.fromCharCode(13) + ' f' + String.fromCharCode(13)]), expect: 'ok' },
+  { name: 'a page whose type entry carries a space', pdf: build([TEXT], { spacedType: true }), expect: 'ok' },
 
   // Structural checks a review broke outright with every case still passing.
   { name: 'a preview that is not a PDF at all', pdf: 'NOTAPDF and nothing else', expect: 'does not begin with %PDF-' },

@@ -70,8 +70,9 @@
 //     passes, because elementFromPoint skips such elements
 //   a filter that is not opacity, such as brightness(0) or a heavy blur, is not
 //     modelled, and only the first opacity() in a filter list is read
-//   content that draws the WRONG thing passes, so long as every page draws
-//     something, the page count matches, and the routes differ from each other
+//   content that draws the WRONG thing passes, so long as every page marks
+//     paper, the page count matches, and the routes differ from each other
+//   text painted in the page's own background colour counts as marking it
 //   a page inside an object stream is not found, and reports as no page at all,
 //     which is a false failure rather than a false pass
 //   nothing here clicks anything, so the runtime smoke page's own buttons are
