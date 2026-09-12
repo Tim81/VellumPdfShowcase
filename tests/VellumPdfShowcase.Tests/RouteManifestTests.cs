@@ -22,7 +22,7 @@ namespace VellumPdfShowcase.Tests;
 /// </remarks>
 public class RouteManifestTests
 {
-    private sealed record Route(string Path, string[] Expect, string[] Reject, string? Text);
+    private sealed record Route(string Path, string Heading, string[] Expect, string[] Reject, string? Text);
 
     private sealed record Manifest(IReadOnlyList<Route> Routes);
 
@@ -44,6 +44,7 @@ public class RouteManifestTests
         {
             routes.Add(new Route(
                 element.GetProperty("path").GetString()!,
+                element.TryGetProperty("heading", out var h) ? h.GetString() ?? string.Empty : string.Empty,
                 ReadStrings(element, "expect"),
                 ReadStrings(element, "reject"),
                 element.TryGetProperty("text", out var text) ? text.GetString() : null));
@@ -153,8 +154,88 @@ public class RouteManifestTests
     [InlineData("/playground")]
     [InlineData("/compliance")]
     [InlineData("/about")]
+    [InlineData("/smoke")]
     public void EveryFixedPageIsDriven(string path) =>
         Assert.Contains(path, Load().Routes.Select(route => route.Path));
+
+    /// <summary>
+    /// Every route must identify which page answered it.
+    /// </summary>
+    /// <remarks>
+    /// A review redirected one capability route to another and the check reported
+    /// success, because every capability route carries identical expectations and
+    /// nothing compared the heading to the route. The heading is what tells them
+    /// apart.
+    /// </remarks>
+    [Fact]
+    public void EveryRouteAssertsItsOwnHeading()
+    {
+        foreach (var route in Load().Routes)
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(route.Heading),
+                $"{route.Path} asserts no heading, so it cannot tell which page answered");
+        }
+    }
+
+    /// <summary>
+    /// Every route must assert something beyond its heading.
+    /// </summary>
+    /// <remarks>
+    /// The route list was gated from the beginning; the assertions on it were not.
+    /// A review reduced five routes to bare paths and every one of the 492 tests
+    /// stayed green, which left the gallery, the playground, the about page and
+    /// the runtime smoke page able to be stripped to "has a heading and no error
+    /// bar" unnoticed.
+    /// </remarks>
+    [Fact]
+    public void EveryRouteAssertsSomethingBeyondItsHeading()
+    {
+        foreach (var route in Load().Routes)
+        {
+            Assert.True(
+                route.Expect.Length + route.Reject.Length > 0 || !string.IsNullOrWhiteSpace(route.Text),
+                $"{route.Path} asserts nothing at all beyond rendering a heading");
+        }
+    }
+
+    /// <summary>
+    /// The conformance routes must assert a PASSING verdict, not merely a verdict.
+    /// </summary>
+    /// <remarks>
+    /// The verdict element carries preflight-pass, preflight-fail and
+    /// preflight-unreadable alike, so asserting the verdict class asserted nothing
+    /// about conformance: a document failing its own profile, or one the validator
+    /// could not read, would have passed. This is the site's headline claim about
+    /// the library, so it is the last thing that should go unchecked.
+    /// </remarks>
+    [Theory]
+    [InlineData("/compliance")]
+    [InlineData("/capability/pdfa-conformance")]
+    public void EveryConformanceRouteAssertsAPass(string path)
+    {
+        var route = Load().Routes.Single(r => r.Path == path);
+
+        Assert.Contains(".preflight-pass", route.Expect);
+        Assert.DoesNotContain(".preflight-verdict", route.Expect);
+    }
+
+    /// <summary>
+    /// A demonstrable capability must be asserted to show its preview, not merely
+    /// to have one. The empty-state element being absent is what says the preview
+    /// is the document rather than a placeholder.
+    /// </summary>
+    [Fact]
+    public void EveryDemonstrableCapabilityRejectsTheEmptyState()
+    {
+        var manifest = Load();
+
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+        {
+            var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
+            Assert.Contains(".pdf-preview-empty", route.Reject);
+        }
+    }
 
     /// <summary>
     /// The conformance page's standing claim about veraPDF is asserted by the

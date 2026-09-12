@@ -31,12 +31,23 @@
 //                                  more timeouts
 //   the error bar forced visible   the Blazor error bar is showing, on all 17
 //   a console error injected       the console error, on all 17
+//   a console warning injected     the console warning, on all 17
 //   encryption marked available    the AES message, and a missing gallery card
 //   a literal component binding    the code panel does not hold C#
 //   the demonstrability guard      the null reference on both planned routes
 //     removed
+//   every preview a corrupt PDF    the preview has no %%EOF, on all 9 previews
+//   every preview hidden by CSS    every match of iframe is hidden, on all 9
+//   one route serving another      the heading does not match the route
+//     capability's document
+//   the manifest emptied           fewer routes than the floor, before launching
 //
-// The unbroken site passes all 17 before and after each of those.
+// The last four of those were found by a review AFTER an earlier version of this
+// file was merged, and each one passed 17 of 17 at the time. The lesson is
+// recorded rather than the fix alone: presence is not visibility, an element is
+// not its contents, and a page that renders is not the page that was asked for.
+//
+// The unbroken site passes all 17 before and after each mutation.
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -161,8 +172,22 @@ async function settle(page) {
   return false;
 }
 
+// The manifest is held to the catalogue by RouteManifestTests, but that test runs
+// in a different continuous integration job, so on its own this harness would
+// report success for an empty list. A floor here means the browser gate cannot
+// certify itself after the manifest has been gutted.
+const MINIMUM_ROUTES = 10;
+
 async function main() {
   const routes = JSON.parse(await readFile(join(here, 'routes.json'), 'utf8'));
+
+  if (!Array.isArray(routes.routes) || routes.routes.length < MINIMUM_ROUTES) {
+    console.error(
+      `the manifest lists ${routes.routes?.length ?? 0} route(s); at least ${MINIMUM_ROUTES} are expected. `
+      + 'Driving a handful of routes and reporting success is worse than not running at all.');
+    return 1;
+  }
+
   const { server, missing } = serve(root);
 
   await new Promise(done => server.listen(0, '127.0.0.1', done));
@@ -181,9 +206,14 @@ async function main() {
 
       const problems = [];
       page.on('pageerror', error => problems.push(`uncaught: ${error.message}`));
+      // Warnings count as well as errors. The .NET runtime writes Console.WriteLine
+      // to console.log and console.debug rather than console.error, so a catch
+      // block that logs instead of surfacing a message would otherwise be
+      // entirely outside this harness's view. The site emits neither on any route
+      // today, so the bar costs nothing to hold.
       page.on('console', message => {
-        if (message.type() === 'error') {
-          problems.push(`console: ${message.text()}`);
+        if (message.type() === 'error' || message.type() === 'warning') {
+          problems.push(`console ${message.type()}: ${message.text()}`);
         }
       });
 
@@ -227,6 +257,50 @@ async function main() {
         problems.push('the heading is empty');
       }
 
+      // The preview must hold a PDF, not merely be an element on the page. The
+      // frame's source is a blob URL, so the bytes behind it can be read back and
+      // checked from inside the page. Without this, a preview showing a corrupt
+      // document passed every route: the harness could tell "bytes exist" from
+      // "bytes do not exist" and nothing finer.
+      if ((route.expect ?? []).includes('iframe')) {
+        const verdict = await page.evaluate(async () => {
+          const frame = document.querySelector('iframe');
+          if (!frame) {
+            return 'no frame';
+          }
+
+          if (!frame.src.startsWith('blob:')) {
+            return `the frame source is not a blob URL: ${frame.src.slice(0, 60)}`;
+          }
+
+          const bytes = new Uint8Array(await (await fetch(frame.src)).arrayBuffer());
+          const decoder = new TextDecoder('latin1');
+          const header = decoder.decode(bytes.slice(0, 5));
+          const trailer = decoder.decode(bytes.slice(-2048));
+
+          if (header !== '%PDF-') {
+            return `the preview does not begin with %PDF- but with ${JSON.stringify(header)}`;
+          }
+
+          if (!trailer.includes('%%EOF')) {
+            return 'the preview has no %%EOF, so it is truncated';
+          }
+
+          // A document with a page, a font and any content at all is far larger
+          // than this. The bound is deliberately loose: its job is to catch a
+          // stub, not to pin a size that would need revisiting.
+          if (bytes.length < 500) {
+            return `the preview is only ${bytes.length} bytes`;
+          }
+
+          return 'ok';
+        }).catch(error => `the preview could not be read: ${error.message}`);
+
+        if (verdict !== 'ok') {
+          problems.push(verdict);
+        }
+      }
+
       // A code panel that exists is not a code panel that works. One of the
       // defects this check exists for rendered the text "_code" here, because an
       // unprefixed attribute value on a string-typed component parameter is a
@@ -242,10 +316,37 @@ async function main() {
 
       // What the route is supposed to prove it can do, stated per route rather
       // than assumed, so "it rendered" is not mistaken for "it worked".
+      //
+      // NOTE visibility rather than presence. `count()` is visibility-blind: one
+      // line of stylesheet hiding every preview left seventeen routes passing
+      // while the site showed nothing at all.
       for (const selector of route.expect ?? []) {
-        if ((await page.locator(selector).count()) === 0) {
+        const matches = page.locator(selector);
+        const count = await matches.count();
+
+        if (count === 0) {
           problems.push(`expected ${selector}, found none`);
+          continue;
         }
+
+        // Any one of the matches being visible is enough. Taking only the first
+        // would fail on a selector that also matches something the layout hides,
+        // such as a navigation control collapsed at this viewport.
+        let visible = false;
+        for (let index = 0; index < count && !visible; index++) {
+          visible = await matches.nth(index).isVisible().catch(() => false);
+        }
+
+        if (!visible) {
+          problems.push(`expected ${selector} to be visible, every match is hidden`);
+        }
+      }
+
+      // The heading identifies WHICH page answered. Without this, any capability
+      // route could serve any other capability's document and pass, because every
+      // one of them carries the same expectations.
+      if (route.heading && heading.trim() !== route.heading) {
+        problems.push(`expected the heading ${JSON.stringify(route.heading)}, got ${JSON.stringify(heading.trim())}`);
       }
 
       for (const selector of route.reject ?? []) {

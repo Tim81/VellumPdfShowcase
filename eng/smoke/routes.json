@@ -3,102 +3,204 @@
     "Every route the smoke check drives, with what each one must prove.",
     "",
     "This file is not free-form. RouteManifestTests holds it to the capability",
-    "catalogue in both directions: a capability added without a route here fails,",
-    "and a route here naming a capability that does not exist fails too. That is",
-    "what stops the check quietly covering less than it appears to.",
+    "catalogue in both directions, and holds each route to a minimum of what it",
+    "must assert. A review gutted an earlier version of this file to bare paths",
+    "with the whole suite still green, so the assertions themselves are gated now,",
+    "not only the list of paths.",
     "",
-    "'expect' and 'reject' are CSS selectors. 'text' is a literal the page must",
-    "contain. Keep each one to what the route exists to prove, rather than to",
-    "whatever happens to be on the page."
+    "'heading' is the <h1> the route must answer with, which is what stops one",
+    "capability serving another's document and passing.",
+    "'expect' selectors must be present AND visible. 'reject' must be absent.",
+    "'text' is a literal the page must contain.",
+    "",
+    "NOTE .preflight-pass rather than .preflight-verdict: the verdict element is",
+    "emitted for a pass, a failure and an unreadable document alike, so asserting",
+    "it asserts nothing about conformance."
   ],
   "routes": [
     {
       "path": "/",
-      "expect": [".card", ".card-planned", ".card-unavailable"],
-      "text": "capability catalogue"
+      "expect": [
+        ".card",
+        ".card-planned",
+        ".card-unavailable"
+      ],
+      "text": "capability catalogue",
+      "heading": "VellumPdf"
     },
     {
       "path": "/playground",
-      "expect": ["iframe", ".code-panel-body", "select"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        "select"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Playground"
     },
     {
       "path": "/compliance",
-      "expect": [".preflight-verdict", ".coverage-table tbody tr", ".provenance"],
-      "text": "veraPDF is not running on this page"
+      "expect": [
+        ".preflight-pass",
+        ".coverage-table tbody tr",
+        ".provenance"
+      ],
+      "text": "veraPDF is not running on this page",
+      "heading": "Conformance"
     },
     {
       "path": "/about",
-      "expect": ["table"],
-      "text": "veraPDF is not executing on this site"
+      "expect": [
+        "table"
+      ],
+      "text": "veraPDF is not executing on this site",
+      "heading": "About this site"
     },
     {
       "path": "/smoke",
-      "expect": ["button"]
+      "expect": [
+        "button:has-text('Generate')",
+        "section"
+      ],
+      "heading": "Runtime smoke test",
+      "text": "generates two PDF documents"
     },
     {
       "path": "/no-such-page",
-      "text": "Not Found"
+      "text": "Not Found",
+      "heading": "Not Found"
     },
-
     {
       "path": "/capability/standard-14-text",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Standard 14 text"
     },
     {
       "path": "/capability/embedded-truetype",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Embedded TrueType"
     },
     {
       "path": "/capability/lists",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Ordered and unordered lists"
     },
     {
       "path": "/capability/tables",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Tables"
     },
     {
       "path": "/capability/running-bands",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Running headers and footers"
     },
     {
       "path": "/capability/images",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Images"
     },
     {
       "path": "/capability/pie-chart",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "Pie charts"
     },
     {
       "path": "/capability/pdfa-conformance",
-      "expect": ["iframe", ".code-panel-body", ".api-tree li", ".preflight-verdict"],
-      "reject": [".pdf-preview-empty"]
+      "expect": [
+        "iframe",
+        ".code-panel-body",
+        ".api-tree li",
+        ".preflight-pass"
+      ],
+      "reject": [
+        ".pdf-preview-empty"
+      ],
+      "heading": "PDF/A-2b with an output intent"
     },
-
     {
       "path": "/capability/encryption",
-      "expect": ["[role=alert]"],
-      "reject": ["iframe"],
-      "text": "cannot be demonstrated in a browser"
+      "expect": [
+        "[role=alert]"
+      ],
+      "reject": [
+        "iframe"
+      ],
+      "text": "cannot be demonstrated in a browser",
+      "heading": "Encryption and permissions"
     },
     {
       "path": "/capability/nested-lists",
-      "expect": ["[role=alert]"],
-      "reject": ["iframe"],
-      "text": "does not do this yet"
+      "expect": [
+        "[role=alert]"
+      ],
+      "reject": [
+        "iframe"
+      ],
+      "text": "does not do this yet",
+      "heading": "Nested lists beyond one level"
     },
     {
       "path": "/capability/gif-images",
-      "expect": ["[role=alert]"],
-      "reject": ["iframe"],
-      "text": "does not do this yet"
+      "expect": [
+        "[role=alert]"
+      ],
+      "reject": [
+        "iframe"
+      ],
+      "text": "does not do this yet",
+      "heading": "GIF images"
     }
   ]
 }
