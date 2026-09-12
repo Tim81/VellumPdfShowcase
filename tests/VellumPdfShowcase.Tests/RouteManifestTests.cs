@@ -412,6 +412,39 @@ public class RouteManifestTests
         Assert.Equal("Not Found", route.Text);
     }
 
+    /// <summary>
+    /// A route's text assertion must be substantial enough to mean something.
+    /// </summary>
+    /// <remarks>
+    /// A review reduced two routes' text to a single letter and the whole suite
+    /// stayed green. One of them was a withheld capability, whose text is the
+    /// only thing asserting that the page explains itself at all, and the letter
+    /// chosen appeared in its own pinned heading.
+    /// </remarks>
+    [Fact]
+    public void EveryTextAssertionSaysSomething()
+    {
+        // A character floor rather than a word count. "Not Found" is legitimately
+        // the whole of the message on its route, and a word rule would refuse it
+        // while a single letter is what actually needs refusing.
+        foreach (var route in Load().Routes.Where(route => route.Text is not null))
+        {
+            Assert.True(
+                route.Text!.Trim().Length >= 8,
+                $"{route.Path} asserts the text {route.Text}, which is too short to distinguish anything");
+        }
+    }
+
+    /// <summary>
+    /// The about page carries its own statement about veraPDF, distinct from the
+    /// conformance page's, and pinned for the same reason.
+    /// </summary>
+    [Fact]
+    public void TheAboutPageIsHeldToItsOwnVeraPdfStatement() =>
+        Assert.Equal(
+            "veraPDF is not executing on this site",
+            Load().Routes.Single(route => route.Path == "/about").Text);
+
     [Fact]
     public void TheConformancePageIsHeldToItsVeraPdfStatement()
     {

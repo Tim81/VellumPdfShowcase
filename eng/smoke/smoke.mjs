@@ -63,13 +63,20 @@
 //   every preview clipped to
 //     nothing by an ancestor        every match is hidden or positioned away
 //
-// KNOWN GAPS, stated rather than implied, and re-checked by each review. Content
-// that draws the WRONG thing passes, so long as it draws something and differs
-// from what the other routes draw. Nothing here clicks anything, so the runtime
-// smoke page's own buttons are never pressed and the playground's controls are
-// never operated. Occlusion and clip-path WERE gaps and are now closed by a hit
-// test; an element covered at its centre but visible at its edges would still
-// pass.
+// KNOWN GAPS, stated rather than implied, each re-checked by the review that
+// found it and none of them claimed closed on faith:
+//
+//   an opaque overlay carrying pointer-events: none covers the whole site and
+//     passes, because elementFromPoint skips such elements
+//   a filter that is not opacity, such as brightness(0) or a heavy blur, is not
+//     modelled
+//   content that draws the WRONG thing passes, so long as every page draws
+//     something and the routes differ from each other
+//   an operator-looking sequence inside a text string satisfies the painting
+//     test, so a page showing the literal text "f" counts as painting; the
+//     shipped documents were checked and none does today
+//   nothing here clicks anything, so the runtime smoke page's own buttons are
+//     never pressed and the playground's controls are never operated
 //
 // The unbroken site passes all 17 before and after each mutation.
 
@@ -219,8 +226,17 @@ function isShown(element) {
     // property, and getComputedStyle still reports an opacity of 1. One line of
     // `filter: opacity(0)` hid every preview on the site while the harness
     // reported seventeen routes of seventeen passing.
-    if (/opacity\(\s*0?(\.0+)?\s*\)/.test(style.filter)) {
-      return false;
+    //
+    // The value is READ rather than matched against zero, and held to the same
+    // threshold as the opacity property. Matching only an exact zero let
+    // `opacity(1%)` through, which is as invisible as `opacity(0)` and was
+    // equally undetected.
+    const filtered = /opacity\(\s*([0-9.]+)(%?)\s*\)/.exec(style.filter);
+    if (filtered !== null) {
+      const value = Number(filtered[1]) / (filtered[2] === '%' ? 100 : 1);
+      if (value < 0.05) {
+        return false;
+      }
     }
 
     // An ancestor that clips its overflow can hide a descendant entirely while
@@ -242,9 +258,14 @@ function isShown(element) {
 
   // Finally, ask the browser what is actually AT the element's position. This is
   // the only test here that does not reason about properties one at a time, so it
-  // catches what property inspection misses: an element clipped away by
-  // `clip-path`, and an element covered by something opaque on top of it, which
-  // was a gap this file previously only declared.
+  // catches what property inspection misses, in particular an element clipped
+  // away by `clip-path`.
+  //
+  // KNOWN GAP, measured rather than assumed: this does NOT close occlusion in
+  // general. elementFromPoint skips anything with `pointer-events: none`, so an
+  // opaque overlay carrying that property covers the site while this test still
+  // answers with the element underneath. An earlier comment here claimed
+  // occlusion was closed; it is not, and saying so was worse than the gap.
   //
   // Only meaningful when the point is inside the viewport, so content below the
   // fold is exempted rather than failed.
