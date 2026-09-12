@@ -289,7 +289,7 @@ public class DeepPaginationTests
     /// its own, and these documents leave <see cref="DocumentSpec.UseObjectStreams"/>
     /// unset, so every page dictionary appears in the file uncompressed.
     /// </summary>
-    private static int PageCount(byte[] pdf)
+    internal static int PageCount(byte[] pdf)
     {
         const string Key = "/Type /Page";
         var text = System.Text.Encoding.Latin1.GetString(pdf);
@@ -1154,8 +1154,17 @@ public class RunningBandTemplateCapTests
         Leading = 50,
     };
 
+    /// <summary>
+    /// The positive control, and it asserts the thing that is actually at
+    /// stake. An assertion that a 200-character string still has 200
+    /// characters after construction passes with no validation at all, which
+    /// is what this test used to be. What must hold is that the BAND cap is
+    /// the binding one: a template at <see cref="SpecLimits.MaxTextLength"/>,
+    /// which every other string in this model accepts, has to be refused
+    /// here, or the cap has silently fallen back to the general string bound.
+    /// </summary>
     [Fact]
-    public void TemplateAtCap_Constructs()
+    public void TemplateAtCap_ConstructsAndTheBandCapIsTheBindingOne()
     {
         var band = new RunningBandSpec
         {
@@ -1164,6 +1173,16 @@ public class RunningBandTemplateCapTests
         };
 
         Assert.Equal(SpecLimits.MaxRunningBandTemplateLength, band.Template.Length);
+
+        Assert.True(
+            SpecLimits.MaxRunningBandTemplateLength < SpecLimits.MaxTextLength,
+            "The band cap must be tighter than the general string cap, or it bounds nothing.");
+
+        Assert.Throws<ArgumentException>(() => new RunningBandSpec
+        {
+            Template = new string('a', SpecLimits.MaxTextLength),
+            Style = Style(),
+        });
     }
 
     [Fact]
@@ -1179,19 +1198,37 @@ public class RunningBandTemplateCapTests
     }
 
     /// <summary>
-    /// The exact shape used to measure the running band template cap's cost: a 20,000
+    /// The shape used to measure the running band template cap's cost: a 20,000
     /// by 260 point page, 55-point margins, the 36-point/50-point-leading
-    /// style, one list of 1,650 items each with two children, and both a
-    /// header and a footer with <see cref="RunningBandSpec.Height"/> set to
-    /// 30, all rendering 4,950 pages. The template on both bands is set to
-    /// exactly <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
-    /// characters, the largest this model now admits. MEASURED at that cap's
-    /// current value of 200: 226 ms. If the cap were removed (falling back to
-    /// <see cref="SpecLimits.MaxTextLength"/>, 100,000) or widened toward it,
-    /// this same shape measured 5,518 ms; the assertion below catches either
-    /// change by timing out long before that. Under the fix, this test itself
-    /// stays fast: the point is the cap holding, not a long render.
+    /// style for the BODY, one list of 1,650 items each with two children, and
+    /// both a header and a footer with <see cref="RunningBandSpec.Height"/>
+    /// set to 30, all rendering 4,951 pages. The template on both bands is set
+    /// to exactly <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
+    /// characters, the largest this model admits there.
     /// </summary>
+    /// <remarks>
+    /// NOTE the band carries its own 1-point style rather than the body's
+    /// 36-point one, and that is the whole reason this test still guards
+    /// anything. From <c>VellumPdf.Layout</c> 2.3.2 a band is truncated to the
+    /// content box, so the per-page cost is the smaller of template length and
+    /// what the box holds. At a 36-point band on this page the box holds so
+    /// little that the cap stops mattering: measured 138 ms at the cap against
+    /// 348 ms at 100,000 characters, which a 2,000 ms budget would not catch.
+    /// At a 1-point band the same box holds tens of thousands of characters,
+    /// and the cap is load-bearing again: measured 132 ms at the cap against
+    /// 4,979 ms at 100,000, with output rising from 2,058,191 to 2,693,441
+    /// bytes at an unchanged page count. Both figures are the fastest of three
+    /// renders on desktop x64 in Release.
+    /// <para>
+    /// So the budget of 2,000 ms sits between 132 ms and 4,979 ms, and a
+    /// removed or substantially widened cap turns this red. Raising the band's
+    /// font size would silently disarm it, which is why the value is stated
+    /// here rather than shared with the body style. On 2.3.1, before
+    /// truncation existed, the same shape at 100,000 characters measured
+    /// 5,518 ms at any band font size; the cap has outlived the behaviour it
+    /// was written for and still has work to do.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void MaximalTemplateOnDeepPagination_RendersWithinBudget()
     {
@@ -1210,7 +1247,12 @@ public class RunningBandTemplateCapTests
         var band = new RunningBandSpec
         {
             Template = new string('a', SpecLimits.MaxRunningBandTemplateLength),
-            Style = style,
+            Style = new TextStyleSpec
+            {
+                Font = FontSpec.FromStandard14(Standard14.Helvetica),
+                FontSize = 1,
+                Leading = 2,
+            },
             Height = 30,
         };
 
@@ -1244,9 +1286,10 @@ public class RunningBandTemplateCapTests
         Assert.NotEmpty(bytes);
         Assert.True(
             elapsed < 2_000,
-            $"The fastest of three renders took {elapsed} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
-            "about 226 ms; a template anywhere near MaxTextLength (100,000) on this same shape takes about " +
-            "5,518 ms, so a budget of 2,000 ms catches a removed or substantially widened cap.");
+            $"The fastest of three renders took {elapsed} ms. Measured at MaxRunningBandTemplateLength=200 on " +
+            "this shape, whose bands carry a 1-point style so that the library's truncation to the content box " +
+            "does not hide the cost: 132 ms. At MaxTextLength (100,000) the same shape takes 4,979 ms, so a " +
+            "budget of 2,000 ms catches a removed or substantially widened cap.");
     }
 
     /// <summary>

@@ -24,7 +24,7 @@ public partial class CapabilityCatalogTests
     /// linked copies. The capability cannot tell the difference, which is the
     /// point: what is exercised here is the capability, not the transport.
     /// </summary>
-    private static CapabilityAssets Load(Capability capability) =>
+    internal static CapabilityAssets Load(Capability capability) =>
         new(capability.RequiredAssets.ToDictionary(
             path => path,
             path => File.ReadAllBytes(Path.Combine(AssetRoot, Path.GetFileName(path)))));
@@ -216,6 +216,61 @@ public partial class CapabilityCatalogTests
 
         Assert.NotEmpty(SpecRenderer.Render(spec));
         Assert.NotEmpty(SpecCodeEmitter.Emit(spec));
+    }
+
+    /// <summary>
+    /// Every catalogue document, compiled from the emitted C# and executed, and
+    /// its output compared against what the renderer produced from the same
+    /// specification. <see cref="SpecRoundTripTests"/> does this for
+    /// <c>DocumentSpecSamples</c>, which is a test-only corpus; until this test
+    /// existed it did not do it for a single document the SITE displays.
+    /// </summary>
+    /// <remarks>
+    /// The round trip is the product: the site shows the emitted C# beside the
+    /// output of the renderer, so if the two can diverge the site lies. The two
+    /// assertions in <see cref="EveryDemonstrableCapabilityRendersAndEmits"/>
+    /// check only that each side produces something non-empty, which does not
+    /// compare them at all. Review established the consequence directly:
+    /// deleting the emitter's nested-list-child emission turned three tests red
+    /// and every catalogue test stayed green, so the catalogue's own nesting
+    /// was covered only by unrelated samples that happen to nest too.
+    /// <para>
+    /// This runs over <see cref="Capability.IsBuildable"/> rather than
+    /// <see cref="Capability.IsDemonstrable"/>, so the encryption entry is
+    /// included. That entry is withheld from the site because the browser has
+    /// no AES, not because its specification is unsound, and the suite runs on
+    /// desktop where it renders normally.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(BuildableCapabilities))]
+    public async Task EveryBuildableCapabilityRoundTrips(string id)
+    {
+        var capability = CapabilityCatalog.Find(id);
+        Assert.NotNull(capability);
+
+        var spec = capability.Build!(Load(capability));
+
+        if (spec.Encryption is null)
+        {
+            await SpecRoundTripTests.AssertRoundTripAsync(spec);
+        }
+        else
+        {
+            await SpecRoundTripTests.AssertEncryptedRoundTripAsync(spec);
+        }
+    }
+
+    public static TheoryData<string> BuildableCapabilities()
+    {
+        var data = new TheoryData<string>();
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsBuildable))
+        {
+            data.Add(capability.Id);
+        }
+
+        Assert.NotEmpty(data);
+        return data;
     }
 
     public static TheoryData<string> DemonstrableCapabilities()

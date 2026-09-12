@@ -2836,6 +2836,91 @@ public class SpecLimitsValuesAreVerifiedTests
         Assert.Equal(1_000, SpecLimits.MaxAngleMagnitudeRadians);
         Assert.Equal(15, SpecLimits.MaxIccComponentCount);
         Assert.Equal(1, SpecLimits.MinIccComponentCount);
+        Assert.Equal(200, SpecLimits.MaxRunningBandTemplateLength);
+    }
+
+    /// <summary>
+    /// The roster above, held against the class it claims to pin, in BOTH
+    /// directions. It is a hand-written list of assertions, so nothing made it
+    /// complete: a constant added without an assertion went unpinned, and a
+    /// constant deleted took its assertion with it and left no trace.
+    /// </summary>
+    /// <remarks>
+    /// Both failures were real. <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
+    /// was never in the roster, which is precisely why deleting it required no
+    /// edit here and the deletion passed review on this side; that deletion was
+    /// wrong for other reasons, but a roster asserting its own completeness
+    /// would have made it visible. This test reflects over every public literal
+    /// on <see cref="SpecLimits"/> and requires the pinned set below to equal
+    /// it exactly, so adding a constant without pinning it fails, and so does
+    /// removing one while leaving this list alone.
+    /// <para>
+    /// NOTE the names below are deliberately a second copy rather than being
+    /// derived from the assertions above, which reflection cannot read. Keeping
+    /// them in step is the small cost of having the roster gated at all. The
+    /// precedent is <c>CoverageScopeTests.GateRoster_MatchesTheInstrumentedNamespace</c>,
+    /// which gates the coverage gate's own roster the same way and for the same
+    /// reason.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryConstantOnSpecLimitsIsPinnedByTheRosterAbove()
+    {
+        string[] pinned =
+        [
+            nameof(SpecLimits.MaxAssetBytes),
+            nameof(SpecLimits.MaxTextLength),
+            nameof(SpecLimits.MaxLanguageTagLength),
+            nameof(SpecLimits.MaxUriLength),
+            nameof(SpecLimits.MaxContentItems),
+            nameof(SpecLimits.MaxTableRows),
+            nameof(SpecLimits.MaxTableCellsPerRow),
+            nameof(SpecLimits.MaxChartSlices),
+            nameof(SpecLimits.MaxListNestingDepth),
+            nameof(SpecLimits.MaxTableColumnWidths),
+            nameof(SpecLimits.MaxParagraphRuns),
+            nameof(SpecLimits.MaxListItems),
+            nameof(SpecLimits.MaxListItemChildren),
+            nameof(SpecLimits.MaxEmbeddedFonts),
+            nameof(SpecLimits.MaxTotalAssetBytes),
+            nameof(SpecLimits.MaxWalkedNodes),
+            nameof(SpecLimits.MaxTotalTextLength),
+            nameof(SpecLimits.MinPageDimensionPoints),
+            nameof(SpecLimits.MaxPageDimensionPoints),
+            nameof(SpecLimits.MaxFontSize),
+            nameof(SpecLimits.MaxLeadingPoints),
+            nameof(SpecLimits.MinHeadingLevel),
+            nameof(SpecLimits.MaxHeadingLevel),
+            nameof(SpecLimits.MaxEdgeInsetPoints),
+            nameof(SpecLimits.MaxPieChartDiameterPoints),
+            nameof(SpecLimits.MaxStrokeWidthPoints),
+            nameof(SpecLimits.MaxIndentPoints),
+            nameof(SpecLimits.MaxImageDimensionPoints),
+            nameof(SpecLimits.MaxAngleMagnitudeRadians),
+            nameof(SpecLimits.MaxIccComponentCount),
+            nameof(SpecLimits.MinIccComponentCount),
+            nameof(SpecLimits.MaxRunningBandTemplateLength),
+        ];
+
+        var declared = typeof(SpecLimits)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(field => field.IsLiteral && !field.IsInitOnly)
+            .Select(field => field.Name)
+            .ToArray();
+
+        var missing = declared.Except(pinned, StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var stale = pinned.Except(declared, StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+
+        Assert.True(
+            missing.Length == 0,
+            $"SpecLimits declares constants the roster does not pin: {string.Join(", ", missing)}. "
+            + "Add an assertion to Values_MatchTheDocumentedConstants and a name here.");
+
+        Assert.True(
+            stale.Length == 0,
+            $"The roster names constants SpecLimits no longer declares: {string.Join(", ", stale)}.");
+
+        Assert.Equal(pinned.Length, pinned.Distinct(StringComparer.Ordinal).Count());
     }
 }
 

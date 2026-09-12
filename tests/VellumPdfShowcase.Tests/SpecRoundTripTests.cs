@@ -234,7 +234,7 @@ public class SpecRoundTripTests
     /// unreachable because every sample set both passwords, and the helper
     /// dereferenced both with the null-forgiving operator.
     /// </summary>
-    private static async Task AssertEncryptedRoundTripAsync(DocumentSpec spec)
+    internal static async Task AssertEncryptedRoundTripAsync(DocumentSpec spec)
     {
         var encryption = spec.Encryption!;
         var ownerAuthPassword = encryption.OwnerPassword ?? encryption.UserPassword ?? "";
@@ -255,7 +255,7 @@ public class SpecRoundTripTests
         Assert.Equal(PdfNormalization.Normalize(decryptedRendered), PdfNormalization.Normalize(decryptedScripted));
     }
 
-    private static async Task AssertRoundTripAsync(DocumentSpec spec)
+    internal static async Task AssertRoundTripAsync(DocumentSpec spec)
     {
         var rendered = SpecRenderer.Render(spec);
         var scripted = await RunEmittedCodeAsync(spec);
@@ -323,7 +323,21 @@ public class SpecRoundTripTests
 
         Assert.NotNull(info);
         Assert.True(info!.IsOwnerAccess);
-        Assert.Equal(encryption.Permissions, info.Permissions);
+
+        // NOTE the written permissions are what was requested PLUS Extract, not
+        // what was requested. As of 2.3.2 the library always sets bit 10 of /P.
+        // ISO 32000-2 Table 22 defines what that bit means rather than requiring
+        // it; the requirement is PDF/UA-1 clause 7.16-1, which depends on it.
+        // Measured across fourteen permission values: the written set is
+        // exactly the requested set plus that one bit, every time. None is
+        // written as Extract, Print as Print | Extract, and All is unchanged
+        // because it already includes it.
+        //
+        // This is the library being right and this assertion having been too
+        // strict, so it is made exact rather than loosened: the written set must
+        // be precisely what was requested plus that one bit. Anything else the
+        // library decided to grant on its own would still fail here.
+        Assert.Equal(encryption.Permissions | VellumPdf.Encryption.PdfPermissions.Extract, info.Permissions);
         Assert.Equal(encryption.EncryptMetadata, info.EncryptMetadata);
     }
 
