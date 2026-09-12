@@ -323,7 +323,18 @@ public class SpecRoundTripTests
 
         Assert.NotNull(info);
         Assert.True(info!.IsOwnerAccess);
-        Assert.Equal(encryption.Permissions, info.Permissions);
+
+        // NOTE the written permissions are what was requested PLUS Extract, not
+        // what was requested. As of 2.3.2 the library always sets bit 10 of /P,
+        // which ISO 32000-2 Table 22 requires and which PDF/UA-1 clause 7.16-1
+        // depends on. Measured: None is written as Extract, Print as
+        // Print | Extract, and All is unchanged because it already includes it.
+        //
+        // This is the library being right and this assertion having been too
+        // strict, so it is made exact rather than loosened: the written set must
+        // be precisely what was requested plus that one bit. Anything else the
+        // library decided to grant on its own would still fail here.
+        Assert.Equal(encryption.Permissions | VellumPdf.Encryption.PdfPermissions.Extract, info.Permissions);
         Assert.Equal(encryption.EncryptMetadata, info.EncryptMetadata);
     }
 

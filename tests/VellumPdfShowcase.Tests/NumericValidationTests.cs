@@ -1136,14 +1136,14 @@ public class SpecRendererExceptionUniformityTests
 }
 
 /// <summary>
-/// A running band is laid out once per page, so
-/// <see cref="RunningBandSpec.Template"/>'s length is multiplied by page
-/// count, a multiplication <see cref="SpecLimits.MaxTotalTextLength"/> and
-/// <see cref="SpecLimits.MaxWalkedNodes"/> cannot see because
-/// <see cref="DocumentSpec.Header"/> and <see cref="DocumentSpec.Footer"/>
-/// sit outside <see cref="DocumentSpec.Content"/>'s walk. See the remark on
-/// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the measurements
-/// this class checks against.
+/// A running band is laid out once per page, and until 2.3.2 the library laid
+/// out the whole template each time, so length multiplied by page count. This
+/// repository carried a cap of 200 characters for that, which came out when
+/// 2.3.2 began truncating a band to the content box.
+///
+/// NOTE what this class guards now is the LIBRARY's truncation, not a cap of
+/// this repository's own. If a future release stopped truncating, the cost
+/// would depend on template length again, and the budget below is what notices.
 /// </summary>
 public class RunningBandTemplateCapTests
 {
@@ -1159,11 +1159,11 @@ public class RunningBandTemplateCapTests
     {
         var band = new RunningBandSpec
         {
-            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength),
+            Template = new string('a', SpecLimits.MaxTextLength),
             Style = Style(),
         };
 
-        Assert.Equal(SpecLimits.MaxRunningBandTemplateLength, band.Template.Length);
+        Assert.Equal(SpecLimits.MaxTextLength, band.Template.Length);
     }
 
     [Fact]
@@ -1171,7 +1171,7 @@ public class RunningBandTemplateCapTests
     {
         var exception = Assert.Throws<ArgumentException>(() => new RunningBandSpec
         {
-            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength + 1),
+            Template = new string('a', SpecLimits.MaxTextLength + 1),
             Style = Style(),
         });
 
@@ -1179,18 +1179,18 @@ public class RunningBandTemplateCapTests
     }
 
     /// <summary>
-    /// The exact shape used to measure the running band template cap's cost: a 20,000
-    /// by 260 point page, 55-point margins, the 36-point/50-point-leading
-    /// style, one list of 1,650 items each with two children, and both a
-    /// header and a footer with <see cref="RunningBandSpec.Height"/> set to
-    /// 30, all rendering 4,950 pages. The template on both bands is set to
-    /// exactly <see cref="SpecLimits.MaxRunningBandTemplateLength"/>
-    /// characters, the largest this model now admits. MEASURED at that cap's
-    /// current value of 200: 226 ms. If the cap were removed (falling back to
-    /// <see cref="SpecLimits.MaxTextLength"/>, 100,000) or widened toward it,
-    /// this same shape measured 5,518 ms; the assertion below catches either
-    /// change by timing out long before that. Under the fix, this test itself
-    /// stays fast: the point is the cap holding, not a long render.
+    /// The shape that once measured the cap's cost, now measuring the library's
+    /// truncation: a 20,000 by 260 point page, 55-point margins, the
+    /// 36-point/50-point-leading style, one list of 1,650 items each with two
+    /// children, and both a header and a footer with
+    /// <see cref="RunningBandSpec.Height"/> set to 30, rendering 4,950 pages.
+    ///
+    /// The template is now the LONGEST this model admits,
+    /// <see cref="SpecLimits.MaxTextLength"/>. On 2.3.1 that same shape measured
+    /// 5,518 ms, against 226 ms at 200 characters, which is why a cap existed.
+    /// On 2.3.2 the band is truncated to the content box per page, so length
+    /// stops mattering. A release that stopped truncating would take thousands
+    /// of milliseconds here and the budget below would notice.
     /// </summary>
     [Fact]
     public void MaximalTemplateOnDeepPagination_RendersWithinBudget()
@@ -1209,7 +1209,7 @@ public class RunningBandTemplateCapTests
 
         var band = new RunningBandSpec
         {
-            Template = new string('a', SpecLimits.MaxRunningBandTemplateLength),
+            Template = new string('a', SpecLimits.MaxTextLength),
             Style = style,
             Height = 30,
         };
@@ -1244,15 +1244,15 @@ public class RunningBandTemplateCapTests
         Assert.NotEmpty(bytes);
         Assert.True(
             elapsed < 2_000,
-            $"The fastest of three renders took {elapsed} ms. Measured at MaxRunningBandTemplateLength=200 this takes " +
-            "about 226 ms; a template anywhere near MaxTextLength (100,000) on this same shape takes about " +
-            "5,518 ms, so a budget of 2,000 ms catches a removed or substantially widened cap.");
+            $"The fastest of three renders took {elapsed} ms. On 2.3.2, which truncates a band to the content " +
+            "box, a maximal template on this shape costs about what a short one does. On 2.3.1 it cost 5,518 ms, " +
+            "so a budget of 2,000 ms catches a release that stopped truncating.");
     }
 
     /// <summary>
     /// No test elsewhere in this repository sets <see cref="TextStyleSpec.LinkUri"/>
-    /// on a <see cref="RunningBandSpec.Style"/> at all, yet the remark on
-    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> depends entirely
+    /// on a <see cref="RunningBandSpec.Style"/> at all, yet the reasoning that
+    /// exempts a band's link from the content walk depends entirely
     /// on the library never turning such a link into a per-page annotation.
     /// If it ever did, a maximal <see cref="TextStyleSpec.LinkUri"/>
     /// (<see cref="SpecLimits.MaxUriLength"/>, 2,048 characters) on a header

@@ -161,20 +161,17 @@ public sealed record DocumentSpec
     /// PAGE, and page count is exactly the quantity
     /// <see cref="SpecLimits.MaxTotalTextLength"/> and
     /// <see cref="SpecLimits.MaxWalkedNodes"/> exist to bound, so a template
-    /// this walk (or any cap on <see cref="Content"/>) cannot see IS
+    /// this walk (or any cap on <see cref="Content"/>) cannot see WAS
     /// multiplied, by pagination rather than by structure.
-    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> bounds it
-    /// directly instead, at a value measured small enough that the
-    /// multiplication it cannot avoid stays cheap. NOTE: this remark once
-    /// carried its own figures here (page count, bytes, milliseconds); they
-    /// were deleted, deliberately, because they were measured on a document
-    /// 2.2 times shallower than this model actually admits and had drifted
-    /// out of step with <see cref="SpecLimits.MaxRunningBandTemplateLength"/>'s
-    /// own remark, which carries the correct, current measurement (the
-    /// construction it is measured on, and the true page count, roughly
-    /// 11,000, not the smaller figure once repeated here). Restating a
-    /// number here would only give it a second place to go stale; see that
-    /// constant's own remark for the figures instead.
+    ///
+    /// NOTE that multiplication is gone as of 2.3.2, which truncates a band to
+    /// the content box rather than laying the whole template out on every page.
+    /// Re-measured on a 24-page document: byte-identical output and a flat 5 to
+    /// 6 ms at 200, 1,000, 10,000 and 100,000 characters, against 601 ms and
+    /// 18,718 ms for the same two lengths before. A separate cap on the template
+    /// existed only for that multiplication and came out with it, so the
+    /// template is bounded by <see cref="SpecLimits.MaxTextLength"/> now, like
+    /// every other visitor-supplied string.
     /// </para>
     /// <para>
     /// <see cref="RunningBandSpec.Style"/>'s own <see cref="TextStyleSpec.LinkUri"/>
@@ -185,9 +182,8 @@ public sealed record DocumentSpec
     /// original reasoning holds: each is a single top-level property of this
     /// record (or of a record one of those properties holds), appearing at
     /// most once per specification, so none of them can be multiplied by
-    /// shared structure the way a list, table or chart entry can, AND, unlike
-    /// <see cref="RunningBandSpec.Template"/>, none of them is laid out once
-    /// per page either. For the link specifically this was verified rather
+    /// shared structure the way a list, table or chart entry can. For the link
+    /// specifically this was verified rather
     /// than assumed: a running band whose style carries a maximal-length
     /// (<see cref="SpecLimits.MaxUriLength"/>, 2,048)
     /// <see cref="TextStyleSpec.LinkUri"/> renders output of IDENTICAL
@@ -196,9 +192,9 @@ public sealed record DocumentSpec
     /// per-page link annotation. NOTE: this is a length comparison, not a
     /// byte-for-byte one; two renders of the same specification are never
     /// byte-identical, because the library writes a random document
-    /// identifier on every render. See the remark on
-    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the figure
-    /// and the test that guards it. <see cref="SpecLimits.MaxTextLength"/> (or
+    /// identifier on every render.
+    /// <c>RunningBandTemplateCapTests.MaximalLinkUriOnFooterStyle_AddsNothingAcrossManyPages</c>
+    /// guards it. <see cref="SpecLimits.MaxTextLength"/> (or
     /// <see cref="SpecLimits.MaxUriLength"/>, for a link) alone already
     /// bounds each of these individually, and that bound cannot be
     /// out-multiplied by anything reachable from a single occurrence or by
@@ -1818,17 +1814,22 @@ public sealed record LineSeparatorSpec : ContentItemSpec
 public sealed record RunningBandSpec
 {
     /// <remarks>
-    /// Capped at <see cref="SpecLimits.MaxRunningBandTemplateLength"/>, NOT
-    /// <see cref="SpecLimits.MaxTextLength"/>: a band is laid out once per
-    /// page, so its template length is multiplied by page count in a way no
-    /// other single top-level string in this model is. See the remark on
-    /// <see cref="SpecLimits.MaxRunningBandTemplateLength"/> for the
-    /// measurement behind the value.
+    /// Capped at <see cref="SpecLimits.MaxTextLength"/>, like every other
+    /// visitor-supplied string.
+    ///
+    /// NOTE this carried a much smaller cap of its own until 2.3.2. A band is
+    /// laid out once per page, and the library used to lay out the whole
+    /// template each time, so length multiplied by page count: measured at 601
+    /// ms for 200 characters against 18,718 ms for 100,000 on an 11,000-page
+    /// document. 2.3.2 truncates the band to the content box instead, and
+    /// re-measuring on a 24-page document gives byte-identical output and a
+    /// flat 5 to 6 ms across 200, 1,000, 10,000 and 100,000 characters. Length
+    /// no longer multiplies by anything, so the separate cap came out.
     /// </remarks>
     public required string Template
     {
         get;
-        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxRunningBandTemplateLength, nameof(Template));
+        init => field = SpecLimits.ValidateString(value, SpecLimits.MaxTextLength, nameof(Template));
     }
 
     public required TextStyleSpec Style

@@ -52,7 +52,7 @@ public static class CapabilityCatalog
         {
             Id = "lists",
             Title = "Ordered and unordered lists",
-            Summary = "All four list styles in one document: unordered, decimal, alphabetic and roman.",
+            Summary = "All four list styles in one document: unordered, decimal, alphabetic and roman, and one level of nesting.",
             Category = CapabilityCategory.Layout,
             Build = _ => Lists(),
         },
@@ -233,6 +233,31 @@ public static class CapabilityCatalog
             Items = [new ListItemSpec { Text = "First" }, new ListItemSpec { Text = "Second" }, new ListItemSpec { Text = "Third" }],
         };
 
+        // NOTE the nesting stops at one level deliberately, and the depth is the
+        // point of this section rather than an accident of it. Measured against
+        // the pinned 2.3.2 package: a chain of list items draws the first two
+        // levels and discards every level below, with nothing reported on the
+        // document and with byte-identical output at every chain depth from two
+        // to eight. One level is therefore what the renderer does, so a sample
+        // built at that depth is correct today and stays correct when deeper
+        // nesting arrives. The "nested-lists" capability carries the limit
+        // itself, which is why this document does not try to show it.
+        static ListSpec Nested(TextStyleSpec text) => new()
+        {
+            Style = ListStyle.OrderedDecimal,
+            DefaultStyle = text,
+            Items =
+            [
+                new ListItemSpec { Text = "First" },
+                new ListItemSpec
+                {
+                    Text = "Second",
+                    Children = [new ListItemSpec { Text = "Nested under the second item" }],
+                },
+                new ListItemSpec { Text = "Third" },
+            ],
+        };
+
         return new DocumentSpec
         {
             Page = PageSizeSpec.FromRectangle(VellumPdf.Document.PageSize.A4),
@@ -249,6 +274,8 @@ public static class CapabilityCatalog
                 Make(ListStyle.OrderedAlpha, body),
                 new PlainTextSpec { Text = "Roman", Style = Standard14Style(Standard14.HelveticaBold, 12) },
                 Make(ListStyle.OrderedRoman, body),
+                new PlainTextSpec { Text = "Nested, one level", Style = Standard14Style(Standard14.HelveticaBold, 12) },
+                Nested(body),
             ],
         };
     }
