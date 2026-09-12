@@ -29,7 +29,8 @@ public class RouteManifestTests
         string[] Reject,
         string? Text,
         IReadOnlyDictionary<string, int> ExpectAtLeast,
-        bool Distinct);
+        bool Distinct,
+        int? Pages);
 
     private sealed record Manifest(IReadOnlyList<Route> Routes);
 
@@ -56,7 +57,8 @@ public class RouteManifestTests
                 ReadStrings(element, "reject"),
                 element.TryGetProperty("text", out var text) ? text.GetString() : null,
                 ReadCounts(element),
-                !element.TryGetProperty("distinct", out var distinct) || distinct.GetBoolean()));
+                !element.TryGetProperty("distinct", out var distinct) || distinct.GetBoolean(),
+                element.TryGetProperty("pages", out var pages) ? pages.GetInt32() : null));
         }
 
         Assert.NotEmpty(routes);
@@ -409,7 +411,29 @@ public class RouteManifestTests
     {
         var route = Load().Routes.Single(r => r.Path == "/no-such-page");
 
-        Assert.Equal("Not Found", route.Text);
+        Assert.Equal("the content you are looking for does not exist", route.Text);
+    }
+
+    /// <summary>
+    /// Every capability that generates must declare how many pages it produces.
+    /// </summary>
+    /// <remarks>
+    /// Requiring every page to draw does not notice a page that is no longer
+    /// there. A review reduced the running-bands capability from two pages to one
+    /// and every route passed, on the one capability whose whole subject is
+    /// content repeating across pages.
+    /// </remarks>
+    [Fact]
+    public void EveryDemonstrableCapabilityDeclaresItsPageCount()
+    {
+        var manifest = Load();
+
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+        {
+            var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
+
+            Assert.True(route.Pages is > 0, $"{route.Path} declares no page count");
+        }
     }
 
     /// <summary>
@@ -429,9 +453,18 @@ public class RouteManifestTests
         // while a single letter is what actually needs refusing.
         foreach (var route in Load().Routes.Where(route => route.Text is not null))
         {
-            Assert.True(
-                route.Text!.Trim().Length >= 8,
-                $"{route.Path} asserts the text {route.Text}, which is too short to distinguish anything");
+            var text = route.Text!.Trim();
+
+            Assert.True(text.Length >= 8, $"{route.Path} asserts the text {text}, which is too short to distinguish anything");
+
+            // NOTE and it must not simply repeat the heading. A review defeated
+            // the length floor by using eight characters OF THE HEADING, which
+            // asserts nothing the heading check does not already assert, and on a
+            // withheld capability the text is the only thing requiring the page to
+            // explain itself at all.
+            Assert.False(
+                route.Heading.Contains(text, StringComparison.OrdinalIgnoreCase),
+                $"{route.Path} asserts text that is part of its own heading, so it adds nothing");
         }
     }
 

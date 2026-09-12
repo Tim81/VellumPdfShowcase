@@ -75,7 +75,7 @@
     },
     {
       "path": "/no-such-page",
-      "text": "Not Found",
+      "text": "the content you are looking for does not exist",
       "heading": "Not Found"
     },
     {
@@ -88,7 +88,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Standard 14 text"
+      "heading": "Standard 14 text",
+      "pages": 1
     },
     {
       "path": "/capability/embedded-truetype",
@@ -100,7 +101,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Embedded TrueType"
+      "heading": "Embedded TrueType",
+      "pages": 1
     },
     {
       "path": "/capability/lists",
@@ -112,7 +114,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Ordered and unordered lists"
+      "heading": "Ordered and unordered lists",
+      "pages": 1
     },
     {
       "path": "/capability/tables",
@@ -124,7 +127,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Tables"
+      "heading": "Tables",
+      "pages": 1
     },
     {
       "path": "/capability/running-bands",
@@ -136,7 +140,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Running headers and footers"
+      "heading": "Running headers and footers",
+      "pages": 2
     },
     {
       "path": "/capability/images",
@@ -148,7 +153,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Images"
+      "heading": "Images",
+      "pages": 1
     },
     {
       "path": "/capability/pie-chart",
@@ -160,7 +166,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "Pie charts"
+      "heading": "Pie charts",
+      "pages": 1
     },
     {
       "path": "/capability/pdfa-conformance",
@@ -173,7 +180,8 @@
       "reject": [
         ".pdf-preview-empty"
       ],
-      "heading": "PDF/A-2b with an output intent"
+      "heading": "PDF/A-2b with an output intent",
+      "pages": 1
     },
     {
       "path": "/capability/encryption",

@@ -122,8 +122,52 @@ const cases = [
     }),
     expect: 'draws nothing',
   },
+  // Tokens that LOOK like painting operators but sit inside strings, names,
+  // hex strings and comments. A review demonstrated this with the site's own
+  // ordered-list document, whose label "(b.)" made a page with every genuine
+  // painting operator removed still report painting.
+  { name: 'a list label spelling a painting operator', pdf: build(['BT /F1 12 Tf 72 700 Td (b.) ET']), expect: 'draws nothing' },
+  { name: 'a sentence containing a lone S', pdf: build(['BT /F1 12 Tf 72 700 Td (Section S of the report) ET']), expect: 'draws nothing' },
+  { name: 'a name spelling a painting operator', pdf: build(['BT /F1 12 Tf /f 12 Tf ET']), expect: 'draws nothing' },
+  { name: 'a hex string spelling one', pdf: build(['BT /F1 12 Tf <6620532062> ET']), expect: 'draws nothing' },
+  { name: 'a comment mentioning one', pdf: build(['% draw f here and S there']), expect: 'draws nothing' },
+  { name: 'a string with an escaped bracket', pdf: build(['BT /F1 12 Tf 72 700 Td (a \\) b (c) d) ET']), expect: 'draws nothing' },
+  { name: 'the same label actually shown', pdf: build(['BT /F1 12 Tf 72 700 Td (b.) Tj ET']), expect: 'ok' },
+  { name: 'an inline image', pdf: build(['BI /W 2 /H 2 /BPC 8 /CS /G ID  EI']), expect: 'ok' },
+
+  // Structural checks a review broke outright with every case still passing.
+  { name: 'a preview that is not a PDF at all', pdf: 'NOTAPDF and nothing else', expect: 'does not begin with %PDF-' },
+  { name: 'a preview truncated before its trailer', pdf: build([TEXT]).replace('%%EOF', ''), expect: 'no %%EOF' },
+
   { name: 'a document with no page at all', pdf: '%PDF-1.7\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n', expect: 'no page at all' },
 ];
+
+// One case per painting operator, generated rather than written out. A review
+// cut nine of the sixteen operators from the analysis with all twenty-six cases
+// still passing, including B, which is the only path-painting operator in the
+// pie chart capability, and TJ, the array form of show-text.
+const OPERATOR_SAMPLES = {
+  Tj: 'BT /F1 12 Tf (x) Tj ET',
+  TJ: 'BT /F1 12 Tf [(x)] TJ ET',
+  "'": "BT /F1 12 Tf (x) ' ET",
+  '"': 'BT /F1 12 Tf 1 1 (x) " ET',
+  Do: 'q /Im1 Do Q',
+  sh: 'q /Sh1 sh Q',
+  EI: 'BI /W 1 /H 1 /BPC 8 /CS /G ID  EI',
+  f: '0 0 10 10 re f',
+  F: '0 0 10 10 re F',
+  'f*': '0 0 10 10 re f*',
+  B: '0 0 10 10 re B',
+  'B*': '0 0 10 10 re B*',
+  b: '0 0 m 10 10 l b',
+  'b*': '0 0 m 10 10 l b*',
+  S: '0 0 m 10 10 l S',
+  s: '0 0 m 10 10 l s',
+};
+
+for (const [operator, content] of Object.entries(OPERATOR_SAMPLES)) {
+  cases.push({ name: 'the ' + operator + ' operator paints', pdf: build([content]), expect: 'ok' });
+}
 
 const browser = await chromium.launch();
 const page = await browser.newPage();

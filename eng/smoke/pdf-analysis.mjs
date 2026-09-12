@@ -28,29 +28,123 @@ export async function analysePreview() {
   // Declared inside the function on purpose: Playwright serialises the function
   // alone, so anything at module scope is simply absent in the page.
 
-  // A PDF token ends at anything that is not a regular character, so the
-  // complement of that class is a safe boundary. Written as a class rather than
-  // a word-boundary escape, for the reason in the header.
-  const boundary = '[^A-Za-z0-9]';
-
-  // Operators that put marks on the page. Built from a list so that nothing in
-  // it needs escaping by hand.
+  // Operators that put marks on the page.
   //
   // NOTE two absences are deliberate and were both defects once. Tf selects a
   // font and paints nothing. And n ends a path WITHOUT filling or stroking it,
   // so `re W n`, the standard way to set a clipping region, paints nothing at
   // all; including it let a site of nine blank sheets pass every route.
-  const painting = [
+  const painting = new Set([
     'Tj', 'TJ', "'", '"',
     'Do', 'sh', 'EI',
     'f', 'F', 'f*', 'B', 'B*', 'b', 'b*', 'S', 's',
-  ];
+  ]);
 
-  const alternatives = painting
-    .map(operator => operator.replace(/[*'"]/g, character => '[' + character + ']'))
-    .join('|');
+  /**
+   * Whether a content stream paints anything, decided by TOKENISING it.
+   *
+   * A pattern match over the raw text cannot answer this. A review demonstrated
+   * it with the site's own documents: the ordered-list capability draws the
+   * label "(b.)", and b is the close-fill-and-stroke operator, so a page with
+   * every genuine painting operator removed still reported painting. The same
+   * held for a page whose only content was `(Section S of ...)`. Strings,
+   * names, comments and inline image data all have to be skipped, which means
+   * reading the stream rather than searching it.
+   */
+  function paintsSomething(text) {
+    const delimiters = new Set([' ', '\t', '\r', '\n', '\f', '\0', '(', ')', '<', '>', '[', ']', '{', '}', '/', '%']);
+    let token = '';
+    let index = 0;
 
-  const paints = new RegExp('(^|' + boundary + ')(' + alternatives + ')(' + boundary + '|$)');
+    const settle = () => {
+      const finished = token;
+      token = '';
+      return finished;
+    };
+
+    while (index < text.length) {
+      const character = text[index];
+
+      // A comment runs to the end of the line.
+      if (character === '%') {
+        while (index < text.length && text[index] !== '\n' && text[index] !== '\r') {
+          index++;
+        }
+
+        settle();
+        continue;
+      }
+
+      // A literal string, which may nest parentheses and escape them.
+      if (character === '(') {
+        let depth = 1;
+        index++;
+
+        while (index < text.length && depth > 0) {
+          if (text[index] === '\\') {
+            index += 2;
+            continue;
+          }
+
+          if (text[index] === '(') {
+            depth++;
+          } else if (text[index] === ')') {
+            depth--;
+          }
+
+          index++;
+        }
+
+        settle();
+        continue;
+      }
+
+      // A hex string. Two angle brackets open a dictionary instead.
+      if (character === '<' && text[index + 1] !== '<') {
+        while (index < text.length && text[index] !== '>') {
+          index++;
+        }
+
+        index++;
+        settle();
+        continue;
+      }
+
+      // A name, which may spell anything at all after the slash.
+      if (character === '/') {
+        index++;
+        while (index < text.length && !delimiters.has(text[index])) {
+          index++;
+        }
+
+        settle();
+        continue;
+      }
+
+      if (delimiters.has(character)) {
+        const finished = settle();
+
+        // An inline image runs from BI to EI with arbitrary bytes between, and
+        // it draws. Accepting it here also stops its binary data being read as
+        // operators.
+        if (finished === 'BI') {
+          return true;
+        }
+
+        if (painting.has(finished)) {
+          return true;
+        }
+
+        index++;
+        continue;
+      }
+
+      token += character;
+      index++;
+    }
+
+    return painting.has(settle());
+  }
 
   const frame = document.querySelector('iframe');
   if (!frame) {
@@ -192,7 +286,7 @@ export async function analysePreview() {
   // pages.
   const blank = [];
   for (let index = 0; index < drawings.length; index++) {
-    if (!paints.test(drawings[index])) {
+    if (!paintsSomething(drawings[index])) {
       blank.push(index + 1);
     }
   }

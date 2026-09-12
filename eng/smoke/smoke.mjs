@@ -63,18 +63,17 @@
 //   every preview clipped to
 //     nothing by an ancestor        every match is hidden or positioned away
 //
-// KNOWN GAPS, stated rather than implied, each re-checked by the review that
-// found it and none of them claimed closed on faith:
+// KNOWN GAPS, stated rather than implied, each confirmed by the review that
+// found it and none claimed closed on faith:
 //
 //   an opaque overlay carrying pointer-events: none covers the whole site and
 //     passes, because elementFromPoint skips such elements
 //   a filter that is not opacity, such as brightness(0) or a heavy blur, is not
-//     modelled
+//     modelled, and only the first opacity() in a filter list is read
 //   content that draws the WRONG thing passes, so long as every page draws
-//     something and the routes differ from each other
-//   an operator-looking sequence inside a text string satisfies the painting
-//     test, so a page showing the literal text "f" counts as painting; the
-//     shipped documents were checked and none does today
+//     something, the page count matches, and the routes differ from each other
+//   a page inside an object stream is not found, and reports as no page at all,
+//     which is a false failure rather than a false pass
 //   nothing here clicks anything, so the runtime smoke page's own buttons are
 //     never pressed and the playground's controls are never operated
 //
@@ -429,8 +428,20 @@ async function main() {
 
         if (!verdict.startsWith('ok:')) {
           problems.push(verdict);
-        } else if (route.distinct !== false) {
-          fingerprints.push({ path: route.path, kind: 'preview', value: verdict });
+        } else {
+          // The page count, which nothing asserted before. A review reduced the
+          // running-bands capability from two pages to one and every route
+          // passed, on the one capability whose subject is content repeating
+          // across pages. Requiring every page to draw does not notice a page
+          // that is no longer there.
+          const pages = Number(verdict.split(':')[1]);
+          if (route.pages !== undefined && pages !== route.pages) {
+            problems.push(`expected ${route.pages} page(s), the preview has ${pages}`);
+          }
+
+          if (route.distinct !== false) {
+            fingerprints.push({ path: route.path, kind: 'preview', value: verdict });
+          }
         }
       }
 
