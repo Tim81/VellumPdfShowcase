@@ -19,6 +19,24 @@
 //
 // Exit code 0 when every route passes, 1 otherwise. Each failure names the route
 // and what was wrong with it.
+//
+// NOTE every assertion here has been made to fire against a deliberately broken
+// copy of the published output, because a check that has never failed is a check
+// nobody has tested. Measured, one mutation at a time, against a real publish:
+//
+//   a shipped asset deleted        the missing-asset report, the 404 in the
+//                                  console, and the page's own legible error
+//   the runtime files removed      no <h1> appeared, and the run stops after the
+//                                  first route rather than waiting out sixteen
+//                                  more timeouts
+//   the error bar forced visible   the Blazor error bar is showing, on all 17
+//   a console error injected       the console error, on all 17
+//   encryption marked available    the AES message, and a missing gallery card
+//   a literal component binding    the code panel does not hold C#
+//   the demonstrability guard      the null reference on both planned routes
+//     removed
+//
+// The unbroken site passes all 17 before and after each of those.
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -153,9 +171,11 @@ async function main() {
 
   const browser = await chromium.launch();
   const failures = [];
+  let driven = 0;
 
   try {
     for (const route of routes.routes) {
+      driven++;
       const context = await browser.newContext();
       const page = await context.newPage();
 
@@ -175,11 +195,17 @@ async function main() {
 
       // The heading is the first thing the application renders, so waiting for it
       // separates "the runtime never started" from "a page rendered badly".
+      let started = true;
       await page.waitForSelector('h1', { timeout: SETTLE_TIMEOUT_MS }).catch(() => {
+        started = false;
         problems.push('no <h1> appeared, so the application did not start');
       });
 
-      if (!(await settle(page))) {
+      // Waiting for a page to stop working is meaningless when it never began.
+      // Measured: with the runtime removed from the published output, letting
+      // every route wait out both timeouts took over ten minutes to report what
+      // the first route already knew.
+      if (started && !(await settle(page))) {
         problems.push(`still working after ${SETTLE_TIMEOUT_MS} ms`);
       }
 
@@ -246,6 +272,15 @@ async function main() {
       }
 
       await context.close();
+
+      // An application that does not start will not start on the next route
+      // either, and every further route costs a full timeout to learn nothing.
+      // Stopping here turns a ten-minute report into a ten-second one.
+      if (!started) {
+        console.log('');
+        console.log('The application did not start at all, so the remaining routes were not driven.');
+        break;
+      }
     }
   } finally {
     await browser.close();
@@ -263,7 +298,10 @@ async function main() {
   }
 
   console.log('');
-  console.log(`${routes.routes.length} route(s) driven, ${failures.length} failing.`);
+  console.log(
+    driven === routes.routes.length
+      ? `${driven} route(s) driven, ${failures.length} failing.`
+      : `${driven} of ${routes.routes.length} route(s) driven before stopping, ${failures.length} failing.`);
   return failures.length === 0 ? 0 : 1;
 }
 
