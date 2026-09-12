@@ -194,6 +194,15 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      # The analysis the route drive depends on, checked against documents built
+      # to have known answers. Driving the real site cannot catch a broken
+      # predicate, because the real site's documents all draw: only a document
+      # built to draw nothing can tell a working check from a broken one. A
+      # review found the operator test carrying literal backspace bytes, unable
+      # to match two of its three alternatives, with every route still passing.
+      - name: Check the preview analysis against known documents
+        run: node eng/smoke/self-test.mjs
+
       - name: Drive every route in a browser
         run: node eng/smoke/smoke.mjs publish/wwwroot
 

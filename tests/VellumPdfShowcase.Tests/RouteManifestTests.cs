@@ -384,6 +384,26 @@ public class RouteManifestTests
     /// The not-found route asserts no selector, so the only thing distinguishing
     /// it from any other page is its text, which is therefore pinned.
     /// </summary>
+    /// <summary>
+    /// A fixed page must assert its own identity, not merely some heading.
+    /// </summary>
+    /// <remarks>
+    /// Capability routes were pinned to their catalogue title, and the five fixed
+    /// pages were left as free text. A review set the about page's heading and
+    /// text to the conformance page's, served the conformance page at /about, and
+    /// both the suite and the harness reported success. The manifest is the gate,
+    /// so the manifest is the thing that must not be able to lie.
+    /// </remarks>
+    [Theory]
+    [InlineData("/", "VellumPdf")]
+    [InlineData("/playground", "Playground")]
+    [InlineData("/compliance", "Conformance")]
+    [InlineData("/about", "About this site")]
+    [InlineData("/smoke", "Runtime smoke test")]
+    [InlineData("/no-such-page", "Not Found")]
+    public void EveryFixedPageAssertsItsOwnHeading(string path, string heading) =>
+        Assert.Equal(heading, Load().Routes.Single(route => route.Path == path).Heading);
+
     [Fact]
     public void TheNotFoundRouteIsHeldToItsMessage()
     {

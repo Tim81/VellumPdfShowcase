@@ -63,13 +63,13 @@
 //   every preview clipped to
 //     nothing by an ancestor        every match is hidden or positioned away
 //
-// KNOWN GAPS, stated rather than implied, and re-checked by the review that found
-// the last of them. Occlusion by an OVERLAYING element is not modelled: a fixed,
-// opaque, full-viewport element covering the whole site still passes. Content
-// that draws the wrong thing passes, so long as it draws something and differs
+// KNOWN GAPS, stated rather than implied, and re-checked by each review. Content
+// that draws the WRONG thing passes, so long as it draws something and differs
 // from what the other routes draw. Nothing here clicks anything, so the runtime
 // smoke page's own buttons are never pressed and the playground's controls are
-// never operated.
+// never operated. Occlusion and clip-path WERE gaps and are now closed by a hit
+// test; an element covered at its centre but visible at its edges would still
+// pass.
 //
 // The unbroken site passes all 17 before and after each mutation.
 
@@ -79,6 +79,7 @@ import { createReadStream } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { analysePreview } from './pdf-analysis.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -214,6 +215,14 @@ function isShown(element) {
       return false;
     }
 
+    // A filter can make something transparent without touching the opacity
+    // property, and getComputedStyle still reports an opacity of 1. One line of
+    // `filter: opacity(0)` hid every preview on the site while the harness
+    // reported seventeen routes of seventeen passing.
+    if (/opacity\(\s*0?(\.0+)?\s*\)/.test(style.filter)) {
+      return false;
+    }
+
     // An ancestor that clips its overflow can hide a descendant entirely while
     // the descendant keeps its own box and a clean chain above it.
     if (node !== element && style.overflow !== 'visible') {
@@ -228,6 +237,28 @@ function isShown(element) {
       }
 
       clip = new DOMRect(left, top, right - left, bottom - top);
+    }
+  }
+
+  // Finally, ask the browser what is actually AT the element's position. This is
+  // the only test here that does not reason about properties one at a time, so it
+  // catches what property inspection misses: an element clipped away by
+  // `clip-path`, and an element covered by something opaque on top of it, which
+  // was a gap this file previously only declared.
+  //
+  // Only meaningful when the point is inside the viewport, so content below the
+  // fold is exempted rather than failed.
+  const x = clip.left + clip.width / 2;
+  const y = clip.top + clip.height / 2;
+
+  if (x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight) {
+    // NOTE the accepted answers are the element itself or something INSIDE it.
+    // Accepting an ancestor as well, which looks harmless, defeats the whole
+    // test: a full-page overlay drawn with ::after hit-tests as <body>, and body
+    // contains everything, so every route passed.
+    const hit = document.elementFromPoint(x, y);
+    if (hit === null || !(hit === element || element.contains(hit))) {
+      return false;
     }
   }
 
@@ -354,110 +385,26 @@ async function main() {
       // document passed every route: the harness could tell "bytes exist" from
       // "bytes do not exist" and nothing finer.
       if ((route.expect ?? []).includes('iframe')) {
-        // The blob URL is created strictly AFTER the settle predicate goes false:
-        // the page clears its busy flag in the same block that assigns the bytes,
-        // and the preview then makes two interop round trips before it has a URL.
-        // Reading immediately therefore races the site and fails a working one.
-        // Measured: a 400 ms delay inside createBlobUrl failed nine routes.
+        // The blob URL is created strictly AFTER the settle predicate goes
+        // false: the page clears its busy flag in the same block that assigns
+        // the bytes, and the preview then makes two interop round trips before
+        // it has a URL. Reading immediately races the site and fails a working
+        // one. Measured: a 400 ms delay inside createBlobUrl failed nine routes.
         await page
           .waitForFunction(() => document.querySelector('iframe')?.src?.startsWith('blob:') === true, null, {
             timeout: SETTLE_TIMEOUT_MS,
           })
           .catch(() => undefined);
 
-        const verdict = await page.evaluate(async () => {
-          const frame = document.querySelector('iframe');
-          if (!frame) {
-            return 'no frame';
-          }
-
-          if (!frame.src.startsWith('blob:')) {
-            return 'no blob URL appeared for the preview';
-          }
-
-          const bytes = new Uint8Array(await (await fetch(frame.src)).arrayBuffer());
-          const decoder = new TextDecoder('latin1');
-          const header = decoder.decode(bytes.slice(0, 5));
-          const trailer = decoder.decode(bytes.slice(-2048));
-
-          if (header !== '%PDF-') {
-            return `the preview does not begin with %PDF- but with ${JSON.stringify(header)}`;
-          }
-
-          if (!trailer.includes('%%EOF')) {
-            return 'the preview has no %%EOF, so it is truncated';
-          }
-
-          // What the page actually DRAWS, which is the only thing worth
-          // fingerprinting. Two earlier attempts were worthless: hashing the raw
-          // bytes fingerprints the generation event, because the library stamps a
-          // fresh random /ID into every document, so two routes showing the same
-          // document never collided; and testing for the string /Contents proves
-          // only that a page dictionary has that key, which a blank page does.
-          //
-          // Content streams are Flate-compressed, so they are inflated here. The
-          // browser has DecompressionStream, so this needs nothing bundled.
-          const body = decoder.decode(bytes);
-          const operators = [];
-
-          for (let at = body.indexOf('stream'); at !== -1; at = body.indexOf('stream', at + 6)) {
-            const endsAt = body.indexOf('endstream', at);
-            if (endsAt === -1) {
-              break;
-            }
-
-            let from = at + 'stream'.length;
-            if (body.charCodeAt(from) === 13) {
-              from++;
-            }
-
-            if (body.charCodeAt(from) === 10) {
-              from++;
-            }
-
-            // The end-of-line before `endstream` is not part of the stream data.
-            // Leaving it on makes the decoder reject the whole stream as having
-            // trailing rubbish, which silently turned every document into "draws
-            // nothing".
-            let to = endsAt;
-            while (to > from && (bytes[to - 1] === 10 || bytes[to - 1] === 13)) {
-              to--;
-            }
-
-            const raw = bytes.slice(from, to);
-            if (raw.length === 0) {
-              continue;
-            }
-
-            for (const format of ['deflate', 'deflate-raw']) {
-              try {
-                const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream(format));
-                operators.push(decoder.decode(new Uint8Array(await new Response(stream).arrayBuffer())));
-                break;
-              } catch {
-                // Not this format. An uncompressed stream, such as the XMP packet,
-                // fails both and is not what identifies a page anyway.
-              }
-            }
-
-            at = endsAt;
-          }
-
-          const drawn = operators.join('');
-
-          // A page that shows nothing has no text-showing and no path-painting
-          // operator. This is the check the previous one only claimed to be.
-          if (!/T[jJ]|Do|[fFbBS]\*?\s/.test(drawn)) {
-            return 'the preview draws nothing: no text, image or path operators in any content stream';
-          }
-
-          let hash = 0;
-          for (let index = 0; index < drawn.length; index++) {
-            hash = ((hash << 5) - hash + drawn.charCodeAt(index)) | 0;
-          }
-
-          return `ok:${drawn.length}:${hash}`;
-        }).catch(error => `the preview could not be read: ${error.message}`);
+        // The analysis lives in its own module because it is the only part of
+        // this harness with real logic in it, and self-test.mjs exercises it
+        // against documents built to have known answers. Four review rounds
+        // found defects in it that driving the real site could not: the real
+        // site's documents all draw, so only documents built to draw nothing
+        // can tell a working predicate from a broken one.
+        const verdict = await page
+          .evaluate(analysePreview)
+          .catch(error => `the preview could not be read: ${error.message}`);
 
         if (!verdict.startsWith('ok:')) {
           problems.push(verdict);
