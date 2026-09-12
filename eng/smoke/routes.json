@@ -1,0 +1,104 @@
+{
+  "_comment": [
+    "Every route the smoke check drives, with what each one must prove.",
+    "",
+    "This file is not free-form. RouteManifestTests holds it to the capability",
+    "catalogue in both directions: a capability added without a route here fails,",
+    "and a route here naming a capability that does not exist fails too. That is",
+    "what stops the check quietly covering less than it appears to.",
+    "",
+    "'expect' and 'reject' are CSS selectors. 'text' is a literal the page must",
+    "contain. Keep each one to what the route exists to prove, rather than to",
+    "whatever happens to be on the page."
+  ],
+  "routes": [
+    {
+      "path": "/",
+      "expect": [".card", ".card-planned", ".card-unavailable"],
+      "text": "capability catalogue"
+    },
+    {
+      "path": "/playground",
+      "expect": ["iframe", ".code-panel-body", "select"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/compliance",
+      "expect": [".preflight-verdict", ".coverage-table tbody tr", ".provenance"],
+      "text": "veraPDF is not running on this page"
+    },
+    {
+      "path": "/about",
+      "expect": ["table"],
+      "text": "veraPDF is not executing on this site"
+    },
+    {
+      "path": "/smoke",
+      "expect": ["button"]
+    },
+    {
+      "path": "/no-such-page",
+      "text": "Not Found"
+    },
+
+    {
+      "path": "/capability/standard-14-text",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/embedded-truetype",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/lists",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/tables",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/running-bands",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/images",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/pie-chart",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li"],
+      "reject": [".pdf-preview-empty"]
+    },
+    {
+      "path": "/capability/pdfa-conformance",
+      "expect": ["iframe", ".code-panel-body", ".api-tree li", ".preflight-verdict"],
+      "reject": [".pdf-preview-empty"]
+    },
+
+    {
+      "path": "/capability/encryption",
+      "expect": ["[role=alert]"],
+      "reject": ["iframe"],
+      "text": "cannot be demonstrated in a browser"
+    },
+    {
+      "path": "/capability/nested-lists",
+      "expect": ["[role=alert]"],
+      "reject": ["iframe"],
+      "text": "does not do this yet"
+    },
+    {
+      "path": "/capability/gif-images",
+      "expect": ["[role=alert]"],
+      "reject": ["iframe"],
+      "text": "does not do this yet"
+    }
+  ]
+}

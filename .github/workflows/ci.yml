@@ -83,7 +83,7 @@ jobs:
         run: ./eng/check-emitter-branch-coverage.ps1
 
   publish:
-    name: Publish and verify the WebAssembly output
+    name: Publish, verify and drive the WebAssembly output
     runs-on: ubuntu-latest
 
     steps:
@@ -173,6 +173,29 @@ jobs:
           fi
 
           exit "$failed"
+
+      # The only check in this repository that can see a defect in the page layer.
+      # The test suite runs on desktop .NET while the site runs on browser
+      # WebAssembly, so a capability needing AES passed every test and failed in
+      # every visitor's tab. Reintroducing that defect, and two others of the same
+      # class, each makes this step fail by name.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: eng/smoke/package-lock.json
+
+      # npm ci rather than npm install, so the browser driver is the version the
+      # lock file pins and a run cannot silently pick up a newer one.
+      - name: Install the smoke harness
+        working-directory: eng/smoke
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Drive every route in a browser
+        run: node eng/smoke/smoke.mjs publish/wwwroot
 
       - name: Upload the published site
         uses: actions/upload-artifact@v7
