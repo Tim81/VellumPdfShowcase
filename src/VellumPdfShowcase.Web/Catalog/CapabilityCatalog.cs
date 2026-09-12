@@ -237,11 +237,22 @@ public static class CapabilityCatalog
         // point of this section rather than an accident of it. Measured against
         // the pinned 2.3.2 package: a chain of list items draws the first two
         // levels and discards every level below, with nothing reported on the
-        // document and with byte-identical output at every chain depth from two
-        // to eight. One level is therefore what the renderer does, so a sample
-        // built at that depth is correct today and stays correct when deeper
-        // nesting arrives. The "nested-lists" capability carries the limit
-        // itself, which is why this document does not try to show it.
+        // document, and the inflated content stream is identical at every chain
+        // depth from two to eight. NOTE: identical, not byte-identical. Two
+        // renders of one specification never match byte for byte, because the
+        // library writes a random document identifier into each.
+        //
+        // One level is therefore what the renderer does, so a sample built at
+        // that depth is correct today and stays correct when deeper nesting
+        // arrives. The nested item is drawn properly rather than merely
+        // present: its own marker sits at the parent's text position and its
+        // text one indent further, with numbering of its own.
+        //
+        // The limit itself is stated on the "nested-lists" capability card,
+        // which is a Planned entry and therefore builds no document. Nothing in
+        // the catalogue demonstrates the discard, deliberately: a sample built
+        // to show the limit would have to be rewritten when the library's own
+        // capability table is corrected and again when nesting works.
         static ListSpec Nested(TextStyleSpec text) => new()
         {
             Style = ListStyle.OrderedDecimal,

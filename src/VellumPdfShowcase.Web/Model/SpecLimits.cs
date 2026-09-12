@@ -57,12 +57,9 @@ public static class SpecLimits
     /// grow pathologically; <see cref="MaxWalkedNodes"/> is what bounds how
     /// many such strings one specification can multiply together through
     /// shared structure. NOTE: a running header or footer's own
-    /// <see cref="Model.RunningBandSpec.Template"/> carried a much smaller cap
-    /// of its own until 2.3.2, because the library laid the whole template out
-    /// on every page. 2.3.2 truncates it to the content box, measured as
-    /// byte-identical output at a flat 5 to 6 ms across 200 to 100,000
-    /// characters, so the template is bounded by this value like everything
-    /// else.
+    /// <see cref="Model.RunningBandSpec.Template"/> is NOT among these; it is
+    /// bounded by the much smaller <see cref="MaxRunningBandTemplateLength"/>
+    /// instead, for the reason given on that constant.
     /// </summary>
     /// <remarks>
     /// NOTE: this remains a distinct, load-bearing cap even now that
@@ -88,6 +85,160 @@ public static class SpecLimits
     /// or a running band, can.
     /// </remarks>
     public const int MaxTextLength = 100_000;
+
+    /// <summary>
+    /// Caps <see cref="Model.RunningBandSpec.Template"/>. A running band
+    /// holds one line of text substituting <c>{page}</c> and <c>{pages}</c>,
+    /// so <see cref="MaxTextLength"/> (100,000 characters) is meaningless
+    /// here: a template is laid out once PER PAGE, not once per
+    /// specification, and page count is exactly the quantity
+    /// <see cref="MaxTotalTextLength"/> and <see cref="MaxWalkedNodes"/>
+    /// exist to bound. Neither of those two caps, nor
+    /// <see cref="Model.DocumentSpec.Content"/>'s own walk, sees a
+    /// <see cref="Model.DocumentSpec.Header"/> or
+    /// <see cref="Model.DocumentSpec.Footer"/> at all, so nothing else in
+    /// this file stops the product of template length and page count from
+    /// growing without bound; this cap is the only thing that does.
+    /// </summary>
+    /// <remarks>
+    /// MEASURED against the true worst case this model admits, not the
+    /// smaller document once recorded here, which understated the cost this
+    /// cap bounds by a factor of 2.2. Start from the maximal construction
+    /// described on <see cref="MaxTotalTextLength"/> (one <see cref="Model.ListSpec"/>
+    /// of 1,667 top-level <see cref="Model.ListItemSpec"/>, 1,666 of them
+    /// each carrying two empty children and the last carrying none, for
+    /// 4,999 items in total; the first item alone carries the full
+    /// 6,000-character text budget as solid <c>'W'</c> and every other item
+    /// is empty, in 36-point Helvetica at this model's own default 72-point
+    /// margins; 10,998 pages on its own) and heighten the page from 200 by
+    /// 200 to 200 by 280 points, the width unchanged, to leave room for a
+    /// <see cref="Model.RunningBandSpec.Height"/> of 40 on both a header and
+    /// a footer, each holding a template at this cap's own value, 200
+    /// characters. This renders 10,998 pages, identical to the unbanded
+    /// construction it started from, because the 80 points added to the
+    /// page's height are exactly the 80 points the two 40-point bands
+    /// reserve, leaving the content box unchanged at 56 points; that
+    /// identity is what makes the two page counts comparable. It takes 601
+    /// ms on desktop x64 in Release. Varying the template length on this
+    /// same construction gives:
+    /// <list type="table">
+    /// <item><term>template length 1</term><description>556 ms</description></item>
+    /// <item><term>template length 200</term><description>601 ms</description></item>
+    /// <item><term>template length 2,000</term><description>965 ms</description></item>
+    /// <item><term>template length 100,000</term><description>18,718 ms</description></item>
+    /// </list>
+    /// This reports time, not bytes; an earlier version of this remark
+    /// reported bytes without stating what drives them. Both the band's own
+    /// <see cref="Model.RunningBandSpec.Style"/>, here 36-point Helvetica
+    /// with 50-point leading, matching the body style, and the template text
+    /// itself, here the ASCII character <c>'a'</c> repeated to the given
+    /// length, drive that byte cost: a wider template of that character in
+    /// that style costs more bytes because the glyph run drawn into each
+    /// page's band grows, not because of anything this cap tracks beyond
+    /// length. Time, not bytes, is the quantity this cap exists to bound,
+    /// which is why the table above reports only time. NOTE what these
+    /// figures show: the 200-character cap itself is worth only about 45 ms
+    /// over the one-character floor at this geometry, a small fraction of
+    /// the 601 ms total. The cost is page count and the second pagination
+    /// pass a running band forces the library into, not the template text;
+    /// this cap must not be described as what bounds the freeze this
+    /// construction produces. On 2.3.1, where those four figures were taken, it
+    /// removed a 31-fold cost at 100,000 characters, 18,718 ms against 601 ms. See
+    /// the remark on <see cref="MaxTotalTextLength"/> for the freeze itself,
+    /// its full figure with both bands at this cap, and the decision to
+    /// accept it rather than tune further.
+    /// <para>
+    /// NOTE: 2.3.2 changed this and did NOT retire the cap. That release
+    /// truncates a band to the content box, walking the template a code point
+    /// at a time and stopping at the first that does not fit, so the per-page
+    /// cost became the SMALLER of template length and what the content box
+    /// holds. The first reading of that change here was that length had
+    /// stopped multiplying by page count, and the cap was deleted on it. That
+    /// was wrong, and it was wrong because the measurement was taken on a
+    /// 24-page document, where a cost proportional to page count cannot
+    /// appear. The cap is bounding a product; a shallow document sets one
+    /// factor to almost nothing and then reports the product as flat.
+    /// </para>
+    /// <para>
+    /// What 2.3.2 leaves is a cost bounded by the content box instead of by
+    /// the template, and this model admits a content box far wider than the
+    /// construction above. Re-measured on 2.3.2, fastest of three renders,
+    /// on the 4,951-page shape
+    /// <c>RunningBandTemplateCapTests.MaximalTemplateOnDeepPagination_RendersWithinBudget</c>
+    /// uses, varying only page width and the band's own
+    /// <see cref="Model.TextStyleSpec.FontSize"/>, both of which this file
+    /// permits (<see cref="MaxPageDimensionPoints"/> is 20,000 and
+    /// <see cref="ValidateFontSize"/> admits any finite size in (0, 1000]):
+    /// <list type="table">
+    /// <item><term>200 points wide, 36-point band, template 200 against 100,000</term><description>128 ms against 164 ms</description></item>
+    /// <item><term>200 points wide, 1-point band, template 200 against 100,000</term><description>124 ms against 205 ms</description></item>
+    /// <item><term>20,000 points wide, 6-point band, template 200 against 100,000</term><description>135 ms against 983 ms</description></item>
+    /// <item><term>20,000 points wide, 1-point band, template 200 against 100,000</term><description>132 ms against 4,979 ms</description></item>
+    /// </list>
+    /// A factor of 38 on the last row, driven by nothing but template length,
+    /// with output rising from 2,058,191 to 2,693,441 bytes at the same 4,951
+    /// pages. On the narrow page the truncation genuinely does flatten the
+    /// cost, 128 ms against 164 ms, because a 56-point content box holds about
+    /// forty characters however long the template is. On the widest page this
+    /// file permits it holds tens of thousands, and the multiplication this
+    /// cap was written for is intact. Re-measured on the 10,999-page
+    /// construction above as well: 448 ms at 200 characters against 642 ms at
+    /// 100,000 with a 36-point band, and 495 against 675 with a 1-point band,
+    /// which is the same effect held down by the same narrow content box.
+    /// </para>
+    /// <para>
+    /// So the cap stays, and its justification narrows rather than
+    /// disappearing. It is no longer bounding a library that lays out the
+    /// whole template once per page; it is bounding the product of template
+    /// length and page count in the one direction 2.3.2 left open, which is a
+    /// page wide enough that the content box stops being the binding
+    /// constraint. NOTE for a future release: the condition for deleting this
+    /// cap is not that a band be truncated, which 2.3.2 already does. It is
+    /// that the per-page cost stop depending on template length at the
+    /// WIDEST page and SMALLEST band font size this file admits. Measure it
+    /// there, on a document deep enough for page count to matter, or the
+    /// measurement will report flatness that is an artefact of the shape.
+    /// </para>
+    /// <para>
+    /// <see cref="Model.RunningBandSpec.Style"/>'s own
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> was checked for the same
+    /// multiplication and found NOT to have it: a footer whose style carries
+    /// a maximal-length (<see cref="MaxUriLength"/>, 2,048)
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> renders output of IDENTICAL
+    /// LENGTH, 1,026,940 bytes, to the same footer with no
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> at all, across a
+    /// footer-only variant of the construction above: the same 20,000 by
+    /// 260 point page, 55-point margins, 36-point/50-point-leading style and
+    /// 1,650-item list, with only a footer, at
+    /// <see cref="Model.RunningBandSpec.Height"/> 30, and no header. Each of
+    /// the 1,650 items carries the text <c>"W"</c> and two children that also
+    /// each carry the text <c>"W"</c>, the same item shape
+    /// <c>RunningBandTemplateCapTests.MaximalTemplateOnDeepPagination_RendersWithinBudget</c>
+    /// uses; 1,650 plain items, each carrying the text <c>"W"</c> but no
+    /// children, renders far fewer pages at this geometry (measured directly:
+    /// 825 pages, 338,889 bytes), so the item shape is load-bearing for
+    /// reproducing the 2,475-page, 1,026,940-byte figure, not incidental. That
+    /// specification renders 2,475 pages, half the 4,950 the same list
+    /// renders under both a header and a footer, because removing one band
+    /// frees that much more of each page for content. NOTE: this is a
+    /// length comparison, not a byte-for-byte one. Two renders of the same
+    /// specification are never byte-identical, because the library writes a
+    /// random document identifier on every render; a byte-for-byte claim
+    /// would be false here regardless of what <see cref="Model.TextStyleSpec.LinkUri"/>
+    /// does. The library does not turn a running band's link into a per-page
+    /// annotation, so <see cref="MaxUriLength"/> alone already bounds it and
+    /// no dedicated cap is needed here. <c>RunningBandTemplateCapTests.MaximalLinkUriOnFooterStyle_AddsNothingAcrossManyPages</c>
+    /// guards the same exemption on a smaller, cheaper document instead of
+    /// the 2,475-page one above: 80 unordered list items on a 200 by 200
+    /// point page at 20-point margins, with only a footer, which renders 40
+    /// pages, not 2,475. That is enough pages for the comparison to mean
+    /// something without paying for the larger construction on every test
+    /// run, and it remains the only test in the repository that sets
+    /// <see cref="Model.TextStyleSpec.LinkUri"/> on a header or footer style
+    /// at all.
+    /// </para>
+    /// </remarks>
+    public const int MaxRunningBandTemplateLength = 200;
 
     /// <summary>
     /// Caps a BCP 47 language tag. RFC 5646's own ABNF sets no length ceiling
@@ -260,7 +411,7 @@ public static class SpecLimits
     /// 32,136,696 bytes of source just under this cap, rendered 30,315,242
     /// bytes (28.91 MB) of output in 737 ms. This is the SAME order of
     /// magnitude as the worst case this model already accepts elsewhere: the
-    /// deepest banded construction's 10,998
+    /// <see cref="MaxRunningBandTemplateLength"/> construction's 10,998
     /// pages render in 601 ms on desktop and 35,148 ms in the browser this
     /// application ships to; this cap's own worst case, extrapolated by the
     /// same roughly seventeen to fifty-nine times desktop-to-browser factor
@@ -445,9 +596,12 @@ public static class SpecLimits
     /// <para>
     /// Adding a header and a footer, each with a
     /// <see cref="Model.RunningBandSpec.Height"/> of 40 and a
-    /// <see cref="Model.RunningBandSpec.Template"/> of 200 characters, on a page
+    /// <see cref="Model.RunningBandSpec.Template"/> at
+    /// <see cref="MaxRunningBandTemplateLength"/>'s own cap, on a page
     /// heightened to 200 by 280 points, the width unchanged, to leave room
-    /// for both bands, costs more than the deepest document alone. That
+    /// for both bands, costs more than the deepest document alone: see the
+    /// remark on <see cref="MaxRunningBandTemplateLength"/> for that
+    /// construction in full and what it costs by template length. That
     /// construction renders 10,998 pages, the same count as the maximal
     /// construction above, because the 80 points added to the page's height
     /// are exactly what the two 40-point bands reserve, at 601 ms on desktop
@@ -457,9 +611,9 @@ public static class SpecLimits
     /// both-budgets document above, is the true ceiling this file's caps
     /// together buy. A running band is laid out once per page and forces a
     /// second pagination pass; neither cost is visible to
-    /// <see cref="MaxWalkedNodes"/> or to this value. A third cap on template
-    /// length existed for that until 2.3.2, which truncates a band per page and
-    /// so removed the dependency on length the cap was bounding.
+    /// <see cref="MaxWalkedNodes"/> or to this value, which is why
+    /// <see cref="MaxRunningBandTemplateLength"/> exists as a third,
+    /// independent cap rather than being folded into either of these two.
     /// </para>
     /// <para>
     /// Thirty-five seconds is a known property of a browser-hosted,
@@ -470,8 +624,9 @@ public static class SpecLimits
     /// regression guards for the pagination defect those guards exist for;
     /// that trade was not taken. This value and <see cref="MaxWalkedNodes"/>
     /// stay where they are, deliberately, and tuning them further has
-    /// stopped. These caps reduce the freeze well below the 47,963 ms the
-    /// previous 20,000-character setting cost with no band at all; they do not, and
+    /// stopped. Together with <see cref="MaxRunningBandTemplateLength"/>,
+    /// these caps reduce the freeze well below the 47,963 ms the previous,
+    /// 20,000-character setting cost with no band at all; they do not, and
     /// are not intended to, remove it.
     /// </para>
     /// </remarks>
@@ -503,10 +658,25 @@ public static class SpecLimits
     /// <summary>
     /// The upper bound on <see cref="Model.PageSizeSpec.WidthPoints"/> and
     /// <see cref="Model.PageSizeSpec.HeightPoints"/>. A generous sanity ceiling
-    /// of about 278 inches rather than a measured one. A larger page means
-    /// fewer pages, so nothing about output size or generation time argues for
-    /// a tighter figure.
+    /// of about 278 inches rather than a measured one.
     /// </summary>
+    /// <remarks>
+    /// This remark once read that a larger page means fewer pages, so nothing
+    /// about output size or generation time argued for a tighter figure. The
+    /// first half is true and the conclusion does not follow, which a
+    /// measurement taken while upgrading to 2.3.2 showed. A running band is
+    /// truncated to the content box from that release onward, so a WIDER page
+    /// means more of the band's template is drawn on every page. At this
+    /// ceiling, with a band font size of 1 point, a maximal
+    /// <see cref="Model.RunningBandSpec.Template"/> would draw tens of
+    /// thousands of characters per page; measured on a 4,951-page document,
+    /// 132 ms at a 200-character template against 4,979 ms at 100,000. Page
+    /// size and band template length interact, and this figure is one of the
+    /// two factors. NOTE: what bounds that product is
+    /// <see cref="MaxRunningBandTemplateLength"/>, not this value, and the
+    /// reasoning for leaving this value generous stands on the cap being
+    /// there. See the remark on <see cref="MaxRunningBandTemplateLength"/>.
+    /// </remarks>
     public const double MaxPageDimensionPoints = 20_000;
 
     /// <summary>
@@ -562,12 +732,22 @@ public static class SpecLimits
     /// <summary>
     /// The highest value <see cref="Model.HeadingSpec.Level"/> accepts. Measured
     /// directly against the library: <c>HeadingRenderer.HeadingStructType</c>
-    /// clamps every level above this to the same PDF structure type an H6
-    /// heading gets, so <c>-5</c>, <c>7</c>, <c>100</c> and <c>int.MaxValue</c>
-    /// all currently produce identical output. Rejecting them at construction,
+    /// clamps every level OUTSIDE the range this model accepts to the same PDF
+    /// structure type an H6 heading gets, in both directions, so <c>-5</c>,
+    /// <c>6</c>, <c>7</c>, <c>100</c> and <c>int.MaxValue</c> all produce
+    /// identical output. Rejecting them at construction,
     /// rather than letting the library silently clamp them, is what keeps the
     /// displayed level and the rendered structure type in agreement.
     /// </summary>
+    /// <remarks>
+    /// Re-measured against 2.3.2, because that release clamps several other
+    /// out-of-range values it previously honoured literally and this one was
+    /// the stated condition for deleting this cap. The clamp is unchanged:
+    /// levels <c>-5</c>, <c>6</c>, <c>7</c>, <c>100</c> and
+    /// <c>int.MaxValue</c> each still emit <c>/H6</c>, against <c>/H1</c> for
+    /// level 0 and <c>/H2</c> for level 1, so the cap stays. It comes out when
+    /// the library either refuses an out-of-range level or honours it.
+    /// </remarks>
     public const int MaxHeadingLevel = 5;
 
     /// <summary>

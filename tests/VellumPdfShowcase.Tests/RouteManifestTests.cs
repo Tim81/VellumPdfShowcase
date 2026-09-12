@@ -1,5 +1,6 @@
 using System.Text.Json;
 using VellumPdfShowcase.Web.Catalog;
+using VellumPdfShowcase.Web.Generation;
 
 namespace VellumPdfShowcase.Tests;
 
@@ -433,6 +434,43 @@ public class RouteManifestTests
             var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
 
             Assert.True(route.Pages is > 0, $"{route.Path} declares no page count");
+        }
+    }
+
+    /// <summary>
+    /// The declared page count, against the page count the document actually
+    /// renders. The test above asserts only that a number is present, which is
+    /// half a guard: the number can be present and wrong.
+    /// </summary>
+    /// <remarks>
+    /// This gap was found by review, by changing the <c>lists</c> route's
+    /// declared count from 1 to 9 and watching the whole suite stay green. The
+    /// browser harness would have caught it, but the browser harness needs a
+    /// browser and a published site, so nothing in the suite was looking. The
+    /// change that exposed it had altered the shape of that very document,
+    /// which is exactly the edit that moves a page count; the declared value
+    /// stayed correct by luck rather than by a guard.
+    /// <para>
+    /// NOTE this is the sixth roster in this repository found to hold in one
+    /// direction only. The others were the coverage gate's own roster, the
+    /// shipped asset roster, the route manifest's route list, the capability
+    /// roster and the painting-operator list. Any number this repository
+    /// declares about a document elsewhere needs a test that renders the
+    /// document and compares.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryDeclaredPageCountMatchesWhatTheDocumentRenders()
+    {
+        var manifest = Load();
+
+        foreach (var capability in CapabilityCatalog.All.Where(c => c.IsDemonstrable))
+        {
+            var route = manifest.Routes.Single(r => r.Path == $"/capability/{capability.Id}");
+            var spec = capability.Build!(CapabilityCatalogTests.Load(capability));
+            var rendered = DeepPaginationTests.PageCount(SpecRenderer.Render(spec));
+
+            Assert.Equal(route.Pages, rendered);
         }
     }
 
